@@ -1,0 +1,7 @@
+[
+  {
+    "origin": ["http://localhost:5100", "https://xalbertxxa29.github.io","http://localhost:5200","https://github.io"],
+    "method": ["GET"],
+    "maxAgeSeconds": 3600
+  }
+]

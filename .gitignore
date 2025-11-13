@@ -1,0 +1,27 @@
+# Servidor de desarrollo local ONLY
+server.py
+*.pyc
+__pycache__/
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node modules (si usas NPM)
+node_modules/
+package-lock.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Cache
+.cache/
+dist/
+build/

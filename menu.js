@@ -1,0 +1,9092 @@
+// === FIX: Chart.js resize loop protection & responsiveness ===
+(function () {
+  try {
+    if (window.Chart && Chart.defaults) {
+      Chart.defaults.maintainAspectRatio = false;
+      Chart.defaults.responsive = true;     // keeps tree-shaking safe
+      Chart.defaults.resizeDelay = 200;     // throttle resize to avoid loops
+    }
+  } catch (e) { /* noop */ }
+})();
+
+// === Registrar plugin de etiquetas y color por defecto según tema ===
+(function () {
+  try {
+    if (window.ChartDataLabels && window.Chart?.register) {
+      Chart.register(ChartDataLabels);
+    }
+    if (window.Chart && Chart.defaults) {
+      const ink = getComputedStyle(document.documentElement)
+        .getPropertyValue('--fg')?.trim() || '#111';
+      Chart.defaults.color = ink; // tooltips/legend/ticks por defecto
+    }
+  } catch (e) { /* noop */ }
+})();
+
+document.addEventListener('DOMContentLoaded', () => {
+
+  // Registrar plugins de Chart.js
+  if (typeof ChartDataLabels !== 'undefined') {
+    Chart.register(ChartDataLabels);
+  }
+
+  // Evita doble ejecución del mismo script
+  if (window.__wiredCuadernoInc__) { /* already wired */ } else { window.__wiredCuadernoInc__ = true;
+
+  // ============================================================================
+  // 1) CONFIGURACIÓN E INICIALIZACIÓN DE FIREBASE
+  // ============================================================================
+  const COLLECTIONS = {
+    USERS: 'USUARIOS',
+    CLIENT_UNITS: 'CLIENTE_UNIDAD',
+    LOGBOOK: 'CUADERNO',
+    INCIDENTS: 'INCIDENCIAS_REGISTRADAS'
+  };
+
+  if (!firebase.apps.length) {
+    firebase.initializeApp(window.firebaseConfig);
+  }
+  const auth = firebase.auth();
+  const db = window.db = firebase.firestore();
+
+  // ============================================================================
+  // 2) SELECTORES DE ELEMENTOS DEL DOM Y ESTADO GLOBAL
+  // ============================================================================
+
+  // --- Layout y Navegación Principal ---
+  const sidebar = document.getElementById('sidebar');
+  const burgerBtn = document.getElementById('burger');
+  const menuToggleBtn = document.getElementById('menuToggleBtn');
+  const menuOverlay = document.getElementById('menu-overlay');
+  const navItems = document.querySelectorAll('.nav-item');
+  const views = document.querySelectorAll('.view');
+  const logoutBtn = document.getElementById('logoutBtn');
+  const avatarEl = document.getElementById('avatar');
+  const userNameEl = document.getElementById('userName');
+  const userMetaEl = document.getElementById('userMeta');
+
+  // --- Usuarios ---
+  const usersTbody = document.getElementById('usersTbody');
+  const usersCountEl = document.getElementById('usersCount');
+
+  // --- Cliente/Unidad ---
+  const clienteUnidadSearchInput = document.getElementById('clienteUnidadSearchInput');
+  const clienteUnidadTbody = document.getElementById('clienteUnidadTbody');
+
+  // --- Cuaderno ---
+  const cuadernoClienteSelect = document.getElementById('cuaderno-cliente');
+  const cuadernoUnidadSelect = document.getElementById('cuaderno-unidad');
+  const cuadernoFechaInicio = document.getElementById('cuaderno-fecha-inicio');
+  const cuadernoFechaFin = document.getElementById('cuaderno-fecha-fin');
+  const cuadernoTbody = document.getElementById('cuadernoTbody');
+  const cuadernoBtnBuscar = document.getElementById('cuaderno-btn-buscar');
+  const cuadernoBtnLimpiar = document.getElementById('cuaderno-btn-limpiar');
+  const cuadernoBtnExportar = document.getElementById('cuaderno-btn-exportar');
+  const cuadernoBtnImprimirPDF = document.getElementById('cuaderno-btn-imprimir-pdf');
+
+  // --- Incidencias (nuevo) ---
+  const incFechaInicio = document.getElementById('incidencias-fecha-inicio');
+  const incFechaFin = document.getElementById('incidencias-fecha-fin');
+  const incCliente = document.getElementById('incidencias-cliente');
+  const incUnidad = document.getElementById('incidencias-unidad');
+  const incEstado = document.getElementById('incidencias-estado');
+  const incBtnBuscar = document.getElementById('incidencias-btn-buscar');
+  const incBtnLimpiar = document.getElementById('incidencias-btn-limpiar');
+  const incBtnExportar = document.getElementById('incidencias-btn-exportar');
+  const incidenciasTbody = document.getElementById('incidenciasTbody');
+
+  // --- Tiempo de Conexión ---
+  const tiempoConexionFechaInicio = document.getElementById('tiempo-conexion-fecha-inicio');
+  const tiempoConexionFechaFin = document.getElementById('tiempo-conexion-fecha-fin');
+  const tiempoConexionCliente = document.getElementById('tiempo-conexion-cliente');
+  const tiempoConexionUnidad = document.getElementById('tiempo-conexion-unidad');
+  const tiempoConexionUsuario = document.getElementById('tiempo-conexion-usuario');
+  const tiempoConexionBtnBuscar = document.getElementById('tiempo-conexion-btn-buscar');
+  const tiempoConexionBtnLimpiar = document.getElementById('tiempo-conexion-btn-limpiar');
+  const tiempoConexionBtnExportar = document.getElementById('tiempo-conexion-btn-exportar');
+  const tiempoConexionBtnPdf = document.getElementById('tiempo-conexion-btn-pdf');
+  const tiempoConexionTbody = document.getElementById('tiempoConexionTbody');
+
+  // ====== Cuaderno: carga de filtros (Cliente/Unidad) desde colección CUADERNO ======
+  async function loadCuadernoFilters() {
+    try {
+      if (!cuadernoClienteSelect && !cuadernoUnidadSelect) return;
+      // Reducido de 2000 a 500 para mejor rendimiento
+      const snap = await db.collection(COLLECTIONS.LOGBOOK).orderBy('__name__', 'desc').limit(500).get();
+      const rows = snap.docs.map(d => d.data());
+      const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
+
+      const clientes = uniq(rows.map(r => r.cliente));
+      const unidades = uniq(rows.map(r => r.unidad));
+
+      if (cuadernoClienteSelect) {
+        cuadernoClienteSelect.innerHTML = '<option value="">Todas</option>' +
+          clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+      }
+      if (cuadernoUnidadSelect) {
+        cuadernoUnidadSelect.innerHTML = '<option value="">Todas</option>' +
+          unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+      }
+    } catch (e) { console.error('loadCuadernoFilters()', e); }
+  }
+
+  // --- Incidencias: cargar filtros únicos (Cliente/Unidad/Estado) ---
+  let incidenciasFiltersLoaded = false;
+  async function loadIncidenciasFilters() {
+    try {
+      // Reducido de 5000 a 1000 para mejor rendimiento
+      const snap = await db.collection(COLLECTIONS.INCIDENTS).orderBy('__name__', 'desc').limit(1000).get();
+      const rows = snap.docs.map(d => d.data());
+      const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
+
+      const clientes = uniq(rows.map(r => r.cliente));
+      const unidades = uniq(rows.map(r => r.unidad));
+      const estados  = uniq(rows.map(r => r.estado));
+
+      if (incCliente) incCliente.innerHTML =
+        '<option value="">Todos</option>' + clientes.map(v=>`<option>${v}</option>`).join('');
+      if (incUnidad) incUnidad.innerHTML =
+        '<option value="">Todos</option>' + unidades.map(v=>`<option>${v}</option>`).join('');
+      if (incEstado) incEstado.innerHTML =
+        '<option value="">Todos</option>' + estados.map(v=>`<option>${v}</option>`).join('');
+
+    } catch (e) {
+      console.error('loadIncidenciasFilters()', e);
+    }
+  }
+
+  // Cargar filtros para Tiempo de Conexión
+  async function loadTiempoConexionFilters() {
+    try {
+      const snap = await db.collection('CONTROL_TIEMPOS_USUARIOS').orderBy('__name__', 'desc').limit(1000).get();
+      const rows = snap.docs.map(d => d.data());
+      const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
+
+      // Cargar caché de usuarios para obtener clientes y unidades
+      const usuariosCache = {};
+      const usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
+      usuariosSnap.forEach(doc => {
+        const userData = doc.data();
+        usuariosCache[doc.id] = {
+          nombres: userData.NOMBRES || '',
+          apellidos: userData.APELLIDOS || '',
+          cliente: userData.CLIENTE || '',
+          unidad: userData.UNIDAD || ''
+        };
+      });
+
+      // Extraer usuarios del campo usuarioID
+      const usuarios = uniq(rows.map(r => r.usuarioID || r.usuario || '').filter(u => u.trim()));
+      
+      // Extraer clientes y unidades del caché
+      const clientesSet = new Set();
+      const unidadesSet = new Set();
+      usuarios.forEach(usuarioID => {
+        if (usuariosCache[usuarioID]) {
+          if (usuariosCache[usuarioID].cliente) clientesSet.add(usuariosCache[usuarioID].cliente);
+          if (usuariosCache[usuarioID].unidad) unidadesSet.add(usuariosCache[usuarioID].unidad);
+        }
+      });
+      
+      const clientes = Array.from(clientesSet).sort((a,b)=>a.localeCompare(b,'es'));
+      const unidades = Array.from(unidadesSet).sort((a,b)=>a.localeCompare(b,'es'));
+
+      if (tiempoConexionCliente) {
+        tiempoConexionCliente.innerHTML =
+          '<option value="">Todos</option>' + clientes.map(v=>`<option>${v}</option>`).join('');
+      }
+      if (tiempoConexionUnidad) {
+        tiempoConexionUnidad.innerHTML =
+          '<option value="">Todos</option>' + unidades.map(v=>`<option>${v}</option>`).join('');
+      }
+      if (tiempoConexionUsuario) {
+        tiempoConexionUsuario.innerHTML =
+          '<option value="">Todos</option>' + usuarios.map(v=>`<option>${v}</option>`).join('');
+      }
+
+      // Cargar la tabla con todos los datos
+      await fillTiempoConexionTable(rows);
+
+      tiempoConexionFiltersLoaded = true;
+    } catch (e) {
+      console.error('loadTiempoConexionFilters()', e);
+    }
+  }
+
+  // Función auxiliar para calcular la duración entre dos fechas
+  function calcularDuracionTiempo(horaInicio, horaCierre) {
+    if (!horaInicio || !horaCierre) return '--';
+    
+    let inicio, fin;
+    
+    // Convertir a Date si son Timestamp de Firebase
+    if (horaInicio.toDate && typeof horaInicio.toDate === 'function') {
+      inicio = horaInicio.toDate();
+    } else if (typeof horaInicio === 'string') {
+      inicio = new Date(horaInicio);
+    } else {
+      inicio = horaInicio;
+    }
+    
+    if (horaCierre.toDate && typeof horaCierre.toDate === 'function') {
+      fin = horaCierre.toDate();
+    } else if (typeof horaCierre === 'string') {
+      fin = new Date(horaCierre);
+    } else {
+      fin = horaCierre;
+    }
+    
+    if (!(inicio instanceof Date) || !(fin instanceof Date) || Number.isNaN(inicio.getTime()) || Number.isNaN(fin.getTime())) {
+      return '--';
+    }
+    
+    const diffMs = fin.getTime() - inicio.getTime();
+    if (diffMs < 0) return '--';
+    
+    const horas = Math.floor(diffMs / (1000 * 60 * 60));
+    const minutos = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+    const segundos = Math.floor((diffMs % (1000 * 60)) / 1000);
+    
+    if (horas > 0) {
+      return `${horas}h ${minutos}m ${segundos}s`;
+    } else if (minutos > 0) {
+      return `${minutos}m ${segundos}s`;
+    } else {
+      return `${segundos}s`;
+    }
+  }
+
+  // Función para llenar la tabla de Tiempo de Conexión con datos de USUARIOS
+  async function fillTiempoConexionTable(rows) {
+    if (!tiempoConexionTbody) return;
+    
+    // Cache de usuarios para evitar búsquedas repetidas
+    const usuariosCache = {};
+    
+    // Cargar todos los usuarios de Firebase en caché
+    try {
+      const usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
+      usuariosSnap.forEach(doc => {
+        const userData = doc.data();
+        usuariosCache[doc.id] = {
+          nombres: userData.NOMBRES || '',
+          apellidos: userData.APELLIDOS || '',
+          cliente: userData.CLIENTE || '',
+          unidad: userData.UNIDAD || ''
+        };
+      });
+    } catch (e) {
+      console.error('Error cargando usuarios:', e);
+    }
+    
+    // Array para guardar datos enriquecidos
+    const enrichedRows = [];
+    
+    tiempoConexionTbody.innerHTML = rows.map(r => {
+      // Extraer usuario ID
+      const usuarioID = r.usuarioID || r.usuario || '--';
+      
+      // Buscar en caché
+      const usuarioData = usuariosCache[usuarioID] || {};
+      const nombreCompleto = usuarioData.nombres && usuarioData.apellidos
+        ? `${usuarioData.nombres} ${usuarioData.apellidos}`
+        : usuarioID;
+      const cliente = usuarioData.cliente || '--';
+      const unidad = usuarioData.unidad || '--';
+      
+      // Extraer fecha e hora de inicio
+      let fechaInicio = '--';
+      let horaInicio = '--';
+      let fechaObj = null;
+      if (r.horaInicio) {
+        fechaObj = r.horaInicio.toDate ? r.horaInicio.toDate() : new Date(r.horaInicio);
+        if (fechaObj instanceof Date && !Number.isNaN(fechaObj.getTime())) {
+          fechaInicio = fechaObj.toLocaleDateString('es-PE');
+          horaInicio = fechaObj.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+      }
+      
+      // Extraer hora de fin
+      let horaFin = '--';
+      if (r.horaCierre) {
+        const fechaObjFin = r.horaCierre.toDate ? r.horaCierre.toDate() : new Date(r.horaCierre);
+        if (fechaObjFin instanceof Date && !Number.isNaN(fechaObjFin.getTime())) {
+          horaFin = fechaObjFin.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+      }
+      
+      // Calcular duración
+      const duracion = calcularDuracionTiempo(r.horaInicio, r.horaCierre);
+      
+      // Guardar datos enriquecidos
+      enrichedRows.push({
+        usuarioID: usuarioID,
+        nombreCompleto: nombreCompleto,
+        cliente: cliente,
+        unidad: unidad,
+        fechaInicio: fechaInicio,
+        horaInicio: horaInicio,
+        horaFin: horaFin,
+        duracion: duracion,
+        horaInicioObj: r.horaInicio,
+        horaCierreObj: r.horaCierre
+      });
+      
+      return `<tr>
+        <td>${nombreCompleto}</td>
+        <td>${cliente}</td>
+        <td>${unidad}</td>
+        <td>${fechaInicio}</td>
+        <td>${horaInicio}</td>
+        <td>${horaFin}</td>
+        <td style="font-weight: 600; color: #3b82f6;">${duracion}</td>
+      </tr>`;
+    }).join('');
+    
+    // Guardar datos enriquecidos en el dataset
+    tiempoConexionTbody.dataset.rows = JSON.stringify(enrichedRows);
+  }
+
+  // Hook: cuando entro a la vista Cuaderno, cargo filtros una vez
+  let cuadernoFiltersLoaded = false;
+  let tiempoConexionFiltersLoaded = false;
+
+  document.addEventListener('click', (ev) => {
+    const toCuaderno = ev.target.closest('[data-target="view-cuaderno"]');
+    if (toCuaderno && !cuadernoFiltersLoaded) {
+      cuadernoFiltersLoaded = true;
+      loadCuadernoFilters();
+    }
+    const toInc = ev.target.closest('[data-target="view-incidencias"]');
+    if (toInc && !incidenciasFiltersLoaded) {
+      loadIncidenciasFilters();
+    }
+    const toTiempoConexion = ev.target.closest('[data-target="view-tiempo-conexion"]');
+    if (toTiempoConexion && !tiempoConexionFiltersLoaded) {
+      tiempoConexionFiltersLoaded = true;
+      loadTiempoConexionFilters();
+    }
+  });
+
+  // --- Overlays y Diálogos ---
+  const overlay = document.getElementById('overlay');
+  const olTitle = document.getElementById('olTitle');
+  const olSub = document.getElementById('olSub');
+  const olBar = document.getElementById('olBar');
+  const dialog = document.getElementById('dialog');
+  const dialogIcon = document.getElementById('dialogIcon');
+  const dialogTitle = document.getElementById('dialogTitle');
+  const dialogMessage = document.getElementById('dialogMessage');
+  const dialogActions = document.getElementById('dialogActions');
+  const toast = document.getElementById('toast');
+
+  // --- Modales de edición (Usuarios / Cliente-Unidad) ---
+  const editModal = document.getElementById('editModal');
+  const editForm = document.getElementById('editForm');
+  const editCancelBtn = document.getElementById('editCancel');
+  const editSaveBtn = document.getElementById('editSave');
+  const editNombres = document.getElementById('editNombres');
+  const editApellidos = document.getElementById('editApellidos');
+  const editCliente = document.getElementById('editCliente');
+  const editUnidad = document.getElementById('editUnidad');
+  const editTipo = document.getElementById('editTipo');
+  const editEstado = document.getElementById('editEstado');
+
+  const cuEditModal = document.getElementById('cuEditModal');
+  const cuEditForm = document.getElementById('cuEditForm');
+  const cuEditCancelBtn = document.getElementById('cuEditCancel');
+  const cuEditSaveBtn = document.getElementById('cuEditSave');
+  const cuEditCliente = document.getElementById('cuEditCliente');
+  const cuEditUnidad = document.getElementById('cuEditUnidad');
+  const cuEditClienteOriginal = document.getElementById('cuEditClienteOriginal');
+  const cuEditUnidadOriginal = document.getElementById('cuEditUnidadOriginal');
+
+  // --- Estado Global ---
+  const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+  let currentUser = null;
+  let cachedIncidents = [];
+  let cachedUsers = [];
+  let cachedClientesUnidades = [];
+  let resumenCharts = {};
+  let detalleChart = null;
+  let detalleChoices = {};
+  let resumenChoices = {};
+  let detalleInitialized = false;
+  let editingUserId = null;
+  let lastDetalleData = {}; // Para guardar los datos del último detalle para exportación
+
+  // === Paleta y utilidades de formato para gráficos ===
+  const PALETTE = {
+    blue: '#3b82f6',
+    blueLt: '#60a5fa',
+    violet: '#a78bfa',
+    cyan: '#0ea5e9',
+    amber: '#f59e0b',
+    red: '#ef4444',
+    gray: '#9ca3af',
+    purple: '#8b5cf6',
+    green: '#22c55e'
+  };
+  const nf = new Intl.NumberFormat('es-PE');
+  const pf = (value, total) => total ? ((value / total) * 100).toFixed(1) : '0.0';
+  const themeInk = () => getComputedStyle(document.documentElement).getPropertyValue('--fg')?.trim() || '#111';
+
+  // Helpers genéricos
+  const debounce = (fn, wait = 200) => {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn.apply(null, args), wait); };
+  };
+  const csvEsc = (s) => `"${(s ?? '').toString().replace(/"/g, '""')}"`;
+
+  // Normalizador y buckets
+  const norm = s => (s || '').toString().trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const BUCKETS = {
+    RIESGO: ['CONDICION DE RIESGO', 'CONDICIÓN DE RIESGO'],
+    CODIGOS: ['CODIGO DE SEGURIDAD Y EMERGENCIA', 'CÓDIGOS DE SEGURIDAD Y EMERGENCIA'],
+    AMBIENTAL: ['ACTO DE SISTEMA MEDIO AMBIENTAL', 'ACTOS DE SISTEMA MEDIOAMBIENTAL'],
+    SSO: ['ACTO DE SEGURIDAD Y SALUD OCUPACIONAL', 'ACTOS DE SEGURIDAD Y SALUD OCUPACIONAL']
+  };
+  const bucketOf = (tipo) => {
+    const t = norm(tipo);
+    for (const [k, arr] of Object.entries(BUCKETS)) {
+      if (arr.some(x => t.includes(norm(x)))) return k;
+    }
+    return 'OTROS';
+  };
+
+  // Helpers modales
+  function openModal(modal) { modal?.classList.add('show'); modal?.setAttribute('aria-hidden', 'false'); }
+  function closeModal(modal) { modal?.classList.remove('show'); modal?.setAttribute('aria-hidden', 'true'); }
+
+  // ============================================================================
+  // 3) HELPERS DE UI (MODALES, TOASTS, ETC.)
+  // ============================================================================
+  window.UI = {
+    showOverlay(title = 'Procesando…', sub = 'Conectando con el servidor') {
+      if (!overlay) return;
+      if (olTitle) olTitle.textContent = title;
+      if (olSub) olSub.textContent = sub;
+      if (olBar) olBar.style.width = '0%';
+      overlay.classList.add('show');
+      overlay.setAttribute('aria-hidden', 'false');
+      let p = 0; const t = setInterval(() => {
+        p = Math.min(100, p + Math.random() * 18);
+        if (olBar) olBar.style.width = p + '%';
+        if (p >= 100) clearInterval(t);
+      }, 250);
+    },
+    hideOverlay() {
+      if (!overlay) return;
+      if (olBar) olBar.style.width = '100%';
+      setTimeout(() => {
+        overlay.classList.remove('show');
+        overlay.setAttribute('aria-hidden', 'true');
+      }, 260);
+    },
+    toast(msg) {
+      if (!toast || !msg) return;
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2500);
+    },
+    confirm({ title = 'Confirmar', message = '', confirmText = 'Aceptar', cancelText = 'Cancelar', kind = 'warn' }) {
+      if (!dialog) return Promise.resolve(false);
+      if (dialogIcon) dialogIcon.textContent = kind === 'err' ? '!' : (kind === 'warn' ? '⚠' : '★');
+      if (dialogTitle) dialogTitle.textContent = title;
+      if (dialogMessage) dialogMessage.textContent = message;
+      if (dialogActions) {
+        dialogActions.innerHTML = `
+          <button class="btn secondary" id="dlgCancel">${cancelText}</button>
+          <button class="btn ${kind}" id="dlgYes">${confirmText}</button>`;
+      }
+      dialog.classList.add('show');
+      return new Promise(res => {
+        const close = v => { dialog.classList.remove('show'); res(v); };
+        document.getElementById('dlgCancel')?.addEventListener('click', () => close(false), { once: true });
+        document.getElementById('dlgYes')?.addEventListener('click', () => close(true), { once: true });
+      });
+    }
+  };
+
+  // ============================================================================
+  // 4) LÓGICA DE NAVEGACIÓN (MENÚ LATERAL Y PESTAÑAS KPI)
+  // ============================================================================
+  burgerBtn?.addEventListener('click', () => {
+    const collapsed = sidebar.classList.toggle('collapsed');
+    burgerBtn.classList.toggle('active', collapsed);
+    localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 200);
+  });
+
+  const toggleMenuMobile = () => {
+    sidebar?.classList.toggle('show');
+    menuOverlay?.classList.toggle('show');
+  };
+  menuToggleBtn?.addEventListener('click', toggleMenuMobile);
+  menuOverlay?.addEventListener('click', toggleMenuMobile);
+
+  if (localStorage.getItem('sidebarCollapsed') == null) {
+    localStorage.setItem('sidebarCollapsed', '1');
+  }
+  if (localStorage.getItem('sidebarCollapsed') === '1') {
+    sidebar?.classList.add('collapsed');
+    burgerBtn?.classList.add('active');
+  }
+
+  navItems.forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (window.innerWidth < 1024) toggleMenuMobile();
+      navItems.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const target = btn.getAttribute('data-target');
+      views.forEach(v => v.classList.toggle('shown', v.id === target));
+
+      if (target === 'view-usuarios' && (!usersTbody || !usersTbody.dataset.initialized)) {
+        loadUsers().catch(console.error);
+        if (usersTbody) usersTbody.dataset.initialized = 'true';
+      }
+      if (target === 'view-cliente-unidad' && (!clienteUnidadTbody || !clienteUnidadTbody.dataset.initialized)) {
+        loadClienteUnidad().catch(console.error);
+        if (clienteUnidadTbody) clienteUnidadTbody.dataset.initialized = 'true';
+      }
+      if (target === 'view-cuaderno' && !cuadernoFiltersLoaded) {
+        cuadernoFiltersLoaded = true;
+        loadCuadernoFilters();
+      }
+      if (target === 'view-incidencias' && !incidenciasFiltersLoaded) {
+        loadIncidenciasFilters();
+      }
+      if (target === 'view-tiempo-conexion' && !tiempoConexionFiltersLoaded) {
+        tiempoConexionFiltersLoaded = true;
+        loadTiempoConexionFilters();
+      }
+    });
+  });
+
+  // --- Rondas Menu Toggle ---
+  const navGroup = document.querySelector('.nav-group');
+  const navGroupToggle = document.querySelector('.nav-group-toggle');
+  const navSubitems = document.querySelectorAll('.nav-subitem');
+
+  navGroupToggle?.addEventListener('click', (e) => {
+    e.preventDefault();
+    const menu = navGroup?.querySelector('.nav-group-menu');
+    if (menu) {
+      menu.classList.toggle('shown');
+      navGroupToggle.setAttribute('aria-expanded', menu.classList.contains('shown'));
+    }
+  });
+
+  navSubitems.forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (window.innerWidth < 1024) toggleMenuMobile();
+      navItems.forEach(b => b.classList.remove('active'));
+      navSubitems.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const target = btn.getAttribute('data-target');
+      views.forEach(v => v.classList.toggle('shown', v.id === target));
+    });
+  });
+
+  const kpiSubnav = document.querySelector('.kpi-subnav');
+  kpiSubnav?.addEventListener('click', (e) => {
+    const targetButton = e.target.closest('.kpi-subnav-btn');
+    if (!targetButton) return;
+
+    kpiSubnav.querySelectorAll('.kpi-subnav-btn').forEach(btn => btn.classList.remove('active'));
+    targetButton.classList.add('active');
+
+    document.querySelectorAll('.kpi-subview').forEach(view => {
+      view.classList.toggle('active', view.id === targetButton.dataset.target);
+    });
+
+    if (targetButton.dataset.target === 'kpi-detalle-incidentes' && !detalleInitialized) {
+      initDetalleIncidentesDashboard();
+    }
+    if (targetButton.dataset.target === 'kpi-acceso-peatonal' && !apInitialized) {
+      initAccesoPeatonalDashboard();
+      apInitialized = true;
+    }
+    if (targetButton.dataset.target === 'kpi-detalle-acceso') {
+      initDetalleAccesoDashboard();
+    }
+    if (targetButton.dataset.target === 'kpi-ronda-general') {
+      initKpiRondaGeneral();
+    }
+    if (targetButton.dataset.target === 'kpi-detalle-rondas') {
+      initDetalleRondas();
+    }
+  });
+
+  // ============================================================================
+  // 5A) LÓGICA DEL PANEL "RESUMEN"
+  // ============================================================================
+  function initResumenDashboard() {
+    // Defaults de fecha: últimos 30 días (si no hubiera valor)
+    if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
+      const $dp = $('#resumen-filtro-fecha');
+      if (!$dp.val()) {
+        const start = moment().subtract(29, 'days');
+        const end = moment();
+        $dp.val(`${start.format('DD/MM/YYYY')} - ${end.format('DD/MM/YYYY')}`);
+      }
+    }
+
+    const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
+    if (window.Choices) {
+      resumenChoices.cliente = new Choices('#resumen-filtro-cliente', cfg);
+      resumenChoices.unidad = new Choices('#resumen-filtro-unidad', cfg);
+      resumenChoices.categoria = new Choices('#resumen-filtro-categoria', cfg);
+      resumenChoices.riesgo = new Choices('#resumen-filtro-riesgo', cfg);
+    }
+
+    if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
+      $('#resumen-filtro-fecha').daterangepicker({
+        opens: 'left',
+        locale: { format: 'DD/MM/YYYY', applyLabel: 'Aplicar', cancelLabel: 'Cancelar' }
+      });
+    } else {
+      console.error('jQuery o daterangepicker no está disponible.');
+    }
+
+    document.getElementById('resumen-btn-refresh')?.addEventListener('click', renderResumen);
+    queryAndRenderResumen();
+  }
+
+  async function queryAndRenderResumen() {
+    UI.showOverlay('Cargando resumen…', 'Consultando incidentes (últimos 10000)');
+    try {
+      // Limitar a últimos 10000 incidentes para mejor rendimiento
+      const snapshot = await db.collection(COLLECTIONS.INCIDENTS)
+        .orderBy('__name__', 'desc')
+        .limit(10000)
+        .get();
+      cachedIncidents = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : (data.timestamp || new Date()),
+        };
+      });
+
+      populateResumenFilters(cachedIncidents);
+      renderResumen();
+    } catch (e) {
+      console.error('Error al cargar datos para el resumen:', e);
+      UI.toast('Error al cargar datos del resumen.');
+    } finally {
+      UI.hideOverlay();
+    }
+  }
+
+  function populateResumenFilters(data) {
+    if (!resumenChoices.cliente || !resumenChoices.unidad || !resumenChoices.categoria || !resumenChoices.riesgo) return;
+
+    const clientes = [...new Set(data.map(d => d.cliente).filter(Boolean))].sort();
+    const unidades = [...new Set(data.map(d => d.unidad).filter(Boolean))].sort();
+    const categorias = [...new Set(data.map(d => bucketOf(d.tipoIncidente)).filter(Boolean))];
+    const riesgos = [...new Set(data.map(d => d.Nivelderiesgo).filter(Boolean))];
+
+    resumenChoices.cliente.setChoices(
+      [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
+      'value', 'label', false
+    );
+    resumenChoices.unidad.setChoices(
+      [{ value: 'Todos', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
+      'value', 'label', false
+    );
+    resumenChoices.categoria.setChoices(
+      [{ value: 'Todos', label: 'Todas', selected: true }, ...categorias.map(c => ({ value: c, label: c }))],
+      'value', 'label', false
+    );
+    resumenChoices.riesgo.setChoices(
+      [{ value: 'Todos', label: 'Todos', selected: true }, ...riesgos.map(r => ({ value: r, label: r }))],
+      'value', 'label', false
+    );
+  }
+
+  // === Layout unificado para KPI (mismas alturas de cards) ===
+  function applyKpiUnifiedHeights() {
+    const H_SMALL = 260;
+    const H_BAR   = 260;
+    const H_TABLE = 260;
+    const H_HEATMAP = 520; // Mayor altura para el heatmap con 24 horas
+
+    // SKIP resumen charts - they use CSS Grid sizing instead
+    // setH('resumen-chart-riesgo',    H_SMALL);
+    // setH('resumen-chart-categoria', H_BAR);
+    // setH('resumen-chart-unidad',    H_BAR);
+    // setH('resumen-chart-fecha',     H_SMALL);
+    // setH('resumen-chart-mes',       H_BAR);
+    setTableH('resumen-tabla-heatmap', H_HEATMAP);
+
+    setH('detalle-chart-area',      250);
+    setTableH('detalle-tbl-riesgo',    H_TABLE);
+    setTableH('detalle-tbl-codigos',   H_TABLE);
+    setTableH('detalle-tbl-ambiental', H_TABLE);
+    setTableH('detalle-tbl-sso',       H_TABLE);
+
+    setH('ap-chart-fecha',    H_SMALL);
+    setH('ap-chart-estado',   H_SMALL);
+    setH('ap-chart-empresa',  H_BAR);
+    setH('ap-chart-unidad',   H_BAR);
+    setTableH('ap-tabla-heatmap', H_TABLE);
+
+    function setH(canvasId, h){
+      const c = document.getElementById(canvasId);
+      if (!c) return;
+      const box = c.closest('.card, .panel, .box, .kpi-card') || c.parentElement;
+      if (box) {
+        box.style.height = h + 'px';
+        box.style.minHeight = h + 'px';
+      } else {
+        c.parentElement && (c.parentElement.style.height = h + 'px');
+      }
+    }
+    function setTableH(tableId, h){
+      const t = document.getElementById(tableId);
+      if (!t) return;
+      const box = t.closest('.card, .panel, .box, .kpi-card') || t.parentElement;
+      if (box) {
+        box.style.height = h + 'px';
+        box.style.minHeight = h + 'px';
+        box.style.overflow = 'auto';
+      } else {
+        t.parentElement && (t.parentElement.style.cssText += `height:${h}px;min-height:${h}px;overflow:auto;`);
+      }
+    }
+  }
+
+  function renderResumen() {
+    if (typeof $ === 'undefined' || typeof $.fn.daterangepicker === 'undefined') return;
+
+    const filters = {
+      cliente: (resumenChoices.cliente && resumenChoices.cliente.getValue(true)) || 'Todos',
+      unidad: (resumenChoices.unidad && resumenChoices.unidad.getValue(true)) || 'Todos',
+      categoria: (resumenChoices.categoria && resumenChoices.categoria.getValue(true)) || 'Todos',
+      riesgo: (resumenChoices.riesgo && resumenChoices.riesgo.getValue(true)) || 'Todos',
+      fecha: $('#resumen-filtro-fecha').val().split(' - ')
+    };
+
+    const startDate = moment(filters.fecha[0], 'DD/MM/YYYY').startOf('day');
+    const endDate = moment(filters.fecha[1], 'DD/MM/YYYY').endOf('day');
+
+    const filteredData = cachedIncidents.filter(d => {
+      const d_date = moment(d.timestamp);
+      const inDate = d_date.isBetween(startDate, endDate, undefined, '[]');
+      const inCli = filters.cliente === 'Todos' || d.cliente === filters.cliente;
+      const inUni = filters.unidad === 'Todos' || d.unidad === filters.unidad;
+      const inCat = filters.categoria === 'Todos' || bucketOf(d.tipoIncidente) === filters.categoria;
+      const inR = filters.riesgo === 'Todos' || d.Nivelderiesgo === filters.riesgo;
+      return inDate && inCli && inUni && inCat && inR;
+    });
+
+    document.getElementById('resumen-total-incidentes').textContent = filteredData.length.toLocaleString('es-PE');
+
+    drawRiesgoChart(filteredData);
+    drawCategoriaChart(filteredData);
+    drawUnidadChart(filteredData);
+    drawFechaChart(filteredData, startDate, endDate);
+    drawMesChart(filteredData);
+    renderHeatmap(filteredData);
+    initializeResumenMap(filteredData);
+
+    applyKpiUnifiedHeights();
+  }
+
+  function drawChart(canvasId, config) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    if (resumenCharts[canvasId]) {
+      resumenCharts[canvasId].destroy();
+    }
+    resumenCharts[canvasId] = new Chart(canvas, config);
+  }
+
+  // ======================= GRÁFICOS RESUMEN =======================
+  function drawRiesgoChart(data) {
+    const counts = data.reduce((acc, curr) => {
+      const riesgo = curr.Nivelderiesgo || 'No definido';
+      acc[riesgo] = (acc[riesgo] || 0) + 1;
+      return acc;
+    }, {});
+    
+    // Mapear riesgos a colores específicos
+    const riesgoColors = {
+      'ALTO': '#ef4444',
+      'MEDIO': '#f59e0b', 
+      'BAJO': '#10b981',
+      'No definido': '#9ca3af'
+    };
+    
+    const labels = Object.keys(counts);
+    const values = Object.values(counts);
+    const total = values.reduce((a, b) => a + b, 0) || 1;
+    const colors = labels.map(l => riesgoColors[l] || '#8b5cf6');
+
+    drawChart('resumen-chart-riesgo', {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{
+          data: values,
+          backgroundColor: colors,
+          borderColor: 'var(--bg)',
+          borderWidth: 2,
+          hoverBorderWidth: 4,
+          hoverOffset: 8
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '65%',
+        animation: { animateRotate: true, animateScale: false, duration: 750 },
+        plugins: {
+          legend: { 
+            position: 'bottom', 
+            labels: { 
+              color: themeInk(),
+              padding: 12,
+              font: { size: 13, weight: '500' },
+              usePointStyle: true,
+              pointStyle: 'circle'
+            } 
+          },
+          tooltip: {
+            backgroundColor: 'rgba(0,0,0,0.8)',
+            padding: 12,
+            titleFont: { size: 14, weight: 'bold' },
+            bodyFont: { size: 13 },
+            cornerRadius: 8,
+            displayColors: true,
+            callbacks: {
+              label: function (context) {
+                const v = context.raw || 0;
+                const pct = pf(v, total);
+                return `  ${nf.format(v)} incidentes (${pct}%)`;
+              }
+            }
+          },
+          datalabels: {
+            color: '#fff',
+            formatter: (v, ctx) => {
+              const pct = pf(v, total);
+              return v > 0 ? `${pct}%` : '';
+            },
+            font: { weight: 'bold', size: 12 },
+            anchor: 'center',
+            align: 'center'
+          }
+        }
+      }
+    });
+  }
+
+  function drawCategoriaChart(data) {
+    // Agrupar por tipoIncidente exacto (no por categoría)
+    const tipoMap = data.reduce((acc, d) => {
+      const tipo = (d.tipoIncidente || 'Sin especificar').trim();
+      acc[tipo] = (acc[tipo] || 0) + 1;
+      return acc;
+    }, {});
+    
+    // Ordenar por cantidad descendente
+    const sorted = Object.entries(tipoMap).sort((a, b) => b[1] - a[1]);
+    const labels = sorted.map(x => x[0]);
+    const values = sorted.map(x => x[1]);
+    const total = values.reduce((a, b) => a + b, 0);
+
+    // Crear abreviaturas mejoradas para etiquetas largas
+    const createAbbreviation = (text) => {
+      // Mapa de abreviaturas específicas para categorías comunes
+      const abbrevMap = {
+        'CONDICION DE RIESGO': 'COND. RIESGO',
+        'CONDICIÓN DE RIESGO': 'COND. RIESGO',
+        'CODIGO DE SEGURIDAD Y EMERGENCIA': 'COD. SEGURIDAD',
+        'CÓDIGOS DE SEGURIDAD Y EMERGENCIA': 'COD. SEGURIDAD',
+        'ACTO DE SISTEMA MEDIO AMBIENTAL': 'ACTO AMBIENTAL',
+        'ACTOS DE SISTEMA MEDIOAMBIENTAL': 'ACTO AMBIENTAL',
+        'ACTO DE SEGURIDAD Y SALUD OCUPACIONAL': 'SALUD OCUPAC.',
+        'ACTOS DE SEGURIDAD Y SALUD OCUPACIONAL': 'SALUD OCUPAC.'
+      };
+      
+      // Si existe en el mapa, usar la abreviatura predefinida
+      if (abbrevMap[text]) return abbrevMap[text];
+      
+      // Si es corto, devolver tal cual
+      if (text.length <= 20) return text;
+      
+      // Para otros casos, tomar primeras palabras significativas
+      const words = text.split(' ').filter(w => w.length > 2);
+      if (words.length >= 3) {
+        return words.slice(0, 3).join(' ').substring(0, 20);
+      }
+      return text.substring(0, 18) + '...';
+    };
+
+    // Colores por categoría derivada
+    const getCategoryColor = (tipo) => {
+      const category = bucketOf(tipo);
+      const categoryColors = {
+        'RIESGO': { bg: 'rgba(239, 68, 68, 0.85)', border: 'rgba(220, 38, 38, 1)' },
+        'CODIGOS': { bg: 'rgba(99, 102, 241, 0.85)', border: 'rgba(79, 70, 229, 1)' },
+        'AMBIENTAL': { bg: 'rgba(34, 197, 94, 0.85)', border: 'rgba(22, 163, 74, 1)' },
+        'SSO': { bg: 'rgba(59, 130, 246, 0.85)', border: 'rgba(37, 99, 235, 1)' }
+      };
+      return categoryColors[category] || { bg: 'rgba(156, 163, 175, 0.85)', border: 'rgba(107, 114, 128, 1)' };
+    };
+
+    const bgColors = labels.map(l => getCategoryColor(l).bg);
+    const borderColors = labels.map(l => getCategoryColor(l).border);
+    const abbreviations = labels.map(l => createAbbreviation(l));
+
+    drawChart('resumen-chart-categoria', {
+      type: 'bar',
+      data: {
+        labels: abbreviations,
+        datasets: [{
+          label: 'Cantidad',
+          data: values,
+          backgroundColor: bgColors,
+          borderRadius: 6,
+          borderSkipped: false,
+          borderColor: borderColors,
+          borderWidth: 2,
+          hoverBackgroundColor: labels.map(l => getCategoryColor(l).border)
+        }]
+      },
+      options: {
+        indexAxis: 'x',
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 500 },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: 'rgba(0,0,0,0.9)',
+            padding: 14,
+            cornerRadius: 8,
+            titleFont: { size: 13, weight: 'bold' },
+            bodyFont: { size: 12 },
+            callbacks: { 
+              title: (ctx) => labels[ctx[0].dataIndex],
+              label: (c) => {
+                const pct = pf(c.raw, total);
+                return `Cantidad: ${nf.format(c.raw)} (${pct}%)`;
+              }
+            }
+          },
+          datalabels: {
+            formatter: (v, ctx) => {
+              const pct = pf(v, total);
+              return `${nf.format(v)}\n${pct}%`;
+            },
+            anchor: 'end',
+            align: 'top',
+            offset: 8,
+            font: { weight: 'bold', size: 11 },
+            color: themeInk(),
+            lineHeight: 1.4
+          }
+        },
+        scales: {
+          y: { 
+            beginAtZero: true,
+            ticks: { 
+              color: themeInk(),
+              stepSize: Math.ceil(Math.max(...values) / 5)
+            },
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          },
+          x: { 
+            ticks: { 
+              color: themeInk(),
+              maxRotation: 45,
+              minRotation: 0,
+              autoSkip: false,
+              font: { size: 11, weight: '500' },
+              padding: 4
+            },
+            grid: { display: false }
+          }
+        },
+        onClick: (_evt, elements) => {
+          if (!elements?.length) return;
+          const idx = elements[0].index;
+          const tipoSeleccionado = labels[idx];
+          try { 
+            // Obtener la categoría derivada del tipo
+            const cat = bucketOf(tipoSeleccionado);
+            resumenChoices.categoria?.setChoiceByValue(cat); 
+          } catch { /* noop */ }
+          document.getElementById('resumen-btn-refresh')?.click();
+        }
+      }
+    });
+  }
+
+  function drawUnidadChart(data) {
+    const counts = data.reduce((acc, curr) => {
+      const unidad = curr.unidad || 'No definido';
+      acc[unidad] = (acc[unidad] || 0) + 1;
+      return acc;
+    }, {});
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 15);
+    const labels = sorted.map(item => item[0]);
+    const values = sorted.map(item => item[1]);
+    const total = values.reduce((a, b) => a + b, 0);
+
+    // Generar gradient de colores
+    const colors = labels.map((_, i) => {
+      const hue = (i * 25) % 360;
+      return `hsla(${hue}, 70%, 60%, 0.9)`;
+    });
+
+    drawChart('resumen-chart-unidad', {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Incidentes por Unidad',
+          data: values,
+          backgroundColor: colors,
+          borderRadius: 8,
+          borderSkipped: false,
+          borderColor: 'rgba(0,0,0,0.1)',
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 500 },
+        layout: {
+          padding: { top: 30, bottom: 10, left: 10, right: 10 }
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: 'rgba(0,0,0,0.8)',
+            padding: 12,
+            cornerRadius: 8,
+            titleFont: { size: 13, weight: 'bold' },
+            bodyFont: { size: 12 },
+            callbacks: { 
+              label: (c) => {
+                const pct = pf(c.raw, total);
+                return `${c.dataset.label}: ${nf.format(c.raw)} (${pct}%)`;
+              }
+            }
+          },
+          datalabels: {
+            formatter: (v) => nf.format(v),
+            anchor: 'end',
+            align: 'top',
+            offset: 1,
+            font: { weight: 'bold', size: 11 },
+            color: themeInk()
+          }
+        },
+        scales: {
+          x: { 
+            ticks: { color: themeInk(), autoSkip: true, font: { size: 10 }, maxRotation: 45, minRotation: 0 },
+            grid: { display: false }
+          },
+          y: { 
+            beginAtZero: true,
+            ticks: { color: themeInk() },
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          }
+        },
+        onClick: (_evt, elements) => {
+          if (!elements?.length) return;
+          const chosen = labels[elements[0].index];
+          try { resumenChoices.sedes?.setChoiceByValue(chosen); } catch { /* noop */ }
+          document.getElementById('resumen-btn-refresh')?.click();
+        }
+      }
+    });
+  }
+
+  function drawFechaChart(data, start, end) {
+    const diffDays = end.diff(start, 'days');
+    let labels, counts;
+
+    if (diffDays < 60) {
+      labels = Array.from({ length: diffDays + 1 }, (_, i) => start.clone().add(i, 'days').format('DD/MM'));
+      counts = data.reduce((acc, curr) => {
+        const key = moment(curr.timestamp).format('DD/MM');
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {});
+    } else {
+      labels = moment.monthsShort();
+      counts = data.reduce((acc, curr) => {
+        const key = moment(curr.timestamp).format('MMM');
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {});
+    }
+
+    const values = labels.map(l => counts[l] || 0);
+    const maxValue = Math.max(...values, 1);
+
+    drawChart('resumen-chart-fecha', {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Incidentes por Fecha',
+          data: values,
+          borderColor: '#a78bfa',
+          backgroundColor: 'rgba(167, 139, 250, 0.15)',
+          tension: 0.4,
+          fill: true,
+          pointRadius: 4,
+          pointHoverRadius: 7,
+          pointBackgroundColor: '#a78bfa',
+          pointBorderColor: '#fff',
+          pointBorderWidth: 2,
+          borderWidth: 2.5,
+          segment: {
+            borderDash: (ctx) => ctx.p0DataIndex % 7 === 0 ? [] : undefined
+          }
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 500 },
+        interaction: { mode: 'nearest', axis: 'x', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: 'rgba(0,0,0,0.8)',
+            padding: 12,
+            cornerRadius: 8,
+            titleFont: { size: 13, weight: 'bold' },
+            bodyFont: { size: 12 },
+            callbacks: { 
+              label: (c) => `${c.dataset.label}: ${nf.format(c.raw)} incidentes`
+            }
+          },
+          datalabels: { display: false }
+        },
+        scales: { 
+          y: { 
+            ticks: { color: themeInk() },
+            grid: { color: 'rgba(0,0,0,0.05)' },
+            beginAtZero: true,
+            max: Math.ceil(maxValue * 1.1)
+          }, 
+          x: { 
+            ticks: { color: themeInk() },
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          } 
+        }
+      }
+    });
+  }
+
+  function drawMesChart(data) {
+    const monthsData = [
+      { short: 'ene', long: 'Enero', num: 0 },
+      { short: 'feb', long: 'Febrero', num: 1 },
+      { short: 'mar', long: 'Marzo', num: 2 },
+      { short: 'abr', long: 'Abril', num: 3 },
+      { short: 'may', long: 'Mayo', num: 4 },
+      { short: 'jun', long: 'Junio', num: 5 },
+      { short: 'jul', long: 'Julio', num: 6 },
+      { short: 'ago', long: 'Agosto', num: 7 },
+      { short: 'sep', long: 'Septiembre', num: 8 },
+      { short: 'oct', long: 'Octubre', num: 9 },
+      { short: 'nov', long: 'Noviembre', num: 10 },
+      { short: 'dic', long: 'Diciembre', num: 11 }
+    ];
+
+    const counts = {};
+    monthsData.forEach(m => { counts[m.short] = 0; });
+
+    data.forEach(curr => {
+      const monthNum = moment(curr.timestamp).month();
+      const monthShort = monthsData[monthNum].short;
+      counts[monthShort] = (counts[monthShort] || 0) + 1;
+    });
+
+    const labels = monthsData.map(m => m.long);
+    const values = monthsData.map(m => counts[m.short] || 0);
+    const total = values.reduce((a, b) => a + b, 0);
+    const maxValue = Math.max(...values, 1);
+
+    // Generar gradient de colores
+    const colors = values.map((v) => {
+      const intensity = v / maxValue;
+      return `rgba(59, 130, 246, ${0.5 + intensity * 0.5})`;
+    });
+
+    drawChart('resumen-chart-mes', {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Incidentes por Mes',
+          data: values,
+          backgroundColor: colors,
+          borderRadius: 8,
+          borderSkipped: false,
+          hoverBackgroundColor: 'rgba(59, 130, 246, 1)',
+          borderColor: 'rgba(59, 130, 246, 0.3)',
+          borderWidth: 1
+        }]
+      },
+      options: {
+        indexAxis: 'x',
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 500 },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: 'rgba(0,0,0,0.8)',
+            padding: 12,
+            cornerRadius: 8,
+            titleFont: { size: 13, weight: 'bold' },
+            bodyFont: { size: 12 },
+            callbacks: { 
+              label: (c) => {
+                const pct = total > 0 ? pf(c.raw, total) : '0.0';
+                return `${c.dataset.label}: ${nf.format(c.raw)} (${pct}%)`;
+              }
+            }
+          },
+          datalabels: {
+            formatter: (v) => v > 0 ? nf.format(v) : '',
+            anchor: 'end',
+            align: 'top',
+            offset: 6,
+            font: { weight: 'bold', size: 12 },
+            color: themeInk()
+          }
+        },
+        scales: { 
+          y: { 
+            ticks: { color: themeInk() },
+            grid: { color: 'rgba(0,0,0,0.05)' },
+            beginAtZero: true,
+            max: Math.ceil(maxValue * 1.15)
+          }, 
+          x: { 
+            ticks: { color: themeInk(), maxRotation: 45, minRotation: 45 },
+            grid: { display: false }
+          } 
+        }
+      }
+    });
+  }
+
+  function renderHeatmap(data) {
+    const heatmap = Array(24).fill(0).map(() => Array(7).fill(0));
+    data.forEach(d => {
+      const ts = moment(d.timestamp);
+      const hour = ts.hour();
+      const day = ts.day(); // 0=Domingo, 6=Sábado
+      heatmap[hour][day]++;
+    });
+
+    const table = document.getElementById('resumen-tabla-heatmap');
+    if (!table) return;
+    const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+    let html = `<thead><tr><th>Hora</th>${days.map(d => `<th>${d}</th>`).join('')}<th>Total</th></tr></thead><tbody>`;
+    const colTotals = Array(7).fill(0);
+    let maxCell = 0;
+
+    // Mostrar cada hora de 00:00 a 23:59
+    for (let h = 0; h < 24; h++) {
+      const hourLabel = `${String(h).padStart(2, '0')}:00-${String(h).padStart(2, '0')}:59`;
+      let rowTotal = 0;
+      let rowHtml = `<tr><td>${hourLabel}</td>`;
+      for (let d = 0; d < 7; d++) {
+        const val = heatmap[h][d];
+        rowHtml += `<td data-v="${val}">${val}</td>`;
+        colTotals[d] += val;
+        rowTotal += val;
+        maxCell = Math.max(maxCell, val);
+      }
+      rowHtml += `<td><b>${rowTotal}</b></td></tr>`;
+      html += rowHtml;
+    }
+    const grandTotal = colTotals.reduce((a, b) => a + b, 0);
+    html += `</tbody><tfoot><tr><th>Total</th>${colTotals.map(t => `<th><b>${t}</b></th>`).join('')}<th><b>${grandTotal}</b></th></tr></tfoot>`;
+    table.innerHTML = html;
+
+    const cells = table.querySelectorAll('tbody td[data-v]');
+    cells.forEach(td => {
+      const v = +td.dataset.v || 0;
+      const k = maxCell ? v / maxCell : 0;
+      // Gradiente: azul (bajo) -> cian -> amarillo -> naranja -> rojo (alto)
+      let bg, textColor;
+      if (k === 0) {
+        bg = '#f0f9ff';
+        textColor = '#64748b';
+      } else if (k < 0.25) {
+        bg = `rgba(14, 165, 233, ${0.3 + 0.3 * k})`;
+        textColor = '#0c4a6e';
+      } else if (k < 0.5) {
+        bg = `rgba(6, 182, 212, ${0.4 + 0.3 * (k - 0.25) * 2})`;
+        textColor = '#0d7377';
+      } else if (k < 0.75) {
+        bg = `rgba(34, 197, 94, ${0.4 + 0.3 * (k - 0.5) * 2})`;
+        textColor = '#15803d';
+      } else if (k < 0.9) {
+        bg = `rgba(234, 179, 8, ${0.5 + 0.3 * (k - 0.75) / 0.15})`;
+        textColor = '#78350f';
+      } else {
+        bg = `rgba(239, 68, 68, ${0.6 + 0.4 * (k - 0.9) / 0.1})`;
+        textColor = 'white';
+      }
+      td.style.background = bg;
+      td.style.color = textColor;
+      td.style.textAlign = 'center';
+      td.style.fontWeight = k > 0.6 ? '700' : k > 0.3 ? '600' : '500';
+      td.style.padding = '0.35rem 0.25rem';
+      td.style.fontSize = '0.7rem';
+    });
+
+    // Scroll a la parte superior para ver desde las 00:00
+    // Usar requestAnimationFrame para asegurar que el DOM esté completamente listo
+    requestAnimationFrame(() => {
+      const tableWrap = table.closest('.table-wrap');
+      if (tableWrap) {
+        tableWrap.scrollTop = 0;
+        tableWrap.scrollLeft = 0;
+        // Forzar scroll nuevamente después de un pequeño delay
+        setTimeout(() => {
+          tableWrap.scrollTop = 0;
+          tableWrap.scrollLeft = 0;
+        }, 50);
+        
+        // Asegurar que el wrapper ocupe todo el espacio disponible
+        tableWrap.style.height = '100%';
+        tableWrap.style.minHeight = '100%';
+        tableWrap.style.overflow = 'auto';
+      }
+    });
+  }
+
+  // Variable global para el mapa de Leaflet
+  let resumenMap = null;
+  let resumenMapMarkers = null;
+
+  function initializeResumenMap(data) {
+    const mapElement = document.getElementById('resumen-map');
+    if (!mapElement || typeof L === 'undefined') return;
+
+    // Destruir mapa anterior si existe
+    if (resumenMap) {
+      resumenMap.remove();
+      resumenMap = null;
+    }
+
+    // Crear nuevo mapa centrado en Perú (Lima por defecto)
+    resumenMap = L.map('resumen-map', {
+      center: [-12.0464, -77.0428],
+      zoom: 5,
+      zoomControl: true,
+      attributionControl: false
+    });
+
+    // Agregar capa de OpenStreetMap
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '© OpenStreetMap'
+    }).addTo(resumenMap);
+
+    // Agrupar incidentes por ubicación (usando unidad como agrupación)
+    const locationCounts = {};
+    data.forEach(d => {
+      const location = d.unidad || 'Sin ubicación';
+      if (!locationCounts[location]) {
+        locationCounts[location] = { count: 0, lat: -12.0464 + Math.random() * 10, lng: -77.0428 + Math.random() * 10 };
+      }
+      locationCounts[location].count++;
+    });
+
+    // Crear markers
+    Object.entries(locationCounts).forEach(([location, data]) => {
+      const intensity = Math.min(data.count / 10, 1);
+      const markerColor = intensity > 0.7 ? '#ef4444' : intensity > 0.4 ? '#f59e0b' : '#10b981';
+      
+      const markerIcon = L.divIcon({
+        html: `<div style="
+          width: 36px; height: 36px; border-radius: 50%;
+          background: ${markerColor}; border: 3px solid white;
+          display: flex; align-items: center; justify-content: center;
+          font-weight: bold; color: white; font-size: 12px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+          cursor: pointer;
+        ">${data.count}</div>`,
+        iconSize: [36, 36],
+        className: 'custom-marker'
+      });
+
+      const marker = L.marker([data.lat, data.lng], { icon: markerIcon })
+        .bindPopup(`
+          <strong>${location}</strong><br>
+          Incidentes: <strong>${data.count}</strong><br>
+          <small>Click para filtrar</small>
+        `)
+        .on('click', () => {
+          try {
+            resumenChoices.sedes?.setChoiceByValue(location);
+            document.getElementById('resumen-btn-refresh')?.click();
+          } catch(e) { /* noop */ }
+        })
+        .addTo(resumenMap);
+    });
+
+    // Ajustar vista al mapa
+    if (Object.keys(locationCounts).length > 0) {
+      setTimeout(() => {
+        try { resumenMap.invalidateSize(); } catch(e) { /* noop */ }
+      }, 100);
+    }
+  }
+  function initDetalleIncidentesDashboard() {
+    const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', shouldSort: false };
+    detalleChoices.cliente = new Choices('#detalle-filtro-cliente', cfg);
+    detalleChoices.unidad = new Choices('#detalle-filtro-unidad', cfg);
+    detalleChoices.year = new Choices('#detalle-filtro-year', cfg);
+
+    const currentYear = new Date().getFullYear();
+    const years = Array.from({ length: 6 }, (_, i) => ({ value: currentYear - i, label: String(currentYear - i) }));
+    detalleChoices.year.setChoices(years, 'value', 'label', true);
+
+    // Cargar clientes y unidades desde Firebase (límite 2000 para mejor rendimiento)
+    db.collection(COLLECTIONS.INCIDENTS)
+      .orderBy('__name__', 'desc')
+      .limit(2000)
+      .get()
+      .then(snap => {
+      const clienteSet = new Set();
+      const unitSet = new Set();
+      
+      snap.forEach(d => {
+        const data = d.data();
+        if (data?.cliente) clienteSet.add(data.cliente);
+        if (data?.unidad) unitSet.add(data.unidad);
+      });
+
+      const clientes = [{ value: '__ALL__', label: 'Todos', selected: true }, ...[...clienteSet].sort().map(c => ({ value: c, label: c }))];
+      const unidades = [{ value: '__ALL__', label: 'Todas', selected: true }, ...[...unitSet].sort().map(u => ({ value: u, label: u }))];
+      
+      detalleChoices.cliente.setChoices(clientes, 'value', 'label', false);
+      detalleChoices.unidad.setChoices(unidades, 'value', 'label', false);
+    });
+
+    // Configurar date pickers
+    const hoy = new Date();
+    const hace30Dias = new Date(hoy.getTime() - 30 * 24 * 60 * 60 * 1000);
+    document.getElementById('detalle-filtro-fecha-inicio').value = hace30Dias.toISOString().split('T')[0];
+    document.getElementById('detalle-filtro-fecha-fin').value = hoy.toISOString().split('T')[0];
+
+    document.getElementById('detalle-btn-refresh')?.addEventListener('click', queryAndRenderDetalle);
+    document.getElementById('detalle-btn-export')?.addEventListener('click', exportDetalleCSV);
+
+    queryAndRenderDetalle();
+    detalleInitialized = true;
+  }
+
+  async function queryAndRenderDetalle() {
+    UI.showOverlay('Generando detalles…', 'Consultando incidencias');
+    try {
+      const cliente = detalleChoices.cliente.getValue(true) || '__ALL__';
+      const unit = detalleChoices.unidad.getValue(true) || '__ALL__';
+      const year = detalleChoices.year.getValue(true) || new Date().getFullYear();
+      
+      // Obtener fechas de los inputs
+      const fechaInicio = document.getElementById('detalle-filtro-fecha-inicio').value;
+      const fechaFin = document.getElementById('detalle-filtro-fecha-fin').value;
+      
+      const startDate = fechaInicio ? new Date(fechaInicio + 'T00:00:00') : new Date(year, 0, 1);
+      const endDate = fechaFin ? new Date(fechaFin + 'T23:59:59') : new Date(parseInt(year) + 1, 0, 1);
+
+      let query = db.collection(COLLECTIONS.INCIDENTS)
+        .where('timestamp', '>=', startDate)
+        .where('timestamp', '<', endDate);
+
+      if (cliente !== '__ALL__') {
+        query = query.where('cliente', '==', cliente);
+      }
+      if (unit !== '__ALL__') {
+        query = query.where('unidad', '==', unit);
+      }
+
+      const snapshot = await query.get();
+
+      // Recolectar todos los tipoIncidente únicos
+      const tiposMap = {};
+      const tiposOrder = [];
+      
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        const tipo = (data.tipoIncidente || 'Sin especificar').trim();
+        if (!tiposMap[tipo]) {
+          tiposMap[tipo] = 0;
+          tiposOrder.push(tipo);
+        }
+        tiposMap[tipo]++;
+      });
+
+      // Regenerar tablas dinámicamente para cada tipo
+      const tables = {};
+      tiposOrder.forEach(tipo => {
+        tables[tipo] = new Map();
+      });
+
+      // Poblar datos mensuales por tipo
+      const monthly = {};
+      tiposOrder.forEach(tipo => {
+        monthly[tipo] = Array(12).fill(0);
+      });
+
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        const ts = data.timestamp?.toDate ? data.timestamp.toDate() : new Date();
+        const m = ts.getMonth();
+        const tipo = (data.tipoIncidente || 'Sin especificar').trim();
+
+        if (monthly[tipo]) {
+          monthly[tipo][m]++;
+          const detalle = data.detalleIncidente || 'Sin Detalle';
+          if (!tables[tipo].has(detalle)) tables[tipo].set(detalle, Array(12).fill(0));
+          tables[tipo].get(detalle)[m]++;
+        }
+      });
+
+      // Generar tarjetas dinámicamente
+      const sum = arr => arr.reduce((a, b) => a + b, 0);
+      const sidebar = document.getElementById('detalle-sidebar-stats');
+      sidebar.innerHTML = '';
+
+      // GUARDAR datos para exportación (incluyendo documentos completos con fechas)
+      const detailedRecords = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        const ts = data.timestamp?.toDate ? data.timestamp.toDate() : new Date();
+        detailedRecords.push({
+          fecha: ts.toLocaleDateString('es-PE'),
+          hora: ts.toLocaleTimeString('es-PE'),
+          cliente: data.cliente || 'N/A',
+          unidad: data.unidad || 'N/A',
+          tipoIncidente: data.tipoIncidente || 'Sin especificar',
+          detalleIncidente: data.detalleIncidente || 'Sin Detalle',
+          subCategoria: data.subCategoria || 'N/A',
+          nivelRiesgo: data.Nivelderiesgo || 'N/A',
+          estado: data.estado || 'Pendiente',
+          comentario: data.comentario || 'Sin comentarios'
+        });
+      });
+
+      lastDetalleData = {
+        monthly,
+        tables,
+        tiposOrder,
+        detailedRecords,
+        filters: {
+          cliente: detalleChoices.cliente.getValue(true),
+          unidad: detalleChoices.unidad.getValue(true),
+          year: detalleChoices.year.getValue(true),
+          fechaInicio: document.getElementById('detalle-filtro-fecha-inicio').value,
+          fechaFin: document.getElementById('detalle-filtro-fecha-fin').value
+        }
+      };
+
+      // DEBUG: Verificar datos capturados
+      console.log('✓ Datos capturados para exportación:', {
+        registros: detailedRecords.length,
+        primerRegistro: detailedRecords[0],
+        tipos: tiposOrder.length
+      });
+
+      const colors = ['#7c3aed', '#2563eb', '#06b6d4', '#0ea5e9', '#f59e0b', '#ef4444', '#10b981', '#8b5cf6', '#6366f1', '#ec4899'];
+      tiposOrder.forEach((tipo, idx) => {
+        const total = sum(monthly[tipo]);
+        if (total > 0) { // Solo mostrar tarjetas con datos
+          const color = colors[idx % colors.length];
+          const card = document.createElement('div');
+          card.className = 'stat';
+          card.style.setProperty('--card-color', color);
+          card.innerHTML = `<div class="stat-value">${total}</div><div class="stat-label">${tipo}</div>`;
+          sidebar.appendChild(card);
+        }
+      });
+
+      const toMatrix = map => [...map.entries()]
+        .map(([label, arr]) => ({ label, monthly: arr, total: sum(arr) }))
+        .sort((a, b) => b.total - a.total);
+
+      // Limpiar las tablas anteriores y crear nuevas para cada tipo
+      const mainContent = document.querySelector('.kpi-tables-wrapper');
+      if (mainContent) {
+        mainContent.innerHTML = '';
+        
+        // Filtrar tipos que tengan datos
+        const tiposConDatos = tiposOrder.filter(tipo => sum(monthly[tipo]) > 0);
+        
+        if (tiposConDatos.length === 0) {
+          mainContent.innerHTML = '<div style="padding:20px; text-align:center; color:#999;"><p>No hay datos para los filtros seleccionados</p></div>';
+        } else {
+          tiposConDatos.forEach(tipo => {
+            const tableItem = document.createElement('div');
+            tableItem.className = 'kpi-table-item';
+            tableItem.innerHTML = `<h3>${tipo}</h3><div class="table-wrap"><table data-tipo="${tipo}"></table></div>`;
+            mainContent.appendChild(tableItem);
+            const tableEl = tableItem.querySelector('table');
+            renderDetalleTable(tableEl, toMatrix(tables[tipo]));
+          });
+        }
+      }
+
+      drawDetalleAreaChart(monthly);
+
+      applyKpiUnifiedHeights();
+
+    } catch (e) {
+      console.error('Error al generar detalle de incidentes:', e);
+      UI.toast('Error al cargar los detalles.');
+    } finally {
+      UI.hideOverlay();
+    }
+  }
+
+  function renderDetalleTable(tableEl, matrix) {
+    if (!tableEl) return;
+    const headTitle = tableEl.dataset.head || 'Concepto';
+    const head = `<thead><tr><th>${headTitle}</th>${months.map(m => `<th>${m}</th>`).join('')}<th>Total</th></tr></thead>`;
+    let body = matrix.map(r => `<tr><td>${r.label}</td>${r.monthly.map(v => `<td>${v || 0}</td>`).join('')}<td><b>${r.total || 0}</b></td></tr>`).join('');
+    const monthlyTotals = months.map((_, i) => `<td><b>${matrix.reduce((a, c) => a + (c.monthly[i] || 0), 0)}</b></td>`).join('');
+    body += `<tr style="background:rgba(255,255,255,0.05)"><td><b>Total</b></td>${monthlyTotals}<td><b>${matrix.reduce((a, c) => a + (c.total || 0), 0)}</b></td></tr>`;
+    tableEl.innerHTML = head + `<tbody>${body}</tbody>`;
+  }
+
+  function drawDetalleAreaChart(series) {
+    const canvas = document.getElementById('detalle-chart-area');
+    if (!canvas) return;
+
+    // Construir dinámicamente los datasets según los tipos disponibles
+    const colors = ['#7c3aed', '#2563eb', '#06b6d4', '#0ea5e9', '#f59e0b', '#ef4444', '#10b981', '#8b5cf6', '#6366f1', '#ec4899'];
+    const datasets = Object.entries(series).map(([label, data], idx) => {
+      const color = colors[idx % colors.length];
+      const rgbaColor = color.replace('#', '').match(/.{2}/g).map(x => parseInt(x, 16)).join(',');
+      return {
+        label,
+        data,
+        fill: true,
+        tension: 0.35,
+        pointRadius: 1,
+        borderWidth: 2,
+        borderColor: color,
+        backgroundColor: `rgba(${rgbaColor}, 0.2)`
+      };
+    });
+
+    if (detalleChart) detalleChart.destroy();
+    detalleChart = new Chart(canvas, {
+      type: 'line',
+      data: { labels: months, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { color: themeInk() }
+          }
+        },
+        scales: {
+          y: { ticks: { color: themeInk() } },
+          x: { ticks: { color: themeInk() } }
+        }
+      }
+    });
+  }
+
+  function exportDetalleCSV() {
+    // Redirigir a la función de Excel
+    exportDetalleExcel();
+  }
+
+  function exportDetalleExcel() {
+    try {
+      if (!window.XLSX) {
+        UI.toast('Librería XLSX no disponible');
+        return;
+      }
+
+      if (!lastDetalleData || !lastDetalleData.detailedRecords || lastDetalleData.detailedRecords.length === 0) {
+        UI.toast('Primero genera un reporte con filtros y datos disponibles');
+        return;
+      }
+
+      const wb = XLSX.utils.book_new();
+      const timestamp = new Date().toLocaleString('es-PE');
+      const { detailedRecords, monthly, tiposOrder } = lastDetalleData;
+      const sum = arr => arr.reduce((a, b) => a + b, 0);
+
+      // ===== HOJA 1: DETALLE COMPLETO CON FECHA Y HORA =====
+      const detailData = [];
+      
+      // Título y fecha de exportación
+      detailData.push(['REGISTRO DETALLADO DE INCIDENCIAS']);
+      detailData.push(['Fecha de Exportación:', timestamp]);
+      detailData.push(['Total de Registros:', detailedRecords.length]);
+      detailData.push([]); // Fila vacía
+      
+      // Encabezados
+      detailData.push([
+        'FECHA',
+        'HORA',
+        'CLIENTE',
+        'UNIDAD',
+        'TIPO DE INCIDENTE',
+        'DETALLE',
+        'SUB CATEGORÍA',
+        'NIVEL RIESGO',
+        'ESTADO',
+        'COMENTARIO'
+      ]);
+
+      // Agregar todos los registros
+      detailedRecords.forEach(record => {
+        detailData.push([
+          record.fecha || 'N/A',
+          record.hora || 'N/A',
+          record.cliente || 'N/A',
+          record.unidad || 'N/A',
+          record.tipoIncidente || 'N/A',
+          record.detalleIncidente || 'N/A',
+          record.subCategoria || 'N/A',
+          record.nivelRiesgo || 'N/A',
+          record.estado || 'N/A',
+          record.comentario || 'N/A'
+        ]);
+      });
+
+      const detailWs = XLSX.utils.aoa_to_sheet(detailData);
+      
+      // Configurar ancho de columnas
+      detailWs['!cols'] = [
+        { wch: 13 },  // Fecha
+        { wch: 13 },  // Hora
+        { wch: 16 },  // Cliente
+        { wch: 16 },  // Unidad
+        { wch: 28 },  // Tipo
+        { wch: 40 },  // Detalle
+        { wch: 28 },  // Sub Categoría
+        { wch: 15 },  // Nivel
+        { wch: 13 },  // Estado
+        { wch: 35 }   // Comentario
+      ];
+
+      // Estilos para encabezado de tabla
+      const headerStyle = {
+        font: { bold: true, color: { rgb: 'FFFFFF' }, size: 11 },
+        fill: { fgColor: { rgb: 'FF2F5496' } },
+        alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+        border: { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } }
+      };
+
+      // Aplicar estilos al encabezado de tabla (fila 1)
+      for (let i = 0; i < 10; i++) {
+        const cell = XLSX.utils.encode_cell({ r: 0, c: i });
+        if (detailWs[cell]) detailWs[cell].s = headerStyle;
+      }
+
+      // Aplicar bordes y alineación a datos
+      for (let r = 1; r < detailData.length; r++) {
+        for (let c = 0; c < 10; c++) {
+          const cell = XLSX.utils.encode_cell({ r, c });
+          if (detailWs[cell]) {
+            const borderColor = (r % 2 === 0) ? 'FFE7E6E6' : 'FFFFFFFF';
+            detailWs[cell].s = {
+              border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } },
+              fill: { fgColor: { rgb: borderColor } },
+              alignment: { vertical: 'top', wrapText: true, horizontal: 'left' }
+            };
+          }
+        }
+      }
+
+      // Congelar filas de encabezado
+      detailWs['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+      XLSX.utils.book_append_sheet(wb, detailWs, 'Detalle Completo');
+
+      // ===== HOJA 2: RESUMEN POR TIPO DE INCIDENTE =====
+      const summaryData = [];
+      
+      // Encabezados
+      const summaryHeader = ['Mes', ...tiposOrder, 'TOTAL MENSUAL'];
+      summaryData.push(summaryHeader);
+
+      const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+      let totalGranGeneral = 0;
+      for (let i = 0; i < 12; i++) {
+        const monthData = tiposOrder.map(tipo => monthly[tipo][i] || 0);
+        const monthTotal = sum(monthData);
+        totalGranGeneral += monthTotal;
+        summaryData.push([months[i], ...monthData, monthTotal]);
+      }
+
+      // Fila de totales anuales
+      const totalesAnuales = tiposOrder.map(tipo => sum(monthly[tipo]));
+      summaryData.push(['TOTAL ANUAL', ...totalesAnuales, totalGranGeneral]);
+
+      const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
+      summaryWs['!cols'] = new Array(tiposOrder.length + 2).fill(0).map(() => ({ wch: 18 }));
+
+      // Estilo para encabezado de tabla
+      const summaryHeaderStyle = {
+        font: { bold: true, color: { rgb: 'FFFFFF' }, size: 11 },
+        fill: { fgColor: { rgb: 'FF548235' } },
+        alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+        border: { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } }
+      };
+
+      for (let i = 0; i <= tiposOrder.length; i++) {
+        const cell = XLSX.utils.encode_cell({ r: 0, c: i });
+        if (summaryWs[cell]) summaryWs[cell].s = summaryHeaderStyle;
+      }
+
+      const totalRowStyle = {
+        font: { bold: true, size: 11 },
+        fill: { fgColor: { rgb: 'FFFFC7CE' } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } },
+        numFmt: '0'
+      };
+
+      // Estilo a fila de totales
+      for (let i = 0; i <= tiposOrder.length; i++) {
+        const cell = XLSX.utils.encode_cell({ r: summaryData.length - 1, c: i });
+        if (summaryWs[cell]) summaryWs[cell].s = totalRowStyle;
+      }
+
+      // Bordes a datos intermedios
+      for (let r = 1; r < summaryData.length - 1; r++) {
+        for (let c = 0; c <= tiposOrder.length; c++) {
+          const cell = XLSX.utils.encode_cell({ r, c });
+          if (summaryWs[cell]) {
+            const borderColor = (r % 2 === 0) ? 'FFE7E6E6' : 'FFFFFFFF';
+            summaryWs[cell].s = {
+              border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } },
+              alignment: { horizontal: 'center' },
+              fill: { fgColor: { rgb: borderColor } },
+              numFmt: '0'
+            };
+          }
+        }
+      }
+
+      summaryWs['!freeze'] = { xSplit: 1, ySplit: 1 };
+      XLSX.utils.book_append_sheet(wb, summaryWs, 'Resumen Mensual');
+
+      // ===== HOJA 3: INFORMACIÓN Y ANÁLISIS =====
+      const analysisData = [
+        ['INFORMACIÓN DEL REPORTE'],
+        ['Fecha y Hora de Exportación', timestamp],
+        ['Total de Registros Exportados', detailedRecords.length],
+        [],
+        ['FILTROS APLICADOS'],
+        ['Cliente', lastDetalleData.filters.cliente || 'Todos'],
+        ['Unidad', lastDetalleData.filters.unidad || 'Todas'],
+        ['Año', lastDetalleData.filters.year || 'N/A'],
+        ['Desde (Fecha Inicio)', lastDetalleData.filters.fechaInicio || 'N/A'],
+        ['Hasta (Fecha Fin)', lastDetalleData.filters.fechaFin || 'N/A'],
+        [],
+        ['ANÁLISIS POR TIPO DE INCIDENTE'],
+        ['Tipo', 'Cantidad', '% del Total']
+      ];
+
+      const total = sum(tiposOrder.map(tipo => sum(monthly[tipo])));
+      tiposOrder.forEach(tipo => {
+        const cantidad = sum(monthly[tipo]);
+        const porcentaje = total > 0 ? ((cantidad / total) * 100).toFixed(2) : '0.00';
+        analysisData.push([tipo, cantidad, porcentaje + '%']);
+      });
+
+      const analysisWs = XLSX.utils.aoa_to_sheet(analysisData);
+      analysisWs['!cols'] = [{ wch: 35 }, { wch: 25 }, { wch: 15 }];
+
+      // Estilos para encabezado de tabla de análisis
+      const analysisHeaderStyle = {
+        font: { bold: true, color: { rgb: 'FFFFFF' }, size: 11 },
+        fill: { fgColor: { rgb: 'FF2F5496' } },
+        alignment: { horizontal: 'center', vertical: 'center' },
+        border: { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } }
+      };
+
+      for (let i = 0; i < 3; i++) {
+        const cell = XLSX.utils.encode_cell({ r: 12, c: i });
+        if (analysisWs[cell]) analysisWs[cell].s = analysisHeaderStyle;
+      }
+
+      // Bordes a filas de análisis
+      for (let r = 13; r < analysisData.length; r++) {
+        for (let c = 0; c < 3; c++) {
+          const cell = XLSX.utils.encode_cell({ r, c });
+          if (analysisWs[cell]) {
+            const borderColor = (r % 2 === 0) ? 'FFE7E6E6' : 'FFFFFFFF';
+            analysisWs[cell].s = {
+              border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } },
+              fill: { fgColor: { rgb: borderColor } },
+              alignment: { horizontal: c === 0 ? 'left' : 'center', vertical: 'center' }
+            };
+          }
+        }
+      }
+
+      analysisWs['!freeze'] = { xSplit: 0, ySplit: 13 };
+      XLSX.utils.book_append_sheet(wb, analysisWs, 'Información');
+
+      // Descargar archivo
+      const filename = `Incidencias_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(wb, filename);
+      UI.toast('✓ Exportado a Excel con ' + detailedRecords.length + ' registros');
+    } catch (e) {
+      console.error('Error en exportación Excel:', e);
+      UI.toast('Error al exportar a Excel: ' + e.message);
+    }
+  }
+
+  // ============================================================================
+  // 5C) KPI — ACCESO PEATONAL
+  // ============================================================================
+  const apCliente = document.getElementById('ap-filtro-cliente');
+  const apSedes   = document.getElementById('ap-filtro-sede');
+  const apTipo    = document.getElementById('ap-filtro-tipo');
+  const apFecha   = document.getElementById('ap-filtro-fecha');
+  const apApply   = document.getElementById('ap-btn-aplicar');
+
+  const apCardTotal       = document.getElementById('ap-total');
+  const apCardVisita      = document.getElementById('ap-visita');
+  const apCardProveedor   = document.getElementById('ap-proveedor');
+  const apCardContratista = document.getElementById('ap-contratista');
+
+  let apCharts = {};
+  let apChoices = {};
+  let apInitialized = false;
+  let apCache = [];
+
+  function initAccesoPeatonalDashboard(){
+    const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, shouldSort: true };
+    if (window.Choices) {
+      if (apCliente) apChoices.cliente = new Choices(apCliente, cfg);
+      if (apSedes)   apChoices.sedes   = new Choices(apSedes,   cfg);
+      if (apTipo)    apChoices.tipo    = new Choices(apTipo,    cfg);
+    }
+
+    if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined' && apFecha) {
+      const start = moment().subtract(29,'days'), end = moment();
+      $(apFecha).daterangepicker({
+        opens: 'left',
+        startDate: start, endDate: end,
+        locale: { format: 'DD/MM/YYYY', applyLabel:'Aplicar', cancelLabel:'Cancelar' }
+      });
+    }
+
+    queryAccesoPeatonal()
+      .then(() => {
+        populateAccesoPeatonalFilters(apCache);
+        renderAccesoPeatonal();
+      })
+      .catch(e => {
+        console.error(e);
+        UI.toast('No se pudo cargar Acceso Peatonal');
+      });
+
+    apApply?.addEventListener('click', renderAccesoPeatonal);
+  }
+
+  function queryAccesoPeatonalDateParse(s){
+    if (!s) return null;
+    const m = moment(
+      s,
+      ['YYYY-MM-DD HH:mm:ss','YYYY-MM-DD HH:mm','YYYY-MM-DD',
+       'DD/MM/YYYY HH:mm:ss','DD/MM/YYYY HH:mm','DD/MM/YYYY'],
+      false
+    );
+    return m.isValid() ? m.toDate() : null;
+  }
+
+  async function queryAccesoPeatonal(){
+    UI.showOverlay('Cargando accesos…', 'Consultando ACCESO_PEATONAL (últimos 5000)');
+    try {
+      // Límite de 5000 para mejor rendimiento
+      const snap = await db.collection('ACCESO_PEATONAL')
+        .orderBy('__name__', 'desc')
+        .limit(5000)
+        .get();
+      apCache = snap.docs.map(d=>{
+        const x = d.data();
+        const inStr  = `${x.FECHA_INGRESO ?? ''} ${x.HORA_INGRESO ?? ''}`.trim();
+        const outStr = `${x.FECHA_SALIDA  ?? ''} ${x.HORA_FIN      ?? ''}`.trim();
+        const tsIn  = queryAccesoPeatonalDateParse(inStr);
+        const tsOut = queryAccesoPeatonalDateParse(outStr);
+        const ts    = tsIn || tsOut || null;
+        return {
+          id: d.id,
+          CLIENTE:     (x.CLIENTE     || '').toString(),
+          UNIDAD:      (x.UNIDAD      || '').toString(),
+          TIPO_ACCESO: (x.TIPO_ACCESO || '').toString(),
+          ESTADO:      (x.ESTADO      || '').toString(),
+          EMPRESA:     (x.EMPRESA     || '').toString(),
+          _ts: ts
+        };
+      });
+    } finally {
+      UI.hideOverlay();
+    }
+  }
+
+  function populateAccesoPeatonalFilters(rows){
+    const clientes = [...new Set(rows.map(r=>r.CLIENTE).filter(Boolean))].sort();
+    const sedes    = [...new Set(rows.map(r=>r.UNIDAD).filter(Boolean))].sort();
+    const tipos    = [...new Set(rows.map(r=>r.TIPO_ACCESO).filter(Boolean))].sort();
+
+    const setChoices = (inst, values) => {
+      if (!inst) return;
+      inst.clearChoices();
+      inst.setChoices([{value:'__ALL__', label:'Todos', selected:true},
+        ...values.map(v=>({value:v, label:v}))], 'value','label', false);
+    };
+
+    setChoices(apChoices.cliente, clientes);
+    setChoices(apChoices.sedes,   sedes);
+    setChoices(apChoices.tipo,    tipos);
+
+    if (!window.Choices) {
+      if (apCliente) apCliente.innerHTML = `<option value="__ALL__" selected>Todos</option>${clientes.map(s=>`<option>${s}</option>`).join('')}`;
+      if (apSedes)   apSedes.innerHTML   = `<option value="__ALL__" selected>Todos</option>${sedes.map(s=>`<option>${s}</option>`).join('')}`;
+      if (apTipo)    apTipo.innerHTML    = `<option value="__ALL__" selected>Todos</option>${tipos.map(s=>`<option>${s}</option>`).join('')}`;
+    }
+  }
+
+  function getAPFilters(){
+    let start = moment().subtract(29,'days').startOf('day');
+    let end   = moment().endOf('day');
+    if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined' && apFecha) {
+      const v = $(apFecha).val();
+      if (v && v.includes(' - ')) {
+        const [a,b] = v.split(' - ');
+        start = moment(a,'DD/MM/YYYY').startOf('day');
+        end   = moment(b,'DD/MM/YYYY').endOf('day');
+      }
+    }
+    const cliente = apChoices.cliente ? apChoices.cliente.getValue(true) : (apCliente?.value || '__ALL__');
+    const sede    = apChoices.sedes   ? apChoices.sedes.getValue(true)   : (apSedes?.value   || '__ALL__');
+    const tipo    = apChoices.tipo    ? apChoices.tipo.getValue(true)    : (apTipo?.value    || '__ALL__');
+    return { start, end, cliente, sede, tipo };
+  }
+
+  const normTxt = s => (s||'').toString().trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+
+  function renderAccesoPeatonal(){
+    const { start, end, cliente, sede, tipo } = getAPFilters();
+
+    const filtered = apCache.filter(r=>{
+      const inRange = r._ts ? moment(r._ts).isBetween(start, end, undefined, '[]') : false;
+      const inCliente = (cliente==='__ALL__') || (r.CLIENTE===cliente);
+      const inSede    = (sede==='__ALL__')    || (r.UNIDAD===sede);
+      const inTipo    = (tipo==='__ALL__')    || (r.TIPO_ACCESO===tipo);
+      return inRange && inCliente && inSede && inTipo;
+    });
+
+    const total = filtered.length;
+    const countByTipo = key => filtered.reduce((a,c)=> a + (normTxt(c.TIPO_ACCESO)===key ? 1:0), 0);
+    setCard(apCardTotal,       total);
+    setCard(apCardVisita,      countByTipo('VISITA'));
+    setCard(apCardProveedor,   countByTipo('PROVEEDOR'));
+    setCard(apCardContratista, countByTipo('CONTRATISTA'));
+
+    // Línea por fecha
+    {
+      const labels = [];
+      const map = new Map();
+      for (let m = start.clone(); m.isSameOrBefore(end, 'day'); m.add(1,'day')) {
+        const key = m.format('DD/MM'); labels.push(key); map.set(key,0);
+      }
+      filtered.forEach(r=>{
+        const key = moment(r._ts).format('DD/MM');
+        if (map.has(key)) map.set(key, map.get(key)+1);
+      });
+      const dataValues = labels.map(l=>map.get(l)||0);
+      const totalAccesos = dataValues.reduce((a,b)=>a+b,0)||1;
+      
+      // Crear dataset con labels de cantidad
+      const datasetConfig = {
+        label:'Accesos', 
+        data: dataValues,
+        borderColor: PALETTE.blue, 
+        backgroundColor:'rgba(59,130,246,.12)',
+        fill:true, 
+        tension:.33, 
+        pointRadius:5, 
+        pointHoverRadius:7, 
+        pointBorderWidth:2, 
+        pointBorderColor:'#fff',
+        pointBackgroundColor: PALETTE.blue
+      };
+      
+      drawAPChart('ap-chart-fecha', {
+        type:'line',
+        data:{ labels, datasets:[datasetConfig]},
+        options:{ 
+          responsive:true, 
+          maintainAspectRatio:false,
+          plugins:{ 
+            legend:{ 
+              display:true, 
+              position:'bottom',
+              labels:{ 
+                font:{size:11, weight:'bold'}, 
+                color:themeInk(),
+                padding:12,
+                usePointStyle:true
+              }
+            },
+            tooltip:{ 
+              backgroundColor: 'rgba(0,0,0,0.8)',
+              padding: 10,
+              cornerRadius: 6,
+              titleFont: { size: 12, weight: 'bold' },
+              bodyFont: { size: 11 },
+              callbacks:{ 
+                label:(c)=> `${c.dataset.label}: ${nf.format(c.raw)} (${pf(c.raw,totalAccesos)}%)`
+              }
+            },
+            datalabels:{ 
+              display: true,
+              formatter:(v, ctx)=> v > 0 ? nf.format(v) : '', 
+              anchor:'end', 
+              align:'top', 
+              offset:10, 
+              font:{weight:'bold', size:11}, 
+              color:'#1f2937',
+              backgroundColor:'rgba(255,255,255,0.9)',
+              borderRadius:4,
+              padding:3
+            }
+          },
+          scales:{ 
+            y:{ 
+              ticks:{ color:themeInk() },
+              grid:{ color:'rgba(0,0,0,0.05)' }
+            }, 
+            x:{ 
+              ticks:{ color:themeInk() },
+              grid:{ display:false }
+            } 
+          } 
+        }
+      });
+    }
+
+    // Donut estado
+    {
+      const counts = filtered.reduce((a,c)=>{ const k=c.ESTADO||'SIN ESTADO'; a[k]=(a[k]||0)+1; return a; },{});
+      const labels = Object.keys(counts);
+      const values = Object.values(counts);
+      const sum = values.reduce((x,y)=>x+y,0)||1;
+      
+      drawAPChart('ap-chart-estado', {
+        type:'doughnut',
+        data:{ 
+          labels, 
+          datasets:[{ 
+            data:values, 
+            backgroundColor:[PALETTE.blue, PALETTE.amber, PALETTE.red, PALETTE.gray]
+          }]
+        },
+        options:{ 
+          responsive:true, 
+          maintainAspectRatio:false, 
+          cutout:'58%',
+          plugins:{ 
+            legend:{ 
+              position:'bottom', 
+              labels:{ 
+                font:{size:11, weight:'bold'},
+                color:themeInk(),
+                padding:12,
+                generateLabels:(chart)=>{
+                  const data = chart.data;
+                  return data.labels.map((label, i)=>{
+                    const value = data.datasets[0].data[i];
+                    const pct = ((value/sum)*100).toFixed(1);
+                    return {
+                      text: `${label}: ${nf.format(value)} (${pct}%)`,
+                      fillStyle: data.datasets[0].backgroundColor[i],
+                      hidden: false,
+                      index: i,
+                      pointStyle: 'circle'
+                    };
+                  });
+                }
+              }
+            },
+            datalabels:{ 
+              formatter:(v)=> `${pf(v,sum)}%`, 
+              anchor:'center', 
+              align:'center', 
+              font:{weight:'700', size:14},
+              color:'#fff'
+            },
+            tooltip:{ 
+              callbacks:{ 
+                label:(c)=> `${c.label}: ${nf.format(c.raw)} (${pf(c.raw,sum)}%)`
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // Barras por empresa
+    {
+      const map = filtered.reduce((a,c)=>{ const k=c.EMPRESA||'SIN EMPRESA'; a[k]=(a[k]||0)+1; return a; },{});
+      const arr = Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,20);
+      const labels = arr.map(x=>x[0]);
+      const values = arr.map(x=>x[1]);
+      const total = values.reduce((a,b)=>a+b,0)||1;
+      
+      drawAPChart('ap-chart-empresa', {
+        type:'bar',
+        data:{ 
+          labels, 
+          datasets:[{ 
+            label:'Accesos', 
+            data:values, 
+            backgroundColor: PALETTE.blue,
+            borderRadius: 6,
+            borderSkipped: false
+          }]
+        },
+        options:{ 
+          indexAxis:'y', 
+          responsive:true, 
+          maintainAspectRatio:false,
+          plugins:{ 
+            legend:{ display:false },
+            tooltip:{ 
+              backgroundColor: 'rgba(0,0,0,0.8)',
+              padding: 10,
+              cornerRadius: 6,
+              titleFont: { size: 12, weight: 'bold' },
+              bodyFont: { size: 11 },
+              callbacks:{ 
+                label:(c)=> `${c.dataset.label}: ${nf.format(c.raw)} (${pf(c.raw,total)}%)`
+              }
+            },
+            datalabels:{ 
+              display: true,
+              formatter:(v)=> `${nf.format(v)} (${pf(v,total)}%)`, 
+              anchor:'end', 
+              align:'right', 
+              offset:10, 
+              font:{weight:'bold', size:10},
+              color:'#1f2937'
+            }
+          },
+          scales:{ 
+            y:{ 
+              ticks:{ 
+                color:themeInk(), 
+                autoSkip:false,
+                font: { size: 11 }
+              },
+              grid:{ display:false }
+            }, 
+            x:{ 
+              ticks:{ color:themeInk() },
+              grid:{ color:'rgba(0,0,0,0.05)' }
+            }
+          }
+        }
+      });
+    }
+
+    // Heatmap 2h x día
+    {
+      const bins = Array(12).fill(0).map(()=>Array(7).fill(0));
+      filtered.forEach(r=>{
+        const m = moment(r._ts);
+        const slot = Math.floor(m.hour()/2);
+        const dow  = m.day();
+        if (slot>=0 && slot<12 && dow>=0 && dow<7) bins[slot][dow] += 1;
+      });
+
+      const table = document.getElementById('ap-tabla-heatmap'); 
+      if (table){
+        const dayHdr = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado']
+          .map(d=>d[0].toUpperCase()+d.slice(1,3));
+        const range = i => `${String(i*2).padStart(2,'0')}:00 - ${String(i*2+2).padStart(2,'0')}:00`;
+        let html = `<thead><tr><th>rango_horario</th>${dayHdr.map(d=>`<th>${d}</th>`).join('')}<th>Total</th></tr></thead><tbody>`;
+        const colTotals = Array(7).fill(0);
+        let max = 0, grand = 0;
+
+        for (let i=0;i<12;i++){
+          const row = bins[i];
+          const sum = row.reduce((a,b)=>a+b,0); grand += sum;
+          html += `<tr><td>${range(i)}</td>`;
+          for (let d=0; d<7; d++){ max = Math.max(max, row[d]); colTotals[d]+=row[d]; html += `<td data-v="${row[d]}">${row[d]}</td>`; }
+          html += `<td><b>${sum}</b></td></tr>`;
+        }
+        html += `</tbody><tfoot><tr><th>Total</th>${colTotals.map(v=>`<th><b>${v}</b></th>`).join('')}<th><b>${grand}</b></th></tr></tfoot>`;
+        table.innerHTML = html;
+
+        table.querySelectorAll('tbody td[data-v]').forEach(td=>{
+          const v = +td.dataset.v || 0;
+          const k = max ? v/max : 0;
+          td.style.background = `rgba(14,165,233,${0.15 + 0.55*k})`;
+          td.style.color = k>.55 ? '#fff' : themeInk();
+          td.style.textAlign='center';
+          td.style.fontWeight = k>.8 ? '700':'500';
+        });
+      }
+    }
+
+    // Barras por unidad
+    {
+      const map = filtered.reduce((a,c)=>{ const k=c.UNIDAD||'SIN UNIDAD'; a[k]=(a[k]||0)+1; return a; },{});
+      const arr = Object.entries(map).sort((a,b)=>b[1]-a[1]);
+      const labels = arr.map(x=>x[0]);
+      const values = arr.map(x=>x[1]);
+      const total = values.reduce((a,b)=>a+b,0)||1;
+      
+      drawAPChart('ap-chart-unidad', {
+        type:'bar',
+        data:{ 
+          labels, 
+          datasets:[{ 
+            label:'Accesos', 
+            data:values, 
+            backgroundColor: PALETTE.blueLt,
+            borderRadius: 6,
+            borderSkipped: false
+          }]
+        },
+        options:{ 
+          responsive:true, 
+          maintainAspectRatio:false,
+          plugins:{ 
+            legend:{ 
+              display:true,
+              position:'bottom',
+              labels:{ 
+                font:{size:11, weight:'bold'}, 
+                color:themeInk(),
+                padding:12
+              }
+            },
+            datalabels:{ 
+              formatter:(v)=> `${nf.format(v)}\n(${pf(v,total)}%)`, 
+              anchor:'end', 
+              align:'top', 
+              offset:8, 
+              font:{weight:'bold', size:10},
+              color:'#1f2937'
+            },
+            tooltip:{ 
+              callbacks:{ 
+                label:(c)=> `${c.dataset.label}: ${nf.format(c.raw)} (${pf(c.raw,total)}%)`
+              }
+            }
+          },
+          scales:{ 
+            y:{ 
+              ticks:{ color:themeInk() },
+              grid:{ color:'rgba(0,0,0,0.05)' }
+            }, 
+            x:{ 
+              ticks:{ 
+                color:themeInk(), 
+                autoSkip:false, 
+                maxRotation:45, 
+                minRotation:0,
+                font:{ size:10 }
+              },
+              grid:{ display:false }
+            }
+          }
+        }
+      });
+    }
+
+    applyKpiUnifiedHeights();
+  }
+
+  function drawAPChart(canvasId, config){
+    const el = document.getElementById(canvasId);
+    if (!el) return;
+    if (apCharts[canvasId]) apCharts[canvasId].destroy();
+    apCharts[canvasId] = new Chart(el, config);
+  }
+
+  function setCard(el, value){
+    if (!el) return;
+    const n = (typeof value === 'number' && isFinite(value)) ? value : 0;
+    el.textContent = n.toLocaleString('es-PE');
+  }
+
+  // ============================================================================
+  // 5D) KPI — RONDA GENERAL (FILTROS Y ESTADÍSTICAS)
+  // ============================================================================
+  let kpiRondaFilters = {
+    cliente: '',
+    unidad: ''
+  };
+
+  function initKpiRondaGeneral() {
+    console.log('📊 Inicializando KPI Ronda General...');
+    
+    // Cargar opciones de Cliente y Unidad
+    loadKpiRondaClientesUnidades();
+    
+    // Event listeners de botones
+    document.getElementById('kpi-ronda-aplicar')?.addEventListener('click', () => {
+      loadKpiRondaData();
+    });
+    
+    document.getElementById('kpi-ronda-limpiar')?.addEventListener('click', () => {
+      // Limpiar filtros
+      kpiRondaFilters = {
+        cliente: '',
+        unidad: ''
+      };
+      document.getElementById('kpi-ronda-cliente').value = '';
+      document.getElementById('kpi-ronda-unidad').value = '';
+      
+      // Recargar con filtros vacíos
+      loadKpiRondaData();
+    });
+    
+    // Event listener para cambio de Cliente (actualiza Unidades)
+    document.getElementById('kpi-ronda-cliente')?.addEventListener('change', () => {
+      loadKpiRondaUnidadesPorCliente();
+    });
+    
+    // Cargar datos iniciales con pequeño delay para asegurar que TODO está inicializado
+    setTimeout(() => {
+      loadKpiRondaData();
+    }, 500);
+  }
+
+  async function loadKpiRondaClientesUnidades() {
+    try {
+      // Obtener clientes únicos de RONDAS_COMPLETADAS
+      const snapshot = await db.collection('RONDAS_COMPLETADAS').get();
+      const clientes = new Set();
+      
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.cliente) clientes.add(data.cliente);
+      });
+      
+      // Cargar en select
+      const clienteSelect = document.getElementById('kpi-ronda-cliente');
+      if (clienteSelect) {
+        clientes.forEach(cliente => {
+          const option = document.createElement('option');
+          option.value = cliente;
+          option.textContent = cliente;
+          clienteSelect.appendChild(option);
+        });
+      }
+    } catch (error) {
+      console.error('Error cargando clientes:', error);
+    }
+  }
+
+  async function loadKpiRondaUnidadesPorCliente() {
+    try {
+      const clienteSelect = document.getElementById('kpi-ronda-cliente');
+      const cliente = clienteSelect?.value || '';
+      const unidadSelect = document.getElementById('kpi-ronda-unidad');
+      
+      // Limpiar unidades anteriores (excepto "Todas")
+      while (unidadSelect.options.length > 1) {
+        unidadSelect.remove(1);
+      }
+      
+      if (!cliente) return;
+      
+      // Obtener unidades del cliente seleccionado
+      const snapshot = await db.collection('RONDAS_COMPLETADAS')
+        .where('cliente', '==', cliente)
+        .get();
+      
+      const unidades = new Set();
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.unidad) unidades.add(data.unidad);
+      });
+      
+      // Agregar unidades al select
+      unidades.forEach(unidad => {
+        const option = document.createElement('option');
+        option.value = unidad;
+        option.textContent = unidad;
+        unidadSelect.appendChild(option);
+      });
+    } catch (error) {
+      console.error('Error cargando unidades:', error);
+    }
+  }
+
+  async function loadKpiRondaData() {
+    try {
+      UI.showOverlay('Cargando...', 'Consultando datos de rondas');
+      
+      // Obtener filtros actuales
+      const clienteSelect = document.getElementById('kpi-ronda-cliente');
+      const unidadSelect = document.getElementById('kpi-ronda-unidad');
+      
+      kpiRondaFilters.cliente = clienteSelect?.value || '';
+      kpiRondaFilters.unidad = unidadSelect?.value || '';
+      
+      console.log('🔍 Filtros actuales:', kpiRondaFilters);
+      
+      // Obtener TODOS los documentos
+      const snapshot = await db.collection('RONDAS_COMPLETADAS').get();
+      let registros = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data
+        };
+      });
+      
+      console.log(`📊 Total de documentos en colección: ${registros.length}`);
+      
+      // Ordenar por horarioInicio (más recientes primero)
+      registros.sort((a, b) => {
+        const dateA = a.horarioInicio?.toDate?.() || new Date(a.horarioInicio || 0);
+        const dateB = b.horarioInicio?.toDate?.() || new Date(b.horarioInicio || 0);
+        return dateB - dateA;
+      });
+      
+      // Filtro por cliente
+      if (kpiRondaFilters.cliente) {
+        registros = registros.filter(r => r.cliente === kpiRondaFilters.cliente);
+        console.log(`👥 Después de filtro cliente: ${registros.length}`);
+      }
+      
+      // Filtro por unidad
+      if (kpiRondaFilters.unidad) {
+        registros = registros.filter(r => r.unidad === kpiRondaFilters.unidad);
+        console.log(`🏢 Después de filtro unidad: ${registros.length}`);
+      }
+      
+      // Limitar a 30 últimos registros
+      const ultimos30 = registros.slice(0, 30);
+      
+      console.log(`✅ Registros finales (máx 30): ${ultimos30.length}`, ultimos30);
+      
+      // Actualizar card de información
+      updateKpiRondaInfoCard(ultimos30);
+      
+      UI.hideOverlay();
+    } catch (error) {
+      console.error('Error cargando datos de rondas:', error);
+      UI.toast('❌ Error al cargar datos: ' + error.message);
+      UI.hideOverlay();
+    }
+  }
+
+  function updateKpiRondaInfoCard(registros) {
+    // Actualizar total
+    const totalEl = document.getElementById('kpi-ronda-total');
+    if (totalEl) {
+      totalEl.textContent = registros.length.toLocaleString('es-PE');
+    }
+    
+    // Actualizar texto de información
+    const infoTextEl = document.getElementById('kpi-ronda-info-text');
+    if (infoTextEl) {
+      if (kpiRondaFilters.cliente || kpiRondaFilters.unidad) {
+        infoTextEl.textContent = 'Registros filtrados';
+      } else {
+        infoTextEl.textContent = 'Últimos 30 registros';
+      }
+    }
+    
+    // Actualizar información de filtros
+    const filterInfoEl = document.getElementById('kpi-ronda-filter-info');
+    if (filterInfoEl) {
+      const filters = [];
+      if (kpiRondaFilters.cliente) filters.push(`Cliente: ${kpiRondaFilters.cliente}`);
+      if (kpiRondaFilters.unidad) filters.push(`Unidad: ${kpiRondaFilters.unidad}`);
+      
+      if (filters.length > 0) {
+        filterInfoEl.textContent = `🔍 Filtros: ${filters.join(' • ')}`;
+      } else {
+        filterInfoEl.textContent = '🔍 Sin filtros aplicados';
+      }
+    }
+    
+    // Cargar gráficos
+    drawKpiRondaCharts(registros);
+    
+    // Cargar tabla
+    fillKpiRondaTable(registros);
+  }
+
+  // Gráficos
+  function drawKpiRondaCharts(registros) {
+    drawKpiRondaEstadoChart(registros);
+    drawKpiRondaUnidadesChart(registros);
+    drawKpiRondaFechaChart(registros);
+  }
+
+  // Gráfico de Torta - Estado de Rondas
+  let kpiRondaChartEstado = null;
+  function drawKpiRondaEstadoChart(registros) {
+    const ctx = document.getElementById('kpi-ronda-chart-estado');
+    if (!ctx) return;
+    
+    // Contar por estado
+    const estadoCounts = {};
+    registros.forEach(r => {
+      const estado = r.estado || 'No especificado';
+      estadoCounts[estado] = (estadoCounts[estado] || 0) + 1;
+    });
+    
+    // Colores por estado
+    const estadoColors = {
+      'TERMINADA': '#22c55e',
+      'INCOMPLETA': '#f59e0b',
+      'NO REALIZADA': '#ef4444',
+      'INCOMPLETADA': '#f59e0b',
+      'No especificado': '#9ca3af'
+    };
+    
+    const labels = Object.keys(estadoCounts);
+    const data = Object.values(estadoCounts);
+    const colors = labels.map(l => estadoColors[l] || '#6366f1');
+    
+    // Destruir gráfico anterior si existe
+    if (kpiRondaChartEstado) kpiRondaChartEstado.destroy();
+    
+    kpiRondaChartEstado = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: labels,
+        datasets: [{
+          data: data,
+          backgroundColor: colors,
+          borderColor: '#fff',
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { font: { size: 12 }, padding: 15 }
+          }
+        }
+      }
+    });
+  }
+
+  // Gráfico de Barras - Rondas por Unidad
+  let kpiRondaChartUnidades = null;
+  function drawKpiRondaUnidadesChart(registros) {
+    const ctx = document.getElementById('kpi-ronda-chart-unidades');
+    if (!ctx) return;
+    
+    // Contar por unidad
+    const unidadCounts = {};
+    registros.forEach(r => {
+      const unidad = r.unidad || 'Sin unidad';
+      unidadCounts[unidad] = (unidadCounts[unidad] || 0) + 1;
+    });
+    
+    const labels = Object.keys(unidadCounts).sort();
+    const data = labels.map(l => unidadCounts[l]);
+    
+    // Destruir gráfico anterior si existe
+    if (kpiRondaChartUnidades) kpiRondaChartUnidades.destroy();
+    
+    kpiRondaChartUnidades = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Cantidad de Rondas',
+          data: data,
+          backgroundColor: '#3b82f6',
+          borderColor: '#1e40af',
+          borderWidth: 1
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: true,
+        plugins: {
+          legend: { display: true, labels: { font: { size: 11 } } }
+        },
+        scales: {
+          x: { beginAtZero: true, ticks: { stepSize: 1 } }
+        }
+      }
+    });
+  }
+
+  // Gráfico de Línea - Rondas por Fecha y Estado
+  let kpiRondaChartFecha = null;
+  function drawKpiRondaFechaChart(registros) {
+    const ctx = document.getElementById('kpi-ronda-chart-fecha');
+    if (!ctx) return;
+    
+    // Función auxiliar para convertir fecha
+    const convertToDate = (value) => {
+      if (!value) return null;
+      
+      // Si es un Timestamp de Firebase (con propiedades _seconds y _nanoseconds)
+      if (value._seconds !== undefined || value._nanoseconds !== undefined) {
+        try {
+          const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
+          return new Date(ms);
+        } catch(e) {
+          console.error('Error convertir Timestamp Firebase (_seconds):', e);
+          return null;
+        }
+      }
+      
+      // Si es un Timestamp de Firebase con segundos y nanoseconds
+      if (value.seconds !== undefined || value.nanoseconds !== undefined) {
+        try {
+          const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
+          return new Date(ms);
+        } catch(e) {
+          console.error('Error convertir Timestamp Firebase:', e);
+          return null;
+        }
+      }
+      
+      // Si tiene método toDate()
+      if (value.toDate && typeof value.toDate === 'function') return value.toDate();
+      
+      if (value instanceof Date) return value;
+      if (typeof value === 'string') return new Date(value);
+      return null;
+    };
+    
+    // Agrupar por fecha y estado
+    const dataByDate = {};
+    registros.forEach(r => {
+      const dateObj = convertToDate(r.horarioInicio);
+      if (!dateObj || isNaN(dateObj)) return;
+      
+      const dateStr = dateObj.toLocaleDateString('es-PE');
+      
+      if (!dataByDate[dateStr]) {
+        dataByDate[dateStr] = {
+          'TERMINADA': 0,
+          'INCOMPLETA': 0,
+          'INCOMPLETADA': 0,
+          'NO REALIZADA': 0
+        };
+      }
+      
+      const estado = r.estado || 'NO REALIZADA';
+      dataByDate[dateStr][estado]++;
+    });
+    
+    const labels = Object.keys(dataByDate).sort();
+    const terminadas = labels.map(d => dataByDate[d]['TERMINADA'] || 0);
+    const incompletas = labels.map(d => (dataByDate[d]['INCOMPLETA'] || 0) + (dataByDate[d]['INCOMPLETADA'] || 0));
+    const noRealizadas = labels.map(d => dataByDate[d]['NO REALIZADA'] || 0);
+    
+    // Destruir gráfico anterior si existe
+    if (kpiRondaChartFecha) kpiRondaChartFecha.destroy();
+    
+    kpiRondaChartFecha = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'Completadas',
+            data: terminadas,
+            borderColor: '#22c55e',
+            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+            borderWidth: 2,
+            tension: 0.4,
+            fill: true
+          },
+          {
+            label: 'Incompletas',
+            data: incompletas,
+            borderColor: '#f59e0b',
+            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+            borderWidth: 2,
+            tension: 0.4,
+            fill: true
+          },
+          {
+            label: 'No realizadas',
+            data: noRealizadas,
+            borderColor: '#ef4444',
+            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            borderWidth: 2,
+            tension: 0.4,
+            fill: true
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'top', labels: { font: { size: 11 }, usePointStyle: true } }
+        },
+        scales: {
+          x: {
+            ticks: {
+              font: { size: 10 },
+              maxRotation: 45,
+              minRotation: 0
+            }
+          },
+          y: { 
+            beginAtZero: true, 
+            ticks: { stepSize: 1 },
+            grace: '10%'
+          }
+        }
+      }
+    });
+  }
+
+  // Tabla de Información
+  function fillKpiRondaTable(registros) {
+    const tbody = document.getElementById('kpi-ronda-tabla-body');
+    if (!tbody) return;
+    
+    tbody.innerHTML = '';
+    
+    if (registros.length === 0) {
+      tbody.innerHTML = '<tr style="border-bottom: 1px solid #e2e8f0;"><td colspan="7" style="padding: 20px; text-align: center; color: #a0aec0;">No hay registros</td></tr>';
+      return;
+    }
+    
+    // Función auxiliar para convertir valor a Date
+    const convertToDate = (value) => {
+      if (!value) return null;
+      
+      // Si es un Timestamp de Firebase (con propiedades _seconds y _nanoseconds)
+      if (value._seconds !== undefined || value._nanoseconds !== undefined) {
+        try {
+          const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
+          return new Date(ms);
+        } catch(e) {
+          console.error('Error convertir Timestamp Firebase (_seconds):', e);
+        }
+      }
+      
+      // Si es un Timestamp de Firebase con segundos y nanoseconds (sin guión bajo)
+      if (value.seconds !== undefined || value.nanoseconds !== undefined) {
+        try {
+          const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
+          return new Date(ms);
+        } catch(e) {
+          console.error('Error convertir Timestamp Firebase con segundos:', e);
+        }
+      }
+      
+      // Si tiene método toDate()
+      if (value.toDate && typeof value.toDate === 'function') {
+        try {
+          return value.toDate();
+        } catch(e) {
+          console.error('Error convertir Timestamp toDate:', e);
+        }
+      }
+      
+      // Si es una Date normal
+      if (value instanceof Date) return value;
+      
+      // Si es un string ISO
+      if (typeof value === 'string') {
+        try {
+          return new Date(value);
+        } catch(e) {
+          console.error('Error convertir string:', e);
+        }
+      }
+      
+      return null;
+    };
+    
+    registros.forEach((r, idx) => {
+      // Debug en primer registro
+      if (idx === 0) {
+        console.log('📋 Tabla - Primer registro:', r);
+        console.log('   horarioInicio:', r.horarioInicio);
+        console.log('   horarioInicio type:', typeof r.horarioInicio);
+        console.log('   horarioInicio constructor:', r.horarioInicio?.constructor?.name);
+        console.log('   Tiene toDate?', typeof r.horarioInicio?.toDate);
+      }
+      
+      // Convertir a Date
+      let dateObj = convertToDate(r.horarioInicio);
+      
+      if (idx === 0) {
+        console.log('   dateObj después de convertir:', dateObj);
+        console.log('   dateObj instanceof Date?', dateObj instanceof Date);
+      }
+      
+      // Formatear fecha
+      let fecha = '-';
+      let hora = '-';
+      if (dateObj && dateObj instanceof Date && !isNaN(dateObj)) {
+        try {
+          fecha = dateObj.toLocaleDateString('es-PE', { 
+            year: 'numeric', 
+            month: '2-digit', 
+            day: '2-digit'
+          });
+          hora = dateObj.toLocaleTimeString('es-PE', { 
+            hour: '2-digit', 
+            minute: '2-digit',
+            hour12: false
+          });
+        } catch(e) {
+          console.error('Error al formatear fecha:', e);
+        }
+      } else {
+        if (idx === 0) {
+          console.log('   ⚠️ dateObj NO es válido para formatear. dateObj=', dateObj);
+        }
+      }
+      
+      if (idx === 0) {
+        console.log(`   Fecha final: '${fecha}', Hora final: '${hora}'`);
+        console.log('📊 Estructura puntosRegistrados:', r.puntosRegistrados);
+      }
+      
+      // Contar QR desde el objeto puntosRegistrados (convertir a array si es necesario)
+      let qrRegistrados = 0;
+      let qrSinRegistrar = 0;
+      
+      // Convertir puntosRegistrados a array si es un objeto
+      let puntosArray = Array.isArray(r.puntosRegistrados) 
+        ? r.puntosRegistrados 
+        : (r.puntosRegistrados ? Object.values(r.puntosRegistrados) : []);
+      
+      if (puntosArray.length > 0) {
+        // Iterar sobre cada punto
+        puntosArray.forEach((punto, pIdx) => {
+          if (idx === 0) console.log(`   Punto ${pIdx}:`, punto);
+          
+          // Contar el punto actual si tiene qrEscaneado
+          if (punto.qrEscaneado === true) qrRegistrados++;
+          else if (punto.qrEscaneado === false) qrSinRegistrar++;
+        });
+        
+        if (idx === 0) {
+          console.log(`   ✅ Totales: QR Registrados=${qrRegistrados}, Sin Registrar=${qrSinRegistrar}`);
+        }
+      } else {
+        // Fallback: usar puntosCompletados y puntosTotales si no hay datos
+        qrRegistrados = r.puntosCompletados || 0;
+        const qrTotal = r.puntosTotales || 0;
+        qrSinRegistrar = qrTotal - qrRegistrados;
+      }
+      
+      // Color de estado
+      let estadoColor = '#9ca3af';
+      if (r.estado === 'TERMINADA') estadoColor = '#22c55e';
+      else if (r.estado === 'INCOMPLETA' || r.estado === 'INCOMPLETADA') estadoColor = '#f59e0b';
+      else if (r.estado === 'NO REALIZADA') estadoColor = '#ef4444';
+      
+      const row = document.createElement('tr');
+      row.style.borderBottom = '1px solid #e2e8f0';
+      row.innerHTML = `
+        <td style="padding: 12px; border-right: 1px solid #e2e8f0; font-family: monospace; font-size: 12px;">${fecha}</td>
+        <td style="padding: 12px; border-right: 1px solid #e2e8f0; font-family: monospace; font-size: 12px;">${hora}</td>
+        <td style="padding: 12px; border-right: 1px solid #e2e8f0; font-size: 12px;">${r.unidad || '-'}</td>
+        <td style="padding: 12px; border-right: 1px solid #e2e8f0; font-size: 12px;">${r.nombre || '-'}</td>
+        <td style="padding: 12px; text-align: center; border-right: 1px solid #e2e8f0; font-weight: 600; color: #22c55e; font-size: 12px;">${qrRegistrados}</td>
+        <td style="padding: 12px; text-align: center; border-right: 1px solid #e2e8f0; font-weight: 600; color: #ef4444; font-size: 12px;">${qrSinRegistrar}</td>
+        <td style="padding: 12px; text-align: center;">
+          <span style="background: ${estadoColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600;">
+            ${r.estado || 'N/A'}
+          </span>
+        </td>
+      `;
+      tbody.appendChild(row);
+    });
+    
+    console.log(`✅ Tabla completada con ${registros.length} registros`);
+  }
+
+  // ============================================================================
+  // 5E) KPI — DETALLE DE RONDAS (TABLA COMPLETA CON FILTROS Y EXPORTACIÓN)
+  // ============================================================================
+  let detalleRondasFilters = {
+    cliente: '',
+    unidad: '',
+    estado: ''
+  };
+
+  function initDetalleRondas() {
+    console.log('📋 Inicializando Detalle de Rondas...');
+    
+    // Cargar opciones de Cliente y Unidad
+    loadDetalleRondasClientesUnidades();
+    
+    // Event listeners de botones
+    document.getElementById('detalle-rondas-aplicar')?.addEventListener('click', () => {
+      loadDetalleRondasData();
+    });
+    
+    document.getElementById('detalle-rondas-limpiar')?.addEventListener('click', () => {
+      detalleRondasFilters = {
+        cliente: '',
+        unidad: '',
+        estado: ''
+      };
+      document.getElementById('detalle-rondas-cliente').value = '';
+      document.getElementById('detalle-rondas-unidad').value = '';
+      document.getElementById('detalle-rondas-estado').value = '';
+      
+      loadDetalleRondasData();
+    });
+    
+    document.getElementById('detalle-rondas-exportar')?.addEventListener('click', () => {
+      exportDetalleRondasToExcel();
+    });
+
+    document.getElementById('detalle-rondas-pdf')?.addEventListener('click', () => {
+      exportDetalleRondasToPDF();
+    });
+    
+    // Event listener para cambio de Cliente
+    document.getElementById('detalle-rondas-cliente')?.addEventListener('change', () => {
+      loadDetalleRondasUnidadesPorCliente();
+    });
+    
+    // Cargar datos iniciales
+    setTimeout(() => {
+      loadDetalleRondasData();
+    }, 500);
+  }
+
+  async function loadDetalleRondasClientesUnidades() {
+    try {
+      const snapshot = await db.collection('RONDAS_COMPLETADAS').get();
+      const clientes = new Set();
+      
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.cliente) clientes.add(data.cliente);
+      });
+      
+      const clienteSelect = document.getElementById('detalle-rondas-cliente');
+      if (clienteSelect) {
+        clientes.forEach(cliente => {
+          const option = document.createElement('option');
+          option.value = cliente;
+          option.textContent = cliente;
+          clienteSelect.appendChild(option);
+        });
+      }
+    } catch (error) {
+      console.error('Error cargando clientes en Detalle:', error);
+    }
+  }
+
+  async function loadDetalleRondasUnidadesPorCliente() {
+    try {
+      const clienteSelect = document.getElementById('detalle-rondas-cliente');
+      const cliente = clienteSelect?.value || '';
+      const unidadSelect = document.getElementById('detalle-rondas-unidad');
+      
+      while (unidadSelect.options.length > 1) {
+        unidadSelect.remove(1);
+      }
+      
+      if (!cliente) return;
+      
+      const snapshot = await db.collection('RONDAS_COMPLETADAS')
+        .where('cliente', '==', cliente)
+        .get();
+      
+      const unidades = new Set();
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.unidad) unidades.add(data.unidad);
+      });
+      
+      unidades.forEach(unidad => {
+        const option = document.createElement('option');
+        option.value = unidad;
+        option.textContent = unidad;
+        unidadSelect.appendChild(option);
+      });
+    } catch (error) {
+      console.error('Error cargando unidades en Detalle:', error);
+    }
+  }
+
+  async function loadDetalleRondasData() {
+    try {
+      UI.showOverlay('Cargando...', 'Consultando datos de rondas');
+      
+      const clienteSelect = document.getElementById('detalle-rondas-cliente');
+      const unidadSelect = document.getElementById('detalle-rondas-unidad');
+      const estadoSelect = document.getElementById('detalle-rondas-estado');
+      
+      detalleRondasFilters.cliente = clienteSelect?.value || '';
+      detalleRondasFilters.unidad = unidadSelect?.value || '';
+      detalleRondasFilters.estado = estadoSelect?.value || '';
+      
+      const snapshot = await db.collection('RONDAS_COMPLETADAS').get();
+      let registros = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data
+        };
+      });
+      
+      // Ordenar por horarioInicio descendente
+      registros.sort((a, b) => {
+        const dateA = a.horarioInicio?.toDate?.() || new Date(a.horarioInicio || 0);
+        const dateB = b.horarioInicio?.toDate?.() || new Date(b.horarioInicio || 0);
+        return dateB - dateA;
+      });
+      
+      // Aplicar filtros de cliente, unidad, estado
+      if (detalleRondasFilters.cliente) {
+        registros = registros.filter(r => r.cliente === detalleRondasFilters.cliente);
+      }
+      
+      if (detalleRondasFilters.unidad) {
+        registros = registros.filter(r => r.unidad === detalleRondasFilters.unidad);
+      }
+      
+      if (detalleRondasFilters.estado) {
+        registros = registros.filter(r => r.estado === detalleRondasFilters.estado);
+      }
+      
+      // Limitar a 30 registros
+      const ultimos30 = registros.slice(0, 30);
+      
+      // Actualizar información
+      updateDetalleRondasInfo(ultimos30);
+      
+      // Llenar tabla
+      fillDetalleRondasTable(ultimos30);
+      
+      UI.hideOverlay();
+    } catch (error) {
+      console.error('Error cargando datos de Detalle de Rondas:', error);
+      UI.toast('❌ Error al cargar datos: ' + error.message);
+      UI.hideOverlay();
+    }
+  }
+
+  function updateDetalleRondasInfo(registros) {
+    const totalEl = document.getElementById('detalle-rondas-total');
+    if (totalEl) {
+      totalEl.textContent = registros.length.toLocaleString('es-PE');
+    }
+    
+    const infoTextEl = document.getElementById('detalle-rondas-info-text');
+    if (infoTextEl) {
+      if (detalleRondasFilters.cliente || detalleRondasFilters.unidad || detalleRondasFilters.estado) {
+        infoTextEl.textContent = 'Registros filtrados (últimos 30)';
+      } else {
+        infoTextEl.textContent = 'Últimos 30 registros';
+      }
+    }
+  }
+
+  function fillDetalleRondasTable(registros) {
+    const tbody = document.getElementById('detalle-rondas-tabla-body');
+    if (!tbody) return;
+    
+    tbody.innerHTML = '';
+    
+    if (registros.length === 0) {
+      tbody.innerHTML = '<tr style="border-bottom: 1px solid #e2e8f0;"><td colspan="9" style="padding: 20px; text-align: center; color: #a0aec0;">No hay registros</td></tr>';
+      return;
+    }
+    
+    const convertToDate = (value) => {
+      if (!value) return null;
+      
+      // Si es un Timestamp de Firebase (con propiedades _seconds y _nanoseconds)
+      if (value._seconds !== undefined || value._nanoseconds !== undefined) {
+        try {
+          const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
+          return new Date(ms);
+        } catch(e) {
+          return null;
+        }
+      }
+      
+      if (value.seconds !== undefined || value.nanoseconds !== undefined) {
+        try {
+          const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
+          return new Date(ms);
+        } catch(e) {
+          return null;
+        }
+      }
+      
+      if (value.toDate && typeof value.toDate === 'function') {
+        try {
+          return value.toDate();
+        } catch(e) {
+          return null;
+        }
+      }
+      
+      if (value instanceof Date) return value;
+      
+      if (typeof value === 'string') {
+        try {
+          return new Date(value);
+        } catch(e) {
+          return null;
+        }
+      }
+      
+      return null;
+    };
+    
+    registros.forEach(r => {
+      let fechaInicio = '-';
+      let horaInicio = '-';
+      let horaTermino = '-';
+      
+      const dateInicio = convertToDate(r.horarioInicio);
+      if (dateInicio && dateInicio instanceof Date && !isNaN(dateInicio)) {
+        fechaInicio = dateInicio.toLocaleDateString('es-PE', { 
+          year: 'numeric', 
+          month: '2-digit', 
+          day: '2-digit'
+        });
+        horaInicio = dateInicio.toLocaleTimeString('es-PE', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          hour12: false
+        });
+      }
+      
+      const dateTermino = convertToDate(r.horarioTermino);
+      if (dateTermino && dateTermino instanceof Date && !isNaN(dateTermino)) {
+        horaTermino = dateTermino.toLocaleTimeString('es-PE', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          hour12: false
+        });
+      }
+      
+      const estado = r.estado || 'N/A';
+      
+      // Clase CSS según estado
+      let estadoClass = '';
+      if (estado === 'TERMINADA') {
+        estadoClass = 'estado-badge terminada';
+      } else if (estado === 'INCOMPLETA' || estado === 'INCOMPLETADA') {
+        estadoClass = 'estado-badge incompletada';
+      } else if (estado === 'NO REALIZADA') {
+        estadoClass = 'estado-badge no-realizada';
+      }
+      
+      // Contar QR desde el objeto puntosRegistrados (convertir a array si es necesario)
+      let qrRegistrados = 0;
+      let qrSinRegistrar = 0;
+      
+      // Convertir puntosRegistrados a array si es un objeto
+      let puntosArray = Array.isArray(r.puntosRegistrados) 
+        ? r.puntosRegistrados 
+        : (r.puntosRegistrados ? Object.values(r.puntosRegistrados) : []);
+      
+      if (puntosArray.length > 0) {
+        // Iterar sobre cada punto
+        puntosArray.forEach(punto => {
+          // Contar el punto actual si tiene qrEscaneado
+          if (punto.qrEscaneado === true) qrRegistrados++;
+          else if (punto.qrEscaneado === false) qrSinRegistrar++;
+        });
+      } else {
+        // Fallback: usar puntosCompletados y puntosTotales si no hay datos
+        qrRegistrados = r.puntosCompletados || 0;
+        const qrTotal = r.puntosTotales || 0;
+        qrSinRegistrar = qrTotal - qrRegistrados;
+      }
+      
+      const row = document.createElement('tr');
+      row.style.borderBottom = '1px solid #e2e8f0';
+      row.innerHTML = `
+        <td style="padding: 12px; border-right: 1px solid #e2e8f0;">${fechaInicio}</td>
+        <td style="padding: 12px; border-right: 1px solid #e2e8f0;">${horaInicio}</td>
+        <td style="padding: 12px; border-right: 1px solid #e2e8f0;">${horaTermino}</td>
+        <td style="padding: 12px; border-right: 1px solid #e2e8f0;">${r.cliente || '-'}</td>
+        <td style="padding: 12px; border-right: 1px solid #e2e8f0;">${r.unidad || '-'}</td>
+        <td style="padding: 12px; border-right: 1px solid #e2e8f0;">${r.nombre || '-'}</td>
+        <td style="padding: 12px; text-align: center; border-right: 1px solid #e2e8f0; font-weight: 600; color: #22c55e;">${qrRegistrados}</td>
+        <td style="padding: 12px; text-align: center; border-right: 1px solid #e2e8f0; font-weight: 600; color: #ef4444;">${qrSinRegistrar}</td>
+        <td style="padding: 12px; text-align: center; border-right: 1px solid #e2e8f0;">
+          <span class="${estadoClass}">${estado}</span>
+        </td>
+        <td style="padding: 12px; text-align: center;">
+          <button class="btn-download-pdf" data-ronda-id="${r.id}" title="Descargar PDF" style="background: none; border: none; cursor: pointer; color: #3b82f6; font-size: 18px; padding: 4px; transition: all 0.3s ease; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px;">
+            ⬇️
+          </button>
+        </td>
+      `;
+      tbody.appendChild(row);
+    });
+  }
+
+  function exportDetalleRondasToExcel() {
+    try {
+      const tbody = document.getElementById('detalle-rondas-tabla-body');
+      if (!tbody) {
+        UI.toast('❌ No se encontró la tabla');
+        console.error('No se encontró tbody con id detalle-rondas-tabla-body');
+        return;
+      }
+
+      const rows = tbody.querySelectorAll('tr');
+      if (rows.length === 0) {
+        UI.toast('⚠️ No hay datos para exportar');
+        return;
+      }
+      
+      const datos = [];
+      
+      // Encabezados (sin la columna Acciones)
+      datos.push([
+        'Fecha',
+        'Hora Inicio',
+        'Hora Término',
+        'Cliente',
+        'Unidad',
+        'Nombre de Ronda',
+        'QR Registrados',
+        'QR Sin Registrar',
+        'Estado'
+      ]);
+      
+      // Filas
+      let rowsExportadas = 0;
+      rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        // Ahora hay 10 celdas (incluida la de Acciones), pero exportamos solo las primeras 9
+        if (cells.length >= 9) {
+          datos.push([
+            cells[0].textContent.trim(),
+            cells[1].textContent.trim(),
+            cells[2].textContent.trim(),
+            cells[3].textContent.trim(),
+            cells[4].textContent.trim(),
+            cells[5].textContent.trim(),
+            cells[6].textContent.trim(),
+            cells[7].textContent.trim(),
+            cells[8].textContent.trim()
+          ]);
+          rowsExportadas++;
+        }
+      });
+      
+      // Verificar si hay datos
+      if (rowsExportadas === 0) {
+        UI.toast('⚠️ No hay registros válidos para exportar');
+        return;
+      }
+      
+      console.log(`Exportando ${rowsExportadas} registros`);
+      
+      // Crear hoja de cálculo
+      const worksheet = XLSX.utils.aoa_to_sheet(datos);
+      
+      // Ajustar ancho de columnas
+      const colWidths = [15, 15, 15, 15, 15, 20, 15, 15, 15];
+      worksheet['!cols'] = colWidths.map(w => ({ wch: w }));
+      
+      // Crear libro
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Rondas Completadas');
+      
+      // Descargar
+      const fileName = `DetalleRondas_${moment().format('YYYYMMDD_HHmmss')}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+      
+      UI.toast(`✅ ${rowsExportadas} registros exportados correctamente`);
+    } catch (error) {
+      console.error('Error exportando Excel:', error);
+      UI.toast('❌ Error al exportar: ' + error.message);
+    }
+  }
+
+  // Función para exportar Detalle de Rondas a PDF con gráfico
+  async function exportDetalleRondasToPDF() {
+    try {
+      const tbody = document.getElementById('detalle-rondas-tabla-body');
+      if (!tbody || tbody.querySelectorAll('tr').length === 0) {
+        UI.toast('No hay datos para exportar');
+        return;
+      }
+
+      UI.showOverlay();
+
+      // Cargar logo como base64
+      let logoBase64 = null;
+      try {
+        const logoResponse = await fetch('logo_liberman.png');
+        const logoBlob = await logoResponse.blob();
+        logoBase64 = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(logoBlob);
+        });
+      } catch (e) {
+        console.warn('No se pudo cargar el logo');
+      }
+
+      // Obtener datos de la tabla
+      const rows = tbody.querySelectorAll('tr');
+      const tableData = [];
+      let registrados = 0;
+      let noRegistrados = 0;
+
+      rows.forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 9) {
+          const fila = [
+            cells[0].textContent.trim(),
+            cells[1].textContent.trim(),
+            cells[2].textContent.trim(),
+            cells[3].textContent.trim(),
+            cells[4].textContent.trim(),
+            cells[5].textContent.trim(),
+            cells[6].textContent.trim(),
+            cells[7].textContent.trim(),
+            cells[8].textContent.trim()
+          ];
+          tableData.push(fila);
+          registrados += parseInt(cells[6].textContent.trim()) || 0;
+          noRegistrados += parseInt(cells[7].textContent.trim()) || 0;
+        }
+      });
+
+      // Calcular totales
+      const totalPuntos = registrados + noRegistrados;
+      const porcentajeReg = totalPuntos > 0 ? ((registrados / totalPuntos) * 100).toFixed(1) : 0;
+      const porcentajeNoReg = totalPuntos > 0 ? ((noRegistrados / totalPuntos) * 100).toFixed(1) : 0;
+
+      // Crear gráfico de torta usando Canvas
+      const chartCanvas = document.createElement('canvas');
+      chartCanvas.width = 500;
+      chartCanvas.height = 350;
+      chartCanvas.style.display = 'none';
+      document.body.appendChild(chartCanvas);
+
+      const chartCtx = chartCanvas.getContext('2d');
+      
+      // Crear instancia de Chart.js
+      const pieChart = new Chart(chartCtx, {
+        type: 'doughnut',
+        data: {
+          labels: [
+            `Registrados\n${registrados}\n(${porcentajeReg}%)`,
+            `No Registrados\n${noRegistrados}\n(${porcentajeNoReg}%)`
+          ],
+          datasets: [{
+            data: [registrados, noRegistrados],
+            backgroundColor: ['#10b981', '#ef4444'],
+            borderColor: ['#059669', '#dc2626'],
+            borderWidth: 3,
+            borderRadius: 5
+          }]
+        },
+        options: {
+          responsive: false,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              display: true,
+              position: 'bottom',
+              labels: {
+                font: { size: 16, weight: 'bold' },
+                padding: 20,
+                usePointStyle: true,
+                pointStyle: 'circle'
+              }
+            },
+            tooltip: {
+              enabled: true,
+              backgroundColor: 'rgba(0, 0, 0, 0.8)',
+              padding: 12,
+              font: { size: 14 }
+            }
+          }
+        }
+      });
+
+      // Esperar a que se renderice
+      await new Promise(resolve => setTimeout(resolve, 800));
+      const chartImage = chartCanvas.toDataURL('image/png');
+      
+      // Limpiar
+      document.body.removeChild(chartCanvas);
+      pieChart.destroy();
+
+      // Crear documento PDF
+      const docDef = {
+        pageSize: 'A4',
+        pageMargins: [40, 70, 40, 40],
+        header: function(currentPage) {
+          if (currentPage === 1) {
+            return {
+              columns: [
+                logoBase64 ? {
+                  image: logoBase64,
+                  width: 60,
+                  height: 60
+                } : { text: '' },
+                {
+                  text: 'REPORTE DE DETALLE DE RONDAS',
+                  fontSize: 18,
+                  bold: true,
+                  alignment: 'center',
+                  margin: [0, 20, 0, 0],
+                  color: '#2c5aa0'
+                },
+                {
+                  text: '',
+                  width: 60
+                }
+              ],
+              margin: [40, 10, 40, 0]
+            };
+          }
+        },
+        footer: function(currentPage, pageCount) {
+          return {
+            text: `Página ${currentPage} de ${pageCount} | Generado: ${new Date().toLocaleString('es-PE')}`,
+            alignment: 'center',
+            fontSize: 9,
+            margin: [0, 0, 0, 20],
+            color: '#999'
+          };
+        },
+        content: [
+          {
+            text: `Resumen de Puntos de Control`,
+            fontSize: 14,
+            bold: true,
+            margin: [0, 10, 0, 15],
+            color: '#2c5aa0'
+          },
+          {
+            columns: [
+              {
+                width: '45%',
+                stack: [
+                  {
+                    text: 'ESTADÍSTICAS',
+                    fontSize: 12,
+                    bold: true,
+                    margin: [0, 0, 0, 10],
+                    color: '#333'
+                  },
+                  {
+                    table: {
+                      widths: ['60%', '40%'],
+                      body: [
+                        [
+                          { text: 'Total de Puntos:', bold: true, color: '#333', fontSize: 11 },
+                          { text: totalPuntos.toString(), bold: true, color: '#2c5aa0', fontSize: 14, alignment: 'center' }
+                        ],
+                        [
+                          { text: 'Registrados:', color: '#059669', bold: true, fontSize: 11 },
+                          { text: `${registrados}\n(${porcentajeReg}%)`, color: '#059669', bold: true, fontSize: 12, alignment: 'center' }
+                        ],
+                        [
+                          { text: 'No Registrados:', color: '#dc2626', bold: true, fontSize: 11 },
+                          { text: `${noRegistrados}\n(${porcentajeNoReg}%)`, color: '#dc2626', bold: true, fontSize: 12, alignment: 'center' }
+                        ]
+                      ]
+                    },
+                    layout: {
+                      hLineWidth: function(i, node) { return 1; },
+                      vLineWidth: function(i, node) { return 1; },
+                      hLineColor: function(i, node) { return '#e0e0e0'; },
+                      vLineColor: function(i, node) { return '#e0e0e0'; },
+                      paddingLeft: function(i, node) { return 10; },
+                      paddingRight: function(i, node) { return 10; },
+                      paddingTop: function(i, node) { return 8; },
+                      paddingBottom: function(i, node) { return 8; }
+                    }
+                  }
+                ]
+              },
+              {
+                width: '55%',
+                alignment: 'center',
+                image: chartImage,
+                width: 280,
+                height: 200,
+                margin: [0, 0, 0, 0]
+              }
+            ],
+            margin: [0, 0, 0, 30],
+            columnGap: 20
+          },
+          {
+            text: 'DETALLE DE RONDAS',
+            fontSize: 12,
+            bold: true,
+            margin: [0, 20, 0, 10],
+            color: '#2c5aa0'
+          },
+          {
+            table: {
+              headerRows: 1,
+              widths: ['10%', '10%', '10%', '10%', '10%', '13%', '9%', '9%', '9%'],
+              body: [
+                [
+                  { text: 'FECHA', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                  { text: 'H.INI', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                  { text: 'H.TER', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                  { text: 'CLIENTE', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                  { text: 'UNIDAD', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                  { text: 'RONDA', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                  { text: 'REG', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                  { text: 'NO REG', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                  { text: 'ESTADO', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 9 }
+                ],
+                ...tableData.map((fila) => [
+                  { text: fila[0], fontSize: 9, alignment: 'center' },
+                  { text: fila[1], fontSize: 9, alignment: 'center' },
+                  { text: fila[2], fontSize: 9, alignment: 'center' },
+                  { text: fila[3], fontSize: 9, alignment: 'center' },
+                  { text: fila[4], fontSize: 9, alignment: 'center' },
+                  { text: fila[5], fontSize: 9, alignment: 'center' },
+                  { text: fila[6], fontSize: 9, alignment: 'center', color: '#059669', bold: true },
+                  { text: fila[7], fontSize: 9, alignment: 'center', color: '#dc2626', bold: true },
+                  { text: fila[8], fontSize: 8, alignment: 'center' }
+                ])
+              ]
+            },
+            layout: {
+              hLineWidth: function(i, node) { return 0.5; },
+              vLineWidth: function(i, node) { return 0.5; },
+              hLineColor: function(i, node) { return '#d0d0d0'; },
+              vLineColor: function(i, node) { return '#d0d0d0'; },
+              fillColor: function(i, node) {
+                if (i === 0) return '#2c5aa0';
+                return (i % 2 === 0) ? '#f9f9f9' : null;
+              },
+              paddingLeft: function(i, node) { return 4; },
+              paddingRight: function(i, node) { return 4; },
+              paddingTop: function(i, node) { return 5; },
+              paddingBottom: function(i, node) { return 5; }
+            }
+          },
+          {
+            text: `\nTotal de registros reportados: ${tableData.length}`,
+            fontSize: 10,
+            bold: true,
+            margin: [0, 20, 0, 10]
+          },
+          {
+            text: `Fecha de generación: ${new Date().toLocaleDateString('es-PE')} a las ${new Date().toLocaleTimeString('es-PE')}`,
+            fontSize: 9,
+            color: '#666',
+            margin: [0, 0, 0, 0]
+          }
+        ]
+      };
+
+      // Generar y descargar PDF
+      pdfMake.createPdf(docDef).download(`detalle_rondas_${new Date().getTime()}.pdf`);
+      
+      UI.hideOverlay();
+      UI.toast('✅ PDF generado correctamente con gráfico y logo');
+
+    } catch (e) {
+      console.error('Error al generar PDF:', e);
+      UI.hideOverlay();
+      UI.toast('❌ Error al generar PDF: ' + e.message);
+    }
+  }
+
+  // Función para descargar ronda individual en PDF
+  async function descargarRondaPDF(rondaId) {
+    try {
+      // Mostrar overlay de carga
+      UI.showOverlay('Generando PDF', 'Por favor espera...');
+
+      // Obtener la data completa de la ronda desde Firebase directamente
+      const doc = await db.collection('RONDAS_COMPLETADAS').doc(rondaId).get();
+      if (!doc.exists) {
+        UI.hideOverlay();
+        UI.toast('❌ No se encontró la ronda en la base de datos');
+        return;
+      }
+
+      const rondaCompleta = doc.data();
+
+      // Cargar logo como base64
+      let logoBase64 = null;
+      try {
+        const logoResponse = await fetch('logo_liberman.png');
+        const logoBlob = await logoResponse.blob();
+        logoBase64 = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(logoBlob);
+        });
+      } catch (e) {
+        console.warn('No se pudo cargar el logo');
+      }
+
+      // Convertir fecha de Timestamp a formato legible
+      const convertToDate = (value) => {
+        if (!value) return null;
+        if (value._seconds || value._nanoseconds) {
+          try {
+            const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
+            return new Date(ms);
+          } catch(e) { return null; }
+        }
+        if (value.seconds || value.nanoseconds) {
+          try {
+            const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
+            return new Date(ms);
+          } catch(e) { return null; }
+        }
+        if (value.toDate && typeof value.toDate === 'function') {
+          try { return value.toDate(); } catch(e) { return null; }
+        }
+        if (value instanceof Date) return value;
+        if (typeof value === 'string') {
+          try { return new Date(value); } catch(e) { return null; }
+        }
+        return null;
+      };
+
+      const dateInicio = convertToDate(rondaCompleta.horarioInicio);
+      const dateTermino = convertToDate(rondaCompleta.horarioTermino);
+
+      const fechaInicio = dateInicio ? dateInicio.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-';
+      const horaInicio = dateInicio ? dateInicio.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: false }) : '-';
+      const horaTermino = dateTermino ? dateTermino.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: false }) : '-';
+
+      // Contar QR
+      let qrRegistrados = 0, qrSinRegistrar = 0;
+      let puntosArray = Array.isArray(rondaCompleta.puntosRegistrados) ? rondaCompleta.puntosRegistrados : (rondaCompleta.puntosRegistrados ? Object.values(rondaCompleta.puntosRegistrados) : []);
+      if (puntosArray.length > 0) {
+        puntosArray.forEach(punto => {
+          if (punto.qrEscaneado === true) qrRegistrados++;
+          else if (punto.qrEscaneado === false) qrSinRegistrar++;
+        });
+      } else {
+        qrRegistrados = rondaCompleta.puntosCompletados || 0;
+        const qrTotal = rondaCompleta.puntosTotales || 0;
+        qrSinRegistrar = qrTotal - qrRegistrados;
+      }
+
+      // Crear gráfico de torta
+      let chartImage = null;
+      const totalPuntos = qrRegistrados + qrSinRegistrar;
+      if (totalPuntos > 0) {
+        const chartCanvas = document.createElement('canvas');
+        chartCanvas.width = 400;
+        chartCanvas.height = 300;
+        chartCanvas.style.display = 'none';
+        document.body.appendChild(chartCanvas);
+
+        const chartCtx = chartCanvas.getContext('2d');
+        const porcentajeReg = ((qrRegistrados / totalPuntos) * 100).toFixed(1);
+        const porcentajeNoReg = ((qrSinRegistrar / totalPuntos) * 100).toFixed(1);
+
+        const pieChart = new Chart(chartCtx, {
+          type: 'doughnut',
+          data: {
+            labels: [
+              `Registrados\n${qrRegistrados}\n(${porcentajeReg}%)`,
+              `Sin Registrar\n${qrSinRegistrar}\n(${porcentajeNoReg}%)`
+            ],
+            datasets: [{
+              data: [qrRegistrados, qrSinRegistrar],
+              backgroundColor: ['#10b981', '#ef4444'],
+              borderColor: ['#059669', '#dc2626'],
+              borderWidth: 3,
+              borderRadius: 8
+            }]
+          },
+          options: {
+            responsive: false,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                display: true,
+                position: 'bottom',
+                labels: {
+                  font: { size: 14, weight: 'bold' },
+                  padding: 20,
+                  usePointStyle: true,
+                  pointStyle: 'circle',
+                  color: '#2d3748'
+                }
+              },
+              tooltip: {
+                enabled: true,
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                padding: 12,
+                font: { size: 12 }
+              }
+            }
+          }
+        });
+
+        await new Promise(resolve => setTimeout(resolve, 800));
+        chartImage = chartCanvas.toDataURL('image/png');
+        document.body.removeChild(chartCanvas);
+        pieChart.destroy();
+      }
+
+      // Obtener detalles de puntos si existen
+      let detallesPuntos = [];
+      if (puntosArray && puntosArray.length > 0) {
+        puntosArray.forEach((punto, idx) => {
+          detallesPuntos.push({
+            numero: idx + 1,
+            nombre: punto.nombre || `Punto ${idx + 1}`,
+            estado: punto.qrEscaneado ? '✓ Registrado' : '✗ No Registrado',
+            hora: punto.horaEscaneo ? new Date(punto.horaEscaneo.seconds * 1000).toLocaleTimeString('es-PE') : '-'
+          });
+        });
+      }
+
+      // Crear documento PDF
+      const docDefinition = {
+        pageSize: 'A4',
+        pageMargins: [40, 80, 40, 40],
+        header: function(currentPage) {
+          if (currentPage === 1) {
+            return {
+              columns: [
+                logoBase64 ? {
+                  image: logoBase64,
+                  width: 60,
+                  height: 60
+                } : { text: '' },
+                {
+                  text: 'REPORTE DE RONDA',
+                  fontSize: 18,
+                  bold: true,
+                  alignment: 'center',
+                  margin: [0, 15, 0, 0],
+                  color: '#2c5aa0'
+                },
+                {
+                  text: '',
+                  width: 60
+                }
+              ],
+              margin: [40, 15, 40, 0]
+            };
+          }
+        },
+        footer: function(currentPage, pageCount) {
+          return {
+            text: `Página ${currentPage} de ${pageCount} | Generado: ${new Date().toLocaleString('es-PE')}`,
+            alignment: 'center',
+            fontSize: 9,
+            margin: [0, 0, 0, 15],
+            color: '#999'
+          };
+        },
+        styles: {
+          subheader: { fontSize: 13, bold: true, color: '#2c5aa0', marginTop: 15, marginBottom: 10 },
+          label: { fontSize: 11, bold: true, color: '#4a5568' },
+          value: { fontSize: 11, color: '#2d3748' },
+          tableHeader: { bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+          tableCell: { padding: 6, color: '#2d3748', fontSize: 10 }
+        },
+        content: [
+          // Información General
+          { text: 'INFORMACIÓN GENERAL', style: 'subheader' },
+          {
+            columns: [
+              {
+                width: '50%',
+                layout: 'lightHorizontalLines',
+                table: {
+                  widths: ['40%', '60%'],
+                  body: [
+                    [
+                      { text: 'Cliente:', style: 'label' },
+                      { text: rondaCompleta.cliente || '-', style: 'value' }
+                    ],
+                    [
+                      { text: 'Unidad:', style: 'label' },
+                      { text: rondaCompleta.unidad || '-', style: 'value' }
+                    ],
+                    [
+                      { text: 'Ronda:', style: 'label' },
+                      { text: rondaCompleta.nombre || '-', style: 'value' }
+                    ]
+                  ]
+                }
+              },
+              {
+                width: '50%',
+                layout: 'lightHorizontalLines',
+                table: {
+                  widths: ['40%', '60%'],
+                  body: [
+                    [
+                      { text: 'Estado:', style: 'label' },
+                      { 
+                        text: rondaCompleta.estado || '-', 
+                        color: rondaCompleta.estado === 'TERMINADA' ? '#22c55e' : 
+                               (rondaCompleta.estado === 'INCOMPLETA' || rondaCompleta.estado === 'INCOMPLETADA') ? '#f59e0b' : 
+                               rondaCompleta.estado === 'NO REALIZADA' ? '#ef4444' : '#9ca3af',
+                        bold: true,
+                        fontSize: 11
+                      }
+                    ],
+                    [
+                      { text: 'Fecha:', style: 'label' },
+                      { text: fechaInicio, style: 'value' }
+                    ],
+                    [
+                      { text: 'Hora Inicio:', style: 'label' },
+                      { text: horaInicio, style: 'value' }
+                    ]
+                  ]
+                }
+              }
+            ],
+            columnGap: 20,
+            marginBottom: 20
+          },
+
+          // Resumen de Puntos
+          { text: 'RESUMEN DE PUNTOS DE CONTROL', style: 'subheader' },
+          {
+            columns: [
+              {
+                width: '45%',
+                layout: 'lightHorizontalLines',
+                table: {
+                  widths: ['60%', '40%'],
+                  body: [
+                    [
+                      { text: 'Total Puntos:', style: 'label' },
+                      { text: totalPuntos.toString(), style: 'value', alignment: 'center', color: '#3b82f6', bold: true }
+                    ],
+                    [
+                      { text: 'Registrados:', style: 'label', color: '#059669' },
+                      { text: qrRegistrados.toString(), style: 'value', alignment: 'center', color: '#059669', bold: true }
+                    ],
+                    [
+                      { text: 'Sin Registrar:', style: 'label', color: '#dc2626' },
+                      { text: qrSinRegistrar.toString(), style: 'value', alignment: 'center', color: '#dc2626', bold: true }
+                    ]
+                  ]
+                }
+              },
+              {
+                width: '55%',
+                alignment: 'center',
+                ...(chartImage ? { image: chartImage, width: 250, height: 180 } : {})
+              }
+            ],
+            columnGap: 20,
+            marginBottom: 20
+          }
+        ]
+      };
+
+      // Agregar tabla de detalles de puntos si existen
+      if (detallesPuntos.length > 0) {
+        docDefinition.content.push(
+          { text: 'DETALLE DE PUNTOS DE CONTROL', style: 'subheader' },
+          {
+            layout: {
+              hLineWidth: function(i, node) { return i === 0 || i === node.table.body.length ? 2 : 0.5; },
+              vLineWidth: function(i, node) { return 0.5; },
+              hLineColor: function(i, node) { return '#d0d0d0'; },
+              vLineColor: function(i, node) { return '#d0d0d0'; },
+              fillColor: function(i, node) {
+                if (i === 0) return '#2c5aa0';
+                return (i % 2 === 0) ? '#f9f9f9' : 'white';
+              },
+              paddingLeft: function(i, node) { return 8; },
+              paddingRight: function(i, node) { return 8; },
+              paddingTop: function(i, node) { return 6; },
+              paddingBottom: function(i, node) { return 6; }
+            },
+            table: {
+              headerRows: 1,
+              widths: ['8%', '35%', '20%', '27%'],
+              body: [
+                [
+                  { text: '#', style: 'tableHeader' },
+                  { text: 'PUNTO', style: 'tableHeader' },
+                  { text: 'ESTADO', style: 'tableHeader' },
+                  { text: 'HORA', style: 'tableHeader' }
+                ],
+                ...detallesPuntos.map(p => [
+                  { text: p.numero.toString(), style: 'tableCell', alignment: 'center' },
+                  { text: p.nombre, style: 'tableCell' },
+                  { 
+                    text: p.estado, 
+                    style: 'tableCell',
+                    color: p.estado.includes('Registrado') ? '#22c55e' : '#ef4444',
+                    bold: true
+                  },
+                  { text: p.hora, style: 'tableCell', alignment: 'center' }
+                ])
+              ]
+            },
+            marginBottom: 20
+          }
+        );
+      }
+
+      // Agregar pie de página
+      docDefinition.content.push(
+        { text: '\n' },
+        { 
+          text: `Generado: ${new Date().toLocaleDateString('es-PE')} a las ${new Date().toLocaleTimeString('es-PE')}`, 
+          alignment: 'center', 
+          fontSize: 9, 
+          color: '#a0aec0' 
+        }
+      );
+
+      // Generar y descargar PDF
+      UI.hideOverlay();
+      if (window.pdfMake && window.pdfMake.createPdf) {
+        window.pdfMake.createPdf(docDefinition).download(`Ronda_${rondaCompleta.cliente || 'SinCliente'}_${fechaInicio.replace(/\//g, '-')}_${rondaId.substring(0, 8)}.pdf`);
+        UI.toast('✅ PDF descargado correctamente');
+      } else {
+        UI.toast('❌ Las librerías de PDF no están cargadas');
+      }
+
+    } catch (error) {
+      console.error('Error descargando PDF:', error);
+      UI.hideOverlay();
+      UI.toast('❌ Error al generar PDF: ' + error.message);
+    }
+  }
+
+  // Event Listener para botones de descarga PDF en tabla de rondas
+  document.addEventListener('click', (ev) => {
+    const btnPDF = ev.target.closest('.btn-download-pdf');
+    if (btnPDF) {
+      const rondaId = btnPDF.getAttribute('data-ronda-id');
+      if (rondaId) {
+        descargarRondaPDF(rondaId);
+      }
+    }
+  });
+
+  // ============================================================================
+  // 6) INCIDENCIAS — FILTROS, TABLA Y EXPORTACIÓN
+  // ============================================================================
+  async function buscarIncidencias() {
+    if (!incidenciasTbody) return;
+    UI.showOverlay('Buscando…', 'Consultando incidencias');
+
+    try {
+      let q = db.collection(COLLECTIONS.INCIDENTS);
+
+      // Fechas
+      const fi = incFechaInicio?.value ? new Date(incFechaInicio.value) : null;
+      const ff = incFechaFin?.value ? new Date(incFechaFin.value) : null;
+      if (fi) q = q.where('timestamp', '>=', fi);
+      if (ff) q = q.where('timestamp', '<=', new Date(ff.getFullYear(), ff.getMonth(), ff.getDate() + 1));
+
+      // Cliente / Unidad / Estado
+      const cli = incCliente?.value || '';
+      const uni = incUnidad?.value || '';
+      const est = incEstado?.value || '';
+      if (cli) q = q.where('cliente', '==', cli);
+      if (uni) q = q.where('unidad', '==', uni);
+      if (est) q = q.where('estado', '==', est);
+
+      const snap = await q.get();
+      const rows = snap.docs.map(d => {
+        const data = d.data();
+        // Convertir timestamp a string para que persista en JSON
+        const f = data.timestamp?.toDate ? data.timestamp.toDate() : new Date(data.timestamp || 0);
+        const timestampStr = f instanceof Date && !Number.isNaN(f.getTime()) ? f.toISOString() : new Date().toISOString();
+        
+        return { 
+          id: d.id, 
+          ...data,
+          timestampStr: timestampStr,  // Guardar fecha como string
+          timestamp: undefined  // Eliminar objeto Timestamp que no se serializa bien
+        };
+      })
+        .sort((a, b) => {
+          const ad = new Date(a.timestampStr);
+          const bd = new Date(b.timestampStr);
+          return bd.getTime() - ad.getTime(); // desc
+        });
+
+      incidenciasTbody.innerHTML = rows.map(r => {
+        const f = new Date(r.timestampStr);
+        const t = f instanceof Date && !Number.isNaN(f.getTime()) ? f.toLocaleString('es-PE') : '';
+        return `<tr>
+          <td style="width:150px">${t}</td>
+          <td>${r.cliente || ''}</td>
+          <td>${r.unidad || ''}</td>
+          <td>${r.tipoIncidente || ''}</td>
+          <td>${r.detalleIncidente || ''}</td>
+          <td>${r.Nivelderiesgo || ''}</td>
+          <td>${r.estado || ''}</td>
+          <td>${r.comentario || ''}</td>
+          <td style="text-align:center; width:100px">
+            <button class="btn btn--icon btn-edit-inc" data-id="${r.id}" title="Editar" aria-label="Editar incidencia" style="margin-right:6px">
+              ✏️
+            </button>
+            <button class="btn btn--icon btn-pdf" data-id="${r.id}" title="Descargar PDF" aria-label="Descargar PDF">
+              📄
+            </button>
+          </td>
+        </tr>`;
+      }).join('');
+
+      incidenciasTbody.dataset.rows = JSON.stringify(rows);
+      UI.toast(`Resultados: ${rows.length}`);
+    } catch (e) {
+      console.error(e);
+      UI.confirm({ title: 'Error', message: 'No se pudo consultar incidencias.', kind: 'err' });
+    } finally { UI.hideOverlay(); }
+  }
+
+    // Generar PDF para una incidencia con diseño profesional LIDERMAN
+    async function generarPDFIncidencia(inc) {
+      UI.showOverlay('Generando PDF...', 'Construyendo el reporte');
+      try {
+        console.log('=== INCIDENCIA DATA ===', inc);
+        
+        // Convertir timestamp de Firebase correctamente
+        let fechaSoloFecha = 'N/A';
+        if (inc.timestampStr) {
+          try {
+            const f = new Date(inc.timestampStr);
+            if (f instanceof Date && !Number.isNaN(f.getTime())) {
+              fechaSoloFecha = f.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' });
+              console.log('✓ Fecha convertida:', fechaSoloFecha);
+            }
+          } catch (e) {
+            console.warn('Error al convertir fecha:', e.message);
+          }
+        } else if (inc.timestamp) {
+          // Fallback para casos donde timestamp venga en otro formato
+          try {
+            let f;
+            if (inc.timestamp.toDate && typeof inc.timestamp.toDate === 'function') {
+              f = inc.timestamp.toDate();
+            } else if (typeof inc.timestamp === 'string') {
+              f = new Date(inc.timestamp);
+            } else if (typeof inc.timestamp === 'number') {
+              f = new Date(inc.timestamp);
+            }
+            
+            if (f instanceof Date && !Number.isNaN(f.getTime())) {
+              fechaSoloFecha = f.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' });
+              console.log('✓ Fecha convertida (fallback):', fechaSoloFecha);
+            }
+          } catch (e) {
+            console.warn('Error fallback fecha:', e.message);
+          }
+        } else {
+          console.log('ℹ No hay timestamp en el registro');
+        }
+
+        // Cargar foto desde Firebase Storage (CORS ahora configurado)
+        let fotoDataUrl = null;
+        if (inc.fotoURL) {
+          try {
+            console.log('Descargando foto desde Firebase Storage...');
+            
+            let urlFinal = inc.fotoURL;
+            
+            // Asegurar que tiene alt=media
+            if (!urlFinal.includes('alt=')) {
+              urlFinal = urlFinal + (urlFinal.includes('?') ? '&' : '?') + 'alt=media';
+            }
+            
+            const response = await fetch(urlFinal);
+            if (response.ok) {
+              const blob = await response.blob();
+              console.log('✓ Foto descargada, tamaño:', blob.size, 'bytes');
+              
+              fotoDataUrl = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                  console.log('✓ Foto convertida a DataURL para PDF');
+                  resolve(reader.result);
+                };
+                reader.onerror = () => {
+                  console.warn('❌ Error al convertir foto');
+                  resolve(null);
+                };
+                reader.readAsDataURL(blob);
+              });
+            } else {
+              console.warn('❌ Error HTTP:', response.status);
+            }
+          } catch (e) {
+            console.warn('❌ Error al descargar foto:', e.message);
+          }
+        }
+
+        // Colores profesionales
+        const colorPrimario = '#2c5aa0';
+        const colorSecundario = '#c41e3a';
+
+        // Construir contenido del PDF
+        const content = [];
+
+        // ENCABEZADO CON NÚMERO Y FECHA
+        content.push({
+          columns: [
+            { text: `REPORTE Nº ${inc.id?.toString().slice(-3) || '---'}`, style: 'reportNumber', width: '60%' },
+            { 
+              stack: [
+                { text: 'Fecha:', fontSize: 10, bold: true, color: colorPrimario, alignment: 'right' },
+                { text: fechaSoloFecha || 'N/A', fontSize: 11, bold: true, alignment: 'right' }
+              ],
+              width: '40%'
+            }
+          ],
+          margin: [0, 0, 0, 15]
+        });
+
+        // LÍNEA SEPARADORA
+        content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 2, lineColor: colorPrimario }], margin: [0, 0, 0, 12] });
+
+        // DATOS DEL REPORTE (TIPO, CLIENTE, RIESGO, UNIDAD)
+        content.push({
+          table: {
+            widths: ['25%', '25%', '25%', '25%'],
+            body: [
+              [
+                { text: 'Tipo de Incidente:', bold: true, color: colorPrimario, fontSize: 10 },
+                { text: inc.tipoIncidente || '-', fontSize: 10 },
+                { text: 'Nivel de Riesgo:', bold: true, color: colorPrimario, fontSize: 10 },
+                { text: inc.Nivelderiesgo || '-', bold: true, color: colorSecundario, fontSize: 11 }
+              ],
+              [
+                { text: 'Cliente:', bold: true, color: colorPrimario, fontSize: 10 },
+                { text: inc.cliente || '-', fontSize: 10 },
+                { text: 'Unidad/Sede:', bold: true, color: colorPrimario, fontSize: 10 },
+                { text: inc.unidad || '-', fontSize: 10 }
+              ]
+            ]
+          },
+          layout: {
+            hLineWidth: (i) => i === 0 ? 1 : 0.5,
+            vLineWidth: () => 0.5,
+            hLineColor: () => '#ddd',
+            vLineColor: () => '#ddd',
+            paddingLeft: () => 8,
+            paddingRight: () => 8,
+            paddingTop: () => 6,
+            paddingBottom: () => 6
+          },
+          margin: [0, 0, 0, 12]
+        });
+
+        // SECCIÓN: DETALLE DEL INCIDENTE
+        content.push({ text: 'DETALLE DEL INCIDENTE', style: 'sectionTitle', margin: [0, 0, 0, 8] });
+        content.push({
+          table: {
+            widths: ['100%'],
+            body: [
+              [{ text: inc.detalleIncidente || 'Sin detalles registrados', alignment: 'left', fontSize: 10, margin: [5, 5, 5, 5] }]
+            ]
+          },
+          layout: {
+            hLineWidth: () => 1,
+            vLineWidth: () => 1,
+            hLineColor: () => '#bbb',
+            vLineColor: () => '#bbb',
+            paddingLeft: () => 10,
+            paddingRight: () => 10,
+            paddingTop: () => 8,
+            paddingBottom: () => 8
+          },
+          margin: [0, 0, 0, 12]
+        });
+
+        // INFORMACIÓN DEL REGISTRO (REPORTADO POR, ESTADO, PUESTO, SUPERVISOR)
+        content.push({
+          table: {
+            widths: ['25%', '25%', '25%', '25%'],
+            body: [
+              [
+                { text: 'Reportado por:', bold: true, color: colorPrimario, fontSize: 9 },
+                { text: inc.registradoPor || '-', fontSize: 9 },
+                { text: 'Puesto:', bold: true, color: colorPrimario, fontSize: 9 },
+                { text: inc.puesto || '-', fontSize: 9 }
+              ],
+              [
+                { text: 'Estado:', bold: true, color: colorPrimario, fontSize: 9 },
+                { text: inc.estado || '-', fontSize: 9 },
+                { text: 'Supervisor:', bold: true, color: colorPrimario, fontSize: 9 },
+                { text: inc.supervisor || '-', fontSize: 9 }
+              ]
+            ]
+          },
+          layout: {
+            hLineWidth: () => 0.5,
+            vLineWidth: () => 0.5,
+            hLineColor: () => '#ddd',
+            vLineColor: () => '#ddd',
+            paddingLeft: () => 6,
+            paddingRight: () => 6,
+            paddingTop: () => 5,
+            paddingBottom: () => 5
+          },
+          margin: [0, 0, 0, 12]
+        });
+
+        // SECCIÓN: EVIDENCIA/COMENTARIOS
+        content.push({ text: 'EVIDENCIA / COMENTARIOS:', style: 'sectionTitle', margin: [0, 15, 0, 8] });
+        content.push({
+          table: {
+            widths: ['100%'],
+            body: [
+              [{ text: inc.comentario || 'Sin comentarios adicionales', alignment: 'left', fontSize: 10 }]
+            ]
+          },
+          layout: {
+            hLineWidth: () => 1,
+            vLineWidth: () => 1,
+            hLineColor: () => '#bbb',
+            vLineColor: () => '#bbb',
+            paddingLeft: () => 10,
+            paddingRight: () => 10,
+            paddingTop: () => 8,
+            paddingBottom: () => 8
+          },
+          margin: [0, 0, 0, 15]
+        });
+
+        // Agregar foto si existe
+        if (fotoDataUrl) {
+          content.push({ text: 'FOTOGRAFÍA DE EVIDENCIA:', style: 'sectionTitle', margin: [0, 15, 0, 8] });
+          content.push({
+            image: fotoDataUrl,
+            width: 150,
+            height: 150,
+            alignment: 'center',
+            margin: [0, 0, 0, 20]
+          });
+        } else if (inc.fotoURL) {
+          // Si no se pudo descargar pero existe URL, mostrar texto con el link
+          content.push({ text: 'FOTOGRAFÍA DE EVIDENCIA:', style: 'sectionTitle', margin: [0, 15, 0, 8] });
+          content.push({
+            text: '[Foto disponible en: ' + inc.fotoURL.substring(0, 50) + '...]',
+            fontSize: 9,
+            color: '#666',
+            alignment: 'center',
+            margin: [0, 0, 0, 20],
+            italics: true
+          });
+        }
+
+        // FIRMAS
+        content.push({ text: '\n' });
+        content.push({
+          table: {
+            widths: ['50%', '50%'],
+            body: [
+              [
+                { text: '________________________________', alignment: 'center', fontSize: 9, margin: [0, 10, 0, 0] },
+                { text: '________________________________', alignment: 'center', fontSize: 9, margin: [0, 10, 0, 0] }
+              ],
+              [
+                { text: `Firma: ${inc.registradoPor || ''}`, alignment: 'center', fontSize: 9, margin: [0, 5, 0, 0] },
+                { text: `Supervisor: ${inc.supervisor || ''}`, alignment: 'center', fontSize: 9, margin: [0, 5, 0, 0] }
+              ],
+              [
+                { text: 'Reportado por', alignment: 'center', fontSize: 8, italics: true, color: '#666' },
+                { text: 'Supervisor de Seguridad', alignment: 'center', fontSize: 8, italics: true, color: '#666' }
+              ]
+            ]
+          },
+          layout: {
+            hLineWidth: () => 0,
+            vLineWidth: () => 0,
+          }
+        });
+
+        // Definición completa del documento
+        const docDefinition = {
+          pageSize: 'A4',
+          pageMargins: [40, 40, 40, 40],
+          content: content,
+          styles: {
+            reportNumber: {
+              fontSize: 20,
+              bold: true,
+              color: colorSecundario,
+              margin: [0, 5, 0, 5]
+            },
+            sectionTitle: {
+              fontSize: 11,
+              bold: true,
+              color: '#fff',
+              fillColor: colorPrimario,
+              alignment: 'left',
+              margin: [0, 8, 0, 8],
+              padding: [8, 8, 8, 8]
+            }
+          }
+        };
+
+        // Generar y descargar PDF
+        if (window.pdfMake && pdfMake.createPdf) {
+          pdfMake.createPdf(docDefinition).download(`Reporte_Incidencia_${inc.id || Date.now()}.pdf`);
+          UI.toast('PDF descargado exitosamente');
+        } else {
+          UI.toast('Librería PDF no cargada');
+        }
+      } catch (err) {
+        console.error('generarPDFIncidencia', err);
+        UI.toast('No se pudo generar el PDF');
+      } finally {
+        UI.hideOverlay();
+      }
+    }
+
+    // Delegación de evento para botones en la tabla de incidencias
+    if (incidenciasTbody) {
+      incidenciasTbody.addEventListener('click', (ev) => {
+        const btnPdf = ev.target.closest && ev.target.closest('.btn-pdf');
+        const btnEdit = ev.target.closest && ev.target.closest('.btn-edit-inc');
+        
+        if (btnPdf) {
+          const id = btnPdf.dataset.id;
+          const raw = incidenciasTbody.dataset.rows;
+          if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
+          const rows = JSON.parse(raw);
+          const inc = rows.find(x => x.id === id);
+          if (!inc) { UI.toast('Incidencia no encontrada'); return; }
+          generarPDFIncidencia(inc);
+        } else if (btnEdit) {
+          const id = btnEdit.dataset.id;
+          const raw = incidenciasTbody.dataset.rows;
+          if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
+          const rows = JSON.parse(raw);
+          const inc = rows.find(x => x.id === id);
+          if (!inc) { UI.toast('Incidencia no encontrada'); return; }
+          abrirModalEditarIncidencia(inc);
+        }
+      });
+    }
+
+  // Función para abrir visor de fotos expandible
+  function abrirVisorFoto(fotoUrl) {
+    // Crear overlay y modal
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:2000;display:flex;align-items:center;justify-content:center;cursor:pointer';
+    
+    const imgContainer = document.createElement('div');
+    imgContainer.style.cssText = 'position:relative;max-width:90%;max-height:90%;background:#fff;padding:20px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
+    
+    const img = document.createElement('img');
+    img.src = fotoUrl;
+    img.style.cssText = 'max-width:100%;max-height:600px;object-fit:contain;display:block';
+    img.alt = 'Foto expandida';
+    
+    const closeBtn = document.createElement('button');
+    closeBtn.innerHTML = '✕';
+    closeBtn.style.cssText = 'position:absolute;top:5px;right:5px;background:none;border:none;font-size:28px;cursor:pointer;color:#666;hover:color:#000';
+    closeBtn.onclick = () => overlay.remove();
+    
+    imgContainer.appendChild(img);
+    imgContainer.appendChild(closeBtn);
+    overlay.appendChild(imgContainer);
+    
+    // Cerrar al hacer click fuera de la imagen
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+      }
+    });
+    
+    // Cerrar con tecla ESC
+    const handleEsc = (e) => {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', handleEsc);
+      }
+    };
+    document.addEventListener('keydown', handleEsc);
+    
+    document.body.appendChild(overlay);
+  }
+
+  // Función para generar PDF del Cuaderno (Cronología de Ocurrencias)
+  function generarPDFCuaderno() {
+    const raw = cuadernoTbody?.dataset.rows;
+    if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
+    
+    const rows = JSON.parse(raw);
+    if (rows.length === 0) { UI.toast('No hay registros para exportar'); return; }
+
+    // Obtener cliente y unidad seleccionados
+    const clienteSeleccionado = document.getElementById('cuaderno-cliente')?.value || '';
+    const unidadSeleccionada = document.getElementById('cuaderno-unidad')?.value || '';
+
+    UI.showOverlay('Generando PDF...', 'Creando cuaderno de ocurrencias');
+    
+    // Cargar logo como imagen local
+    fetch('logo_liberman.png')
+      .then(res => res.blob())
+      .then(blob => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const logoDataUrl = reader.result;
+          generarPDFCuadernoConLogo(rows, logoDataUrl, clienteSeleccionado, unidadSeleccionada);
+        };
+        reader.onerror = () => {
+          console.warn('No se pudo cargar logo, continuando sin imagen');
+          generarPDFCuadernoConLogo(rows, null, clienteSeleccionado, unidadSeleccionada);
+        };
+        reader.readAsDataURL(blob);
+      })
+      .catch(e => {
+        console.warn('Error cargando logo:', e);
+        generarPDFCuadernoConLogo(rows, null, clienteSeleccionado, unidadSeleccionada);
+      });
+  }
+
+  function generarPDFCuadernoConLogo(rows, logoDataUrl, cliente, unidad) {
+    try {
+      const colorPrimario = '#2c5aa0';
+      const colorSecundario = '#1a3d5c';
+      const content = [];
+
+      // ENCABEZADO CON LOGO
+      const encabezado = {
+        columns: [
+          {
+            stack: [
+              { text: 'LIDERMAN', fontSize: 16, bold: true, color: '#c41e3a' },
+              { text: 'SOLUCIONES TECNOLÓGICAS', fontSize: 10, color: colorPrimario },
+              { text: 'CUADERNO DE OCURRENCIAS DE SEGURIDAD', fontSize: 12, bold: true, color: colorPrimario, margin: [0, 5, 0, 0] }
+            ],
+            width: logoDataUrl ? '70%' : '100%'
+          }
+        ],
+        margin: [0, 0, 0, 15]
+      };
+
+      if (logoDataUrl) {
+        encabezado.columns.push({
+          image: logoDataUrl,
+          width: 70,
+          height: 70,
+          alignment: 'right',
+          margin: [10, 0, 0, 0]
+        });
+      }
+
+      content.push(encabezado);
+
+      // LÍNEA SEPARADORA
+      content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 2, lineColor: colorPrimario }], margin: [0, 0, 0, 12] });
+
+      // INFORMACIÓN DE FILTROS
+      const fechaInicio = cuadernoFechaInicio?.value || 'Sin filtro';
+      const fechaFin = cuadernoFechaFin?.value || 'Sin filtro';
+      const clienteDisplay = cliente || 'Todos';
+      const unidadDisplay = unidad || 'Todas';
+      
+      content.push({
+        columns: [
+          { text: `Cliente: ${clienteDisplay} | Unidad: ${unidadDisplay}`, fontSize: 11, bold: true, color: '#c41e3a' },
+          { text: `Total de registros: ${rows.length}`, fontSize: 10, color: '#555', alignment: 'right' }
+        ],
+        margin: [0, 0, 0, 10]
+      });
+
+      content.push({
+        columns: [
+          { text: `Período: ${fechaInicio} hasta ${fechaFin}`, fontSize: 10, color: '#555' }
+        ],
+        margin: [0, 0, 0, 15]
+      });
+
+      // TABLA DE CONTENIDO / CRONOLOGÍA CON HEADERS MEJORADOS
+      const tableBody = [];
+      
+      // ENCABEZADOS CON STYLING SIMPLE
+      const headerRow = [
+        { text: 'Nº', bold: true, color: '#fff', fillColor: colorPrimario, alignment: 'center', fontSize: 10, margin: [2, 6, 2, 6] },
+        { text: 'FECHA Y HORA', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+        { text: 'CLIENTE', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+        { text: 'UNIDAD', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+        { text: 'TIPO', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+        { text: 'USR. ENTRANTE', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+        { text: 'USR. SALIENTE', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+        { text: 'USUARIO', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+        { text: 'COMENTARIO', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] }
+      ];
+      tableBody.push(headerRow);
+
+      // Agregar filas con datos
+      rows.forEach((r, idx) => {
+        const fechaHora = r.timestampStr || 'N/A';
+        const usuarioEntrante = r.usuarioEntrante?.nombre || r.usuarioEntrante?.id || '-';
+        const usuarioSaliente = r.usuarioSaliente?.nombre || r.usuarioSaliente?.id || '-';
+        const usuario = r.usuario || usuarioEntrante || usuarioSaliente || '-';
+        const backgroundColor = idx % 2 === 0 ? '#fafafa' : '#ffffff';
+
+        tableBody.push([
+          { text: idx + 1, alignment: 'center', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+          { text: fechaHora, fontSize: 8, fillColor: backgroundColor, bold: true, color: colorPrimario, margin: [2, 4, 2, 4] },
+          { text: r.cliente || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+          { text: r.unidad || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+          { text: r.tipoRegistro || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+          { text: usuarioEntrante, fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+          { text: usuarioSaliente, fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+          { text: usuario, fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+          { text: r.comentario || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] }
+        ]);
+      });
+
+      content.push({
+        table: {
+          widths: ['4%', '12%', '12%', '12%', '10%', '14%', '14%', '12%', '14%'],
+          body: tableBody,
+          headerRows: 1
+        },
+        layout: {
+          fillColor: function(i, node) {
+            if (i === 0) return colorPrimario;  // Encabezado
+            return (i % 2 === 0) ? '#fafafa' : '#ffffff';
+          },
+          hLineWidth: (i) => i === 0 ? 2 : 0.5,
+          vLineWidth: () => 0.5,
+          hLineColor: () => '#ddd',
+          vLineColor: () => '#ddd',
+          paddingLeft: () => 6,
+          paddingRight: () => 6,
+          paddingTop: () => 6,
+          paddingBottom: () => 6
+        },
+        margin: [0, 0, 0, 20]
+      });
+
+      // PIE DE PÁGINA
+      content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: '#ccc' }], margin: [0, 10, 0, 10] });
+      
+      const fechaActual = new Date().toLocaleString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+      content.push({
+        columns: [
+          { text: `Generado: ${fechaActual}`, fontSize: 9, color: '#999' },
+          { text: 'Liderman - Soluciones Tecnológicas', fontSize: 9, color: '#999', alignment: 'right' }
+        ],
+        margin: [0, 0, 0, 0]
+      });
+
+      // ESTILOS DEL DOCUMENTO
+      const styles = {
+        reportNumber: { fontSize: 16, bold: true, color: colorPrimario },
+        sectionTitle: { fontSize: 13, bold: true, color: colorPrimario, border: [false, false, false, true], borderColor: colorSecundario }
+      };
+
+      // DEFINICIÓN DEL DOCUMENTO PDF
+      const docDefinition = {
+        content: content,
+        styles: styles,
+        defaultStyle: { fontSize: 10 },
+        pageMargins: [40, 40, 40, 60],
+        footer: (currentPage, pageCount) => ({
+          text: `Página ${currentPage} de ${pageCount}`,
+          alignment: 'center',
+          fontSize: 9,
+          color: '#999',
+          margin: [0, 10, 0, 0]
+        })
+      };
+
+      // Generar y descargar PDF
+      const nombreArchivo = `Cuaderno_Ocurrencias_${new Date().toISOString().split('T')[0]}.pdf`;
+      try {
+        pdfMake.createPdf(docDefinition).download(nombreArchivo);
+        UI.toast('✓ PDF descargado exitosamente');
+      } catch (e) {
+        console.error('Error al generar PDF:', e);
+        UI.toast('Error al descargar PDF. Intenta nuevamente.');
+      }
+      UI.toast('PDF generado exitosamente');
+      UI.hideOverlay();
+    } catch (error) {
+      console.error('Error al generar PDF:', error);
+      UI.toast('Error al generar PDF: ' + error.message);
+      UI.hideOverlay();
+    }
+  }
+
+  function abrirModalEditarIncidencia(inc) {
+    // Crear modal HTML
+    const modalHTML = `
+      <div id="modal-edit-inc" class="modal-overlay" style="display:flex">
+        <div class="modal-content" style="width:90%; max-width:800px; max-height:90vh; overflow-y:auto">
+          <div class="modal-header">
+            <h2>Editar Incidencia #${inc.id?.toString().slice(-3) || 'N/A'}</h2>
+            <button class="btn-close-modal">✕</button>
+          </div>
+          <form id="form-edit-inc" class="modal-form">
+            <div class="form-group">
+              <label>Fecha</label>
+              <input type="text" name="fecha" value="${inc.timestampStr || ''}" disabled readonly style="background:#f0f0f0">
+            </div>
+            
+            <div class="form-row">
+              <div class="form-group">
+                <label>Cliente *</label>
+                <input type="text" name="cliente" value="${inc.cliente || ''}" required>
+              </div>
+              <div class="form-group">
+                <label>Unidad *</label>
+                <input type="text" name="unidad" value="${inc.unidad || ''}" required>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label>Tipo de Incidente *</label>
+                <input type="text" name="tipoIncidente" value="${inc.tipoIncidente || ''}" required>
+              </div>
+              <div class="form-group">
+                <label>Nivel de Riesgo *</label>
+                <select name="Nivelderiesgo" required>
+                  <option value="">Seleccionar...</option>
+                  <option value="BAJO" ${inc.Nivelderiesgo === 'BAJO' ? 'selected' : ''}>BAJO</option>
+                  <option value="MEDIO" ${inc.Nivelderiesgo === 'MEDIO' ? 'selected' : ''}>MEDIO</option>
+                  <option value="ALTO" ${inc.Nivelderiesgo === 'ALTO' ? 'selected' : ''}>ALTO</option>
+                  <option value="CRÍTICO" ${inc.Nivelderiesgo === 'CRÍTICO' ? 'selected' : ''}>CRÍTICO</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Detalle del Incidente *</label>
+              <textarea name="detalleIncidente" required style="min-height:100px">${inc.detalleIncidente || ''}</textarea>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label>Reportado por</label>
+                <input type="text" name="registradoPor" value="${inc.registradoPor || ''}">
+              </div>
+              <div class="form-group">
+                <label>Puesto</label>
+                <input type="text" name="puesto" value="${inc.puesto || ''}">
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label>Estado *</label>
+                <select name="estado" required>
+                  <option value="">Seleccionar...</option>
+                  <option value="Pendiente" ${inc.estado === 'Pendiente' ? 'selected' : ''}>Pendiente</option>
+                  <option value="En proceso" ${inc.estado === 'En proceso' ? 'selected' : ''}>En proceso</option>
+                  <option value="Resuelto" ${inc.estado === 'Resuelto' ? 'selected' : ''}>Resuelto</option>
+                  <option value="Cerrado" ${inc.estado === 'Cerrado' ? 'selected' : ''}>Cerrado</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Supervisor</label>
+                <input type="text" name="supervisor" value="${inc.supervisor || ''}">
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Comentarios</label>
+              <textarea name="comentario" style="min-height:80px">${inc.comentario || ''}</textarea>
+            </div>
+
+            <div class="form-group">
+              <label>Foto/Evidencia</label>
+              <div id="foto-preview-container" style="margin-top:10px; text-align:center">
+                ${inc.fotoURL ? `<img id="foto-preview" src="${inc.fotoURL}" alt="Foto evidencia" style="max-width:100%; max-height:300px; border-radius:8px; border:1px solid #ddd; margin-bottom:10px">` : '<p style="color:#999">No hay foto asociada</p>'}
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Comentario de Cierre (Supervisor)</label>
+              <textarea name="comentarioCierre" style="min-height:80px">${inc.comentarioCierre || ''}</textarea>
+            </div>
+
+            <div class="modal-footer">
+              <button type="button" class="btn" id="btn-cancel-edit" style="background:#ccc; color:#000">Cancelar</button>
+              <button type="submit" class="btn" style="background:#2c5aa0; color:#fff">Guardar Cambios</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    // Insertar modal en el DOM
+    const existingModal = document.getElementById('modal-edit-inc');
+    if (existingModal) existingModal.remove();
+    
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
+    
+    const modal = document.getElementById('modal-edit-inc');
+    const form = document.getElementById('form-edit-inc');
+    const btnCancel = document.getElementById('btn-cancel-edit');
+    const btnClose = modal.querySelector('.btn-close-modal');
+
+    // Cerrar modal
+    const cerrarModal = () => modal.remove();
+    btnCancel.addEventListener('click', cerrarModal);
+    btnClose.addEventListener('click', cerrarModal);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) cerrarModal();
+    });
+
+    // Guardar cambios
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      UI.showOverlay('Guardando...', 'Actualizando incidencia');
+      try {
+        const formData = new FormData(form);
+        const updates = {};
+        for (let [key, value] of formData) {
+          updates[key] = value;
+        }
+
+        // Actualizar en Firestore
+        await db.collection('INCIDENCIAS_REGISTRADAS').doc(inc.id).update(updates);
+        UI.hideOverlay();
+        UI.toast('Incidencia actualizada exitosamente');
+        cerrarModal();
+        // Recargar tabla
+        document.getElementById('incidencias-btn-buscar')?.click();
+      } catch (error) {
+        UI.hideOverlay();
+        console.error('Error al guardar:', error);
+        UI.toast('Error al guardar: ' + error.message);
+      }
+    });
+  }
+
+  function limpiarIncidencias() {
+    if (incFechaInicio) incFechaInicio.value = '';
+    if (incFechaFin) incFechaFin.value = '';
+    if (incCliente) incCliente.value = '';
+    if (incUnidad) incUnidad.value = '';
+    if (incEstado) incEstado.value = '';
+    if (incidenciasTbody) incidenciasTbody.innerHTML = '';
+    delete incidenciasTbody?.dataset.rows;
+  }
+
+  function exportarIncidenciasCSV() {
+    // Redirigir a Excel
+    exportarIncidenciasExcel();
+  }
+
+  function exportarIncidenciasExcel() {
+    const raw = incidenciasTbody?.dataset.rows;
+    if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
+    
+    try {
+      if (!window.XLSX) {
+        UI.toast('Librería XLSX no disponible');
+        return;
+      }
+
+      const rows = JSON.parse(raw);
+      const wb = XLSX.utils.book_new();
+
+      // Preparar datos con formato de tabla
+      const headers = ['FECHA', 'CLIENTE', 'UNIDAD', 'CATEGORÍA', 'SUB CATEGORÍA', 'NIVEL DE RIESGO', 'ESTADO', 'COMENTARIO'];
+      const data = [headers];
+
+      for (const r of rows) {
+        const f = r.timestamp?.toDate ? r.timestamp.toDate() : new Date(r.timestamp);
+        const fecha = (f instanceof Date && !Number.isNaN(f.getTime())) ? f.toLocaleDateString('es-PE') + ' ' + f.toLocaleTimeString('es-PE') : '';
+        
+        data.push([
+          fecha,
+          r.cliente || '',
+          r.unidad || '',
+          r.tipoIncidente || '',
+          r.detalleIncidente || '',
+          r.Nivelderiesgo || '',
+          r.estado || '',
+          r.comentario || ''
+        ]);
+      }
+
+      // Crear hoja con datos
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      
+      // Aplicar ancho de columnas
+      ws['!cols'] = [
+        { wch: 20 }, // FECHA
+        { wch: 18 }, // CLIENTE
+        { wch: 18 }, // UNIDAD
+        { wch: 25 }, // CATEGORÍA
+        { wch: 25 }, // SUB CATEGORÍA
+        { wch: 18 }, // NIVEL DE RIESGO
+        { wch: 15 }, // ESTADO
+        { wch: 30 }  // COMENTARIO
+      ];
+
+      // Aplicar estilos a la cabecera
+      const headerStyle = {
+        font: { bold: true, color: { rgb: 'FFFFFF' } },
+        fill: { fgColor: { rgb: 'FF4472C4' } },
+        alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+        border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
+      };
+
+      for (let i = 0; i < headers.length; i++) {
+        const cell = XLSX.utils.encode_cell({ r: 0, c: i });
+        if (ws[cell]) ws[cell].s = headerStyle;
+      }
+
+      // Aplicar borde a todas las celdas
+      for (let r = 0; r < data.length; r++) {
+        for (let c = 0; c < headers.length; c++) {
+          const cell = XLSX.utils.encode_cell({ r, c });
+          if (ws[cell]) {
+            if (!ws[cell].s) ws[cell].s = {};
+            ws[cell].s.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+            ws[cell].s.alignment = { wrapText: true };
+          }
+        }
+      }
+
+      XLSX.utils.book_append_sheet(wb, ws, 'Incidencias');
+
+      // Hoja de metadatos
+      const metadata = [
+        ['REPORTE DE INCIDENCIAS'],
+        ['Fecha de Generación', new Date().toLocaleString('es-PE')],
+        ['Total de Registros', rows.length],
+        [],
+        ['Filtros Aplicados'],
+        ['Cliente', document.getElementById('incidencias-cliente')?.value || 'Todos'],
+        ['Unidad', document.getElementById('incidencias-unidad')?.value || 'Todas'],
+        ['Estado', document.getElementById('incidencias-estado')?.value || 'Todos'],
+        ['Rango de Fechas', document.getElementById('incidencias-fecha-inicio')?.value + ' a ' + document.getElementById('incidencias-fecha-fin')?.value || 'N/A']
+      ];
+
+      const metaWs = XLSX.utils.aoa_to_sheet(metadata);
+      metaWs['!cols'] = [{ wch: 25 }, { wch: 35 }];
+      XLSX.utils.book_append_sheet(wb, metaWs, 'Información');
+
+      // Descargar archivo
+      XLSX.writeFile(wb, `incidencias_${new Date().toISOString().split('T')[0]}.xlsx`);
+      UI.toast('Exportado a Excel correctamente');
+    } catch (e) {
+      console.error('Error en exportación Excel:', e);
+      UI.toast('Error al exportar a Excel');
+    }
+  }
+
+  incBtnBuscar?.addEventListener('click', buscarIncidencias);
+  incBtnLimpiar?.addEventListener('click', limpiarIncidencias);
+  incBtnExportar?.addEventListener('click', exportarIncidenciasCSV);
+
+  // ============================================================================
+  // 7) OTRAS SECCIONES (USUARIOS, CLIENTE/UNIDAD, ETC.)
+  // ============================================================================
+
+  // --- USUARIOS ---
+  async function loadUsers() {
+    if (!usersTbody) return;
+    UI.showOverlay('Cargando usuarios…', 'Consultando base de datos');
+    try {
+      // Límite de 1000 usuarios para mejor rendimiento
+      const snap = await db.collection(COLLECTIONS.USERS).limit(1000).get();
+      cachedUsers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderUsers(cachedUsers);
+    } catch (e) {
+      console.error('Usuarios', e);
+      UI.confirm({ title: 'Error', message: 'No se pudo cargar la lista de usuarios.', kind: 'err' });
+    } finally { UI.hideOverlay(); }
+  }
+
+  function renderUsers(list) {
+    if (!usersTbody) return;
+    usersTbody.innerHTML = '';
+    if (usersCountEl) usersCountEl.textContent = `(${list.length})`;
+    const frag = document.createDocumentFragment();
+    list.forEach(u => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${u.id || ''}</td>
+        <td>${u.NOMBRES || ''}</td>
+        <td>${u.APELLIDOS || ''}</td>
+        <td>${u.CLIENTE || ''}</td>
+        <td>${u.UNIDAD || ''}</td>
+        <td>${u.TIPO || ''}</td>
+        <td>${u.ESTADO || ''}</td>
+        <td class="row-actions">
+          <button class="btn small secondary" data-act="edit" data-id="${u.id}">Editar</button>
+          <button class="btn small danger" data-act="del" data-id="${u.id}">Eliminar</button>
+        </td>`;
+      frag.appendChild(tr);
+    });
+    usersTbody.appendChild(frag);
+  }
+
+  usersTbody?.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('button[data-act]');
+    if (!btn) return;
+    const id = btn.dataset.id;
+    const act = btn.dataset.act;
+
+    if (act === 'del') {
+      const ok = await UI.confirm({ title: 'Eliminar usuario', message: `¿Eliminar "${id}"?`, kind: 'err', confirmText: 'Eliminar' });
+      if (!ok) return;
+      UI.showOverlay('Eliminando…', 'Actualizando');
+      try {
+        await db.collection(COLLECTIONS.USERS).doc(id).delete();
+        cachedUsers = cachedUsers.filter(x => x.id !== id);
+        renderUsers(cachedUsers);
+        UI.toast('Usuario eliminado');
+      } catch (e) {
+        console.error(e);
+        UI.confirm({ title: 'Error', message: 'No se pudo eliminar.', kind: 'err' });
+      } finally { UI.hideOverlay(); }
+    }
+
+    if (act === 'edit') {
+      const u = cachedUsers.find(x => x.id === id);
+      if (!u) return;
+
+      editNombres.value = u.NOMBRES ?? '';
+      editApellidos.value = u.APELLIDOS ?? '';
+      editTipo.value = u.TIPO ?? 'AGENTE';
+      editEstado.value = u.ESTADO ?? 'ACTIVO';
+
+      const ensureCU = async () => {
+        if (!cachedClientesUnidades.length) {
+          // Límite de 500 para mejor rendimiento
+          const snap = await db.collection(COLLECTIONS.CLIENT_UNITS).limit(500).get();
+          cachedClientesUnidades = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        }
+      };
+
+      (async () => {
+        await ensureCU();
+
+        editCliente.innerHTML = '';
+        const cliSet = new Set(cachedClientesUnidades.map(c => c.id));
+        for (const c of [...cliSet].sort()) {
+          const opt = document.createElement('option');
+          opt.value = opt.textContent = c;
+          opt.selected = (c === (u.CLIENTE || ''));
+          editCliente.appendChild(opt);
+        }
+
+        const fillUnidades = (clienteSel) => {
+          editUnidad.innerHTML = '';
+          const row = cachedClientesUnidades.find(r => r.id === clienteSel);
+          const unidades = row?.unidades ? Object.keys(row.unidades) : [];
+          for (const un of unidades.sort()) {
+            const opt = document.createElement('option');
+            opt.value = opt.textContent = un;
+            opt.selected = (un === (u.UNIDAD || ''));
+            editUnidad.appendChild(opt);
+          }
+        };
+        fillUnidades(editCliente.value);
+        editCliente.onchange = () => fillUnidades(editCliente.value);
+
+        editingUserId = id;
+        openModal(editModal);
+      })();
+    }
+  });
+
+  editCancelBtn?.addEventListener('click', () => closeModal(editModal));
+  editForm?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (!editingUserId) return;
+
+    const payload = {
+      NOMBRES: editNombres.value.trim(),
+      APELLIDOS: editApellidos.value.trim(),
+      CLIENTE: editCliente.value || '',
+      UNIDAD: editUnidad.value || '',
+      TIPO: editTipo.value,
+      ESTADO: editEstado.value
+    };
+
+    UI.showOverlay('Guardando…', 'Actualizando datos');
+    try {
+      await db.collection(COLLECTIONS.USERS).doc(editingUserId).set(payload, { merge: true });
+      const u = cachedUsers.find(x => x.id === editingUserId);
+      if (u) Object.assign(u, payload);
+      renderUsers(cachedUsers);
+      UI.toast('Usuario actualizado');
+      closeModal(editModal);
+    } catch (e) {
+      console.error(e);
+      UI.confirm({ title: 'Error', message: 'No se pudo actualizar.', kind: 'err' });
+    } finally { UI.hideOverlay(); }
+  });
+
+  // --- CLIENTE/UNIDAD ---
+  async function loadClienteUnidad() {
+    if (!clienteUnidadTbody) return;
+    UI.showOverlay('Cargando cliente/unidad…', 'Consultando base de datos');
+    try {
+      // Límite de 500 para mejor rendimiento
+      const snap = await db.collection(COLLECTIONS.CLIENT_UNITS).limit(500).get();
+      cachedClientesUnidades = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderClienteUnidad(cachedClientesUnidades);
+    } catch (e) {
+      console.error('Cliente/Unidad', e);
+      UI.confirm({ title: 'Error', message: 'No se pudo cargar Cliente/Unidad.', kind: 'err' });
+    } finally { UI.hideOverlay(); }
+  }
+
+  function renderClienteUnidad(list) {
+    if (!clienteUnidadTbody) return;
+    const term = norm(clienteUnidadSearchInput?.value || '');
+    const filtered = term
+      ? list.filter(x => norm(x.id || '').includes(term) ||
+        Object.keys(x.unidades || {}).some(u => norm(u).includes(term)))
+      : list;
+
+    clienteUnidadTbody.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    filtered.forEach(row => {
+      const unidades = row.unidades ? Object.keys(row.unidades) : [];
+      unidades.forEach(u => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${row.id || ''}</td>
+          <td>${u}</td>
+          <td class="row-actions">
+            <button class="btn small secondary" data-act="edit-cu" data-id="${row.id}" data-unidad="${u}">Editar</button>
+          </td>`;
+        frag.appendChild(tr);
+      });
+      if (unidades.length === 0) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${row.id || ''}</td>
+          <td><i class="muted">Sin unidades</i></td>
+          <td></td>`;
+        frag.appendChild(tr);
+      }
+    });
+    clienteUnidadTbody.appendChild(frag);
+  }
+  clienteUnidadSearchInput?.addEventListener('input', () => renderClienteUnidad(cachedClientesUnidades));
+
+  clienteUnidadTbody?.addEventListener('click', async (ev) => {
+    const btn = ev.target.closest('button[data-act="edit-cu"]');
+    if (!btn) return;
+    const docId = btn.dataset.id;
+    const oldU = btn.dataset.unidad;
+
+    cuEditClienteOriginal.value = docId;
+    cuEditUnidadOriginal.value = oldU;
+    cuEditCliente.value = docId;
+    cuEditUnidad.value = oldU;
+
+    openModal(cuEditModal);
+  });
+
+  cuEditCancelBtn?.addEventListener('click', () => closeModal(cuEditModal));
+  cuEditForm?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const docId = cuEditClienteOriginal.value;
+    const oldU = cuEditUnidadOriginal.value;
+    const newCliente = cuEditCliente.value.trim();
+    const newUnidad = cuEditUnidad.value.trim();
+    if (!docId || !oldU || !newCliente || !newUnidad) return;
+
+    if (newCliente !== docId) {
+      UI.toast('Para mover una unidad a otro cliente se requiere un flujo adicional.');
+      return;
+    }
+
+    UI.showOverlay('Actualizando…', 'Modificando unidad');
+    try {
+      const ref = db.collection(COLLECTIONS.CLIENT_UNITS).doc(docId);
+      const snap = await ref.get();
+      const data = snap.data() || {};
+      const unidades = data.unidades || {};
+      unidades[newUnidad] = unidades[oldU] ?? true;
+      delete unidades[oldU];
+      await ref.set({ unidades }, { merge: true });
+
+      const row = cachedClientesUnidades.find(r => r.id === docId);
+      if (row) { row.unidades = unidades; }
+      renderClienteUnidad(cachedClientesUnidades);
+      UI.toast('Unidad actualizada');
+      closeModal(cuEditModal);
+    } catch (e) {
+      console.error(e);
+      UI.confirm({ title: 'Error', message: 'No se pudo actualizar la unidad.', kind: 'err' });
+    } finally { UI.hideOverlay(); }
+  });
+
+  // --- CUADERNO ---
+  cuadernoBtnBuscar?.addEventListener('click', async () => {
+    if (!cuadernoTbody) return;
+    UI.showOverlay('Buscando…', 'Consultando cuaderno');
+
+    try {
+      let q = db.collection(COLLECTIONS.LOGBOOK);
+      const fi = cuadernoFechaInicio?.value ? new Date(cuadernoFechaInicio.value) : null;
+      const ff = cuadernoFechaFin?.value ? new Date(cuadernoFechaFin.value) : null;
+      if (fi) q = q.where('timestamp', '>=', fi);
+      if (ff) q = q.where('timestamp', '<=', new Date(ff.getFullYear(), ff.getMonth(), ff.getDate() + 1));
+
+      const cli = cuadernoClienteSelect?.value || '';
+      const uni = cuadernoUnidadSelect?.value || '';
+      if (cli) q = q.where('cliente', '==', cli);
+      if (uni) q = q.where('unidad', '==', uni);
+
+      const snap = await q.get();
+      const rows = snap.docs.map(d => {
+        const data = d.data();
+        const f = data.timestamp?.toDate ? data.timestamp.toDate() : new Date(data.timestamp || 0);
+        const fechaHoraStr = f instanceof Date && !Number.isNaN(f.getTime()) 
+          ? f.toLocaleString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+          : 'N/A';
+        return { 
+          id: d.id, 
+          ...data,
+          timestampStr: fechaHoraStr // Agregar fecha formateada
+        };
+      })
+        .sort((a, b) => {
+          const ad = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(a.timestamp || 0);
+          const bd = b.timestamp?.toDate ? b.timestamp.toDate() : new Date(b.timestamp || 0);
+          return ad.getTime() - bd.getTime(); // asc: más antiguo arriba
+        });
+
+      cuadernoTbody.innerHTML = rows.map(r => {
+        const f = r.timestamp?.toDate ? r.timestamp.toDate() : new Date(r.timestamp);
+        const t = f instanceof Date && !Number.isNaN(f.getTime()) ? f.toLocaleString('es-PE') : '';
+        
+        // Extraer nombre de usuarioEntrante y usuarioSaliente (que son objetos)
+        const usuarioEntrante = r.usuarioEntrante?.nombre || r.usuarioEntrante?.id || '';
+        const usuarioSaliente = r.usuarioSaliente?.nombre || r.usuarioSaliente?.id || '';
+        
+        const fotoHTML = r.fotoURL ? `<img src="${r.fotoURL}" alt="Foto" style="width:50px;height:50px;object-fit:cover;cursor:pointer;border-radius:4px;border:1px solid #ddd" class="foto-miniatura" data-url="${r.fotoURL}" title="Haz clic para expandir">` : '<span style="color:#999">Sin foto</span>';
+        return `<tr>
+          <td style="width:150px">${t}</td>
+          <td>${r.cliente || ''}</td>
+          <td>${r.unidad || ''}</td>
+          <td>${r.tipoRegistro || ''}</td>
+          <td>${usuarioEntrante}</td>
+          <td>${usuarioSaliente}</td>
+          <td>${r.usuario || usuarioEntrante || usuarioSaliente || ''}</td>
+          <td>${r.comentario || ''}</td>
+          <td style="text-align:center">${fotoHTML}</td>
+        </tr>`;
+      }).join('');
+
+      cuadernoTbody.dataset.rows = JSON.stringify(rows);
+      UI.toast(`Resultados: ${rows.length}`);
+      
+      // Agregar event listener para fotos expandibles
+      document.querySelectorAll('.foto-miniatura').forEach(img => {
+        img.addEventListener('click', (e) => {
+          const fotoUrl = e.target.dataset.url;
+          if (fotoUrl) {
+            abrirVisorFoto(fotoUrl);
+          }
+        });
+      });
+    } catch (e) {
+      console.error(e);
+      UI.confirm({ title: 'Error', message: 'No se pudo consultar el cuaderno.', kind: 'err' });
+    } finally { UI.hideOverlay(); }
+  });
+
+  cuadernoBtnLimpiar?.addEventListener('click', () => {
+    if (cuadernoClienteSelect) cuadernoClienteSelect.value = '';
+    if (cuadernoUnidadSelect) cuadernoUnidadSelect.value = '';
+    if (cuadernoFechaInicio) cuadernoFechaInicio.value = '';
+    if (cuadernoFechaFin) cuadernoFechaFin.value = '';
+    if (cuadernoTbody) cuadernoTbody.innerHTML = '';
+    delete cuadernoTbody?.dataset.rows;
+  });
+
+  cuadernoBtnExportar?.addEventListener('click', () => {
+    const raw = cuadernoTbody?.dataset.rows;
+    if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
+    const rows = JSON.parse(raw);
+    
+    // Crear libro XLS
+    let html = '<table border="1"><tr style="background-color:#2c5aa0;color:white;font-weight:bold;">';
+    html += '<th>FECHA Y HORA</th><th>CLIENTE</th><th>UNIDAD</th><th>TIPO</th><th>USUARIO ENTRANTE</th><th>USUARIO SALIENTE</th><th>USUARIO</th><th>COMENTARIO</th></tr>';
+    
+    for (const r of rows) {
+      const fechaHora = r.timestampStr || 'N/A';
+      const usuarioEntrante = r.usuarioEntrante?.id || '';
+      const usuarioSaliente = r.usuarioSaliente?.id || '';
+      const usuario = r.usuario || usuarioEntrante || usuarioSaliente || '';
+      html += '<tr>';
+      html += `<td>${fechaHora}</td>`;
+      html += `<td>${r.cliente || ''}</td>`;
+      html += `<td>${r.unidad || ''}</td>`;
+      html += `<td>${r.tipoRegistro || ''}</td>`;
+      html += `<td>${usuarioEntrante}</td>`;
+      html += `<td>${usuarioSaliente}</td>`;
+      html += `<td>${usuario}</td>`;
+      html += `<td>${r.comentario || ''}</td>`;
+      html += '</tr>';
+    }
+    html += '</table>';
+    
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'cuaderno.xls';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  cuadernoBtnImprimirPDF?.addEventListener('click', () => {
+    generarPDFCuaderno();
+  });
+
+  // ============================================================================
+  // 7) TIEMPO DE CONEXIÓN - EVENT LISTENERS
+  // ============================================================================
+  tiempoConexionBtnBuscar?.addEventListener('click', async () => {
+    UI.showOverlay();
+    try {
+      let query = db.collection('CONTROL_TIEMPOS_USUARIOS');
+
+      // Filtro por fechas
+      const fechaInicio = tiempoConexionFechaInicio?.value;
+      const fechaFin = tiempoConexionFechaFin?.value;
+
+      if (fechaInicio) {
+        const d = new Date(fechaInicio);
+        query = query.where('horaInicio', '>=', d);
+      }
+      if (fechaFin) {
+        const d = new Date(fechaFin);
+        d.setDate(d.getDate() + 1);
+        query = query.where('horaInicio', '<', d);
+      }
+
+      // Filtro por usuario
+      const usuarioFilter = tiempoConexionUsuario?.value;
+      if (usuarioFilter) {
+        query = query.where('usuarioID', '==', usuarioFilter);
+      }
+
+      const snap = await query.orderBy('horaInicio', 'desc').limit(1000).get();
+      let rows = snap.docs.map(d => d.data());
+
+      // Filtro por cliente y unidad (en memoria, ya que no podemos hacer múltiples where con OR)
+      const clienteFilter = tiempoConexionCliente?.value;
+      const unidadFilter = tiempoConexionUnidad?.value;
+
+      // Cargar caché de usuarios para filtrar
+      const usuariosCache = {};
+      const usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
+      usuariosSnap.forEach(doc => {
+        const userData = doc.data();
+        usuariosCache[doc.id] = {
+          cliente: userData.CLIENTE || '',
+          unidad: userData.UNIDAD || ''
+        };
+      });
+
+      // Aplicar filtros de cliente y unidad
+      if (clienteFilter || unidadFilter) {
+        rows = rows.filter(r => {
+          const usuarioID = r.usuarioID || r.usuario;
+          const usuarioData = usuariosCache[usuarioID] || {};
+          const matches = true;
+          if (clienteFilter && usuarioData.cliente !== clienteFilter) return false;
+          if (unidadFilter && usuarioData.unidad !== unidadFilter) return false;
+          return matches;
+        });
+      }
+
+      await fillTiempoConexionTable(rows);
+      UI.toast(`Resultados: ${rows.length}`);
+    } catch (e) {
+      console.error('Error al buscar Tiempo de Conexión:', e);
+      UI.confirm({ title: 'Error', message: 'No se pudieron cargar los datos de Tiempo de Conexión.', kind: 'err' });
+    } finally {
+      UI.hideOverlay();
+    }
+  });
+
+  tiempoConexionBtnLimpiar?.addEventListener('click', () => {
+    if (tiempoConexionFechaInicio) tiempoConexionFechaInicio.value = '';
+    if (tiempoConexionFechaFin) tiempoConexionFechaFin.value = '';
+    if (tiempoConexionCliente) tiempoConexionCliente.value = '';
+    if (tiempoConexionUnidad) tiempoConexionUnidad.value = '';
+    if (tiempoConexionUsuario) tiempoConexionUsuario.value = '';
+    if (tiempoConexionTbody) tiempoConexionTbody.innerHTML = '';
+    delete tiempoConexionTbody?.dataset.rows;
+  });
+
+  tiempoConexionBtnExportar?.addEventListener('click', async () => {
+    const raw = tiempoConexionTbody?.dataset.rows;
+    if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
+    const rows = JSON.parse(raw);
+
+    // Crear libro XLS con datos enriquecidos
+    let html = '<table border="1"><tr style="background-color:#2c5aa0;color:white;font-weight:bold;">';
+    html += '<th>USUARIO</th><th>CLIENTE</th><th>UNIDAD</th><th>FECHA</th><th>HORA INICIO</th><th>HORA FIN</th><th>TIEMPO CONEXIÓN</th></tr>';
+
+    rows.forEach(r => {
+      // Usar datos ya procesados y enriquecidos
+      html += `<tr><td>${r.nombreCompleto}</td><td>${r.cliente}</td><td>${r.unidad}</td><td>${r.fechaInicio}</td><td>${r.horaInicio}</td><td>${r.horaFin}</td><td>${r.duracion}</td></tr>`;
+    });
+
+    html += '</table>';
+
+    const wb = XLSX.utils.table_to_book(new DOMParser().parseFromString(html, 'text/html').querySelector('table'));
+    XLSX.writeFile(wb, 'tiempo_conexion.xlsx');
+    UI.toast('Exportación completada');
+  });
+
+  // Función para exportar a PDF
+  async function exportarTiempoConexionPDF() {
+    const raw = tiempoConexionTbody?.dataset.rows;
+    if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
+    const rows = JSON.parse(raw);
+
+    try {
+      // Cargar logo
+      const logoUrl = 'logo_liberman.png';
+      const logoImg = await new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = logoUrl;
+      });
+
+      // Convertir imagen a base64
+      let logoBase64 = null;
+      if (logoImg) {
+        const canvas = document.createElement('canvas');
+        canvas.width = logoImg.width;
+        canvas.height = logoImg.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(logoImg, 0, 0);
+        logoBase64 = canvas.toDataURL('image/png');
+      }
+
+      // Crear documento PDF
+      const docDef = {
+        pageSize: 'A4',
+        pageMargins: [40, 60, 40, 40],
+        header: function() {
+          return {
+            columns: [
+              {
+                image: logoBase64 || null,
+                width: 50,
+                height: 50,
+                margin: [0, 0, 0, 0]
+              },
+              {
+                text: 'REPORTE DE TIEMPO DE CONEXIÓN',
+                fontSize: 16,
+                bold: true,
+                alignment: 'center',
+                margin: [0, 15, 0, 0]
+              },
+              {
+                text: 'LiderControl',
+                fontSize: 10,
+                alignment: 'right',
+                margin: [0, 15, 0, 0]
+              }
+            ]
+          };
+        },
+        footer: function(currentPage, pageCount) {
+          return {
+            text: `Página ${currentPage} de ${pageCount}`,
+            alignment: 'center',
+            fontSize: 10,
+            margin: [0, 0, 0, 20]
+          };
+        },
+        content: [
+          {
+            text: `Fecha de reporte: ${new Date().toLocaleDateString('es-PE')}`,
+            fontSize: 10,
+            margin: [0, 0, 0, 15],
+            color: '#666'
+          },
+          {
+            table: {
+              headerRows: 1,
+              widths: ['15%', '12%', '12%', '13%', '13%', '13%', '22%'],
+              body: [
+                [
+                  { text: 'USUARIO', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
+                  { text: 'CLIENTE', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
+                  { text: 'UNIDAD', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
+                  { text: 'FECHA', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
+                  { text: 'HORA INICIO', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
+                  { text: 'HORA FIN', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
+                  { text: 'TIEMPO CONEXIÓN', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' }
+                ],
+                ...rows.map((r, idx) => [
+                  { text: r.nombreCompleto, fontSize: 9 },
+                  { text: r.cliente, fontSize: 9 },
+                  { text: r.unidad, fontSize: 9 },
+                  { text: r.fechaInicio, fontSize: 9 },
+                  { text: r.horaInicio, fontSize: 9 },
+                  { text: r.horaFin, fontSize: 9 },
+                  { text: r.duracion, fontSize: 9, bold: true, color: '#3b82f6' }
+                ])
+              ]
+            },
+            layout: {
+              fillColor: function(i, node) {
+                return (i % 2 === 0 && i > 0) ? '#f5f5f5' : null;
+              }
+            }
+          },
+          {
+            text: `Total de registros: ${rows.length}`,
+            fontSize: 10,
+            margin: [0, 20, 0, 0],
+            bold: true
+          }
+        ]
+      };
+
+      // Generar y descargar PDF
+      pdfMake.createPdf(docDef).download('tiempo_conexion.pdf');
+      UI.toast('PDF generado correctamente');
+    } catch (e) {
+      console.error('Error al generar PDF:', e);
+      UI.toast('Error al generar PDF');
+    }
+  }
+
+  tiempoConexionBtnPdf?.addEventListener('click', () => {
+    exportarTiempoConexionPDF();
+  });
+
+  // ============================================================================
+  // 8) INICIALIZACIÓN PRINCIPAL DE LA APLICACIÓN
+  // ============================================================================
+  logoutBtn?.addEventListener('click', async () => {
+    try { await auth.signOut(); location.replace('index.html'); }
+    catch (e) { console.error(e); UI.toast('No se pudo cerrar sesión'); }
+  });
+
+  // Cargar filtros de cuaderno una vez autenticado (y también por hook de navegación)
+  const tryLoadCuadernoFilters = () => {
+    if (!cuadernoFiltersLoaded) {
+      cuadernoFiltersLoaded = true;
+      loadCuadernoFilters();
+    }
+  };
+
+  auth.onAuthStateChanged(async (user) => {
+    if (!user) {
+      location.replace('index.html');
+    } else {
+      currentUser = user;
+      const name = user.displayName || user.email || 'Usuario';
+      if (userNameEl) userNameEl.textContent = name;
+      if (userMetaEl) userMetaEl.textContent = 'Bienvenido(a)';
+      if (avatarEl) avatarEl.textContent = (name[0] || 'U').toUpperCase();
+
+      // Filtros de cuaderno e incidencias al arranque (ligero)
+      tryLoadCuadernoFilters();
+      loadIncidenciasFilters();
+
+      initResumenDashboard();
+    }
+  });
+
+  /* ===== DETALLE ACCESO DASHBOARD ===== */
+  let daCache = [];
+  let daCharts = {};
+  
+  function initDetalleAccesoDashboard(){
+    const daFecha = document.getElementById('da-fecha');
+    const daApply = document.getElementById('da-apply');
+    const daExport = document.getElementById('da-export');
+    const daSearch = document.getElementById('da-search');
+    const daSort = document.getElementById('da-sort');
+    
+    if (daFecha && typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
+      $(daFecha).daterangepicker({
+        startDate: moment().subtract(29, 'days'),
+        endDate: moment(),
+        locale: { format: 'DD/MM/YYYY' }
+      });
+    }
+    
+    queryDetalleAcceso();
+    daApply?.addEventListener('click', renderDetalleAcceso);
+    daExport?.addEventListener('click', exportarDetalleAccesoExcel);
+    daSearch?.addEventListener('input', ()=>renderDetalleAccesoTable(daCache));
+    daSort?.addEventListener('change', ()=>renderDetalleAccesoTable(daCache));
+  }
+  
+  async function queryDetalleAcceso(){
+    UI.showOverlay('Cargando accesos…', 'Consultando ACCESO_PEATONAL');
+    try {
+      const snap = await db.collection('ACCESO_PEATONAL').get();
+      daCache = snap.docs.map(d=>{
+        const x = d.data();
+        const inStr  = `${x.FECHA_INGRESO ?? ''} ${x.HORA_INGRESO ?? ''}`.trim();
+        const outStr = `${x.FECHA_SALIDA  ?? ''} ${x.HORA_FIN      ?? ''}`.trim();
+        const tsIn  = queryAccesoPeatonalDateParse(inStr);
+        const tsOut = queryAccesoPeatonalDateParse(outStr);
+        const ts    = tsIn || tsOut || null;
+        
+        let duracion = 'N/A';
+        if (tsIn && tsOut) {
+          const dur = moment(tsOut).diff(moment(tsIn), 'minutes');
+          const h = Math.floor(dur / 60);
+          const m = dur % 60;
+          duracion = h > 0 ? `${h}h ${m}m` : `${m}m`;
+        }
+        
+        return {
+          id: d.id,
+          FECHA_INGRESO: x.FECHA_INGRESO || '',
+          HORA_INGRESO: x.HORA_INGRESO || '',
+          FECHA_SALIDA: x.FECHA_SALIDA || '',
+          HORA_FIN: x.HORA_FIN || '',
+          CLIENTE:     (x.CLIENTE     || '').toString(),
+          UNIDAD:      (x.UNIDAD      || '').toString(),
+          TIPO_ACCESO: (x.TIPO_ACCESO || '').toString(),
+          ESTADO:      (x.ESTADO      || '').toString(),
+          EMPRESA:     (x.EMPRESA     || '').toString(),
+          USUARIO:     (x.USUARIO     || '').toString(),
+          _ts: ts,
+          duracion: duracion
+        };
+      });
+      
+      populateDetalleAccesoFilters(daCache);
+      renderDetalleAcceso();
+    } finally {
+      UI.hideOverlay();
+    }
+  }
+  
+  function populateDetalleAccesoFilters(rows){
+    const clientes = [...new Set(rows.map(r=>r.CLIENTE).filter(Boolean))].sort();
+    const unidades = [...new Set(rows.map(r=>r.UNIDAD).filter(Boolean))].sort();
+    const tipos = [...new Set(rows.map(r=>r.TIPO_ACCESO).filter(Boolean))].sort();
+    const estados = [...new Set(rows.map(r=>r.ESTADO).filter(Boolean))].sort();
+    
+    const fillSelect = (el, values) => {
+      if (!el) return;
+      el.innerHTML = '<option value="__ALL__">Todos</option>' + values.map(v=>`<option value="${v}">${v}</option>`).join('');
+    };
+    
+    fillSelect(document.getElementById('da-cliente'), clientes);
+    fillSelect(document.getElementById('da-unidad'), unidades);
+    fillSelect(document.getElementById('da-tipo'), tipos);
+    fillSelect(document.getElementById('da-estado'), estados);
+  }
+  
+  function getDetalleAccesoFilters(){
+    let start = moment().subtract(29,'days').startOf('day');
+    let end   = moment().endOf('day');
+    
+    const daFecha = document.getElementById('da-fecha');
+    if (daFecha && typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
+      const v = $(daFecha).val();
+      if (v && v.includes(' - ')) {
+        const [a,b] = v.split(' - ');
+        start = moment(a,'DD/MM/YYYY').startOf('day');
+        end   = moment(b,'DD/MM/YYYY').endOf('day');
+      }
+    }
+    
+    const cliente = document.getElementById('da-cliente')?.value || '__ALL__';
+    const unidad  = document.getElementById('da-unidad')?.value || '__ALL__';
+    const tipo    = document.getElementById('da-tipo')?.value || '__ALL__';
+    const estado  = document.getElementById('da-estado')?.value || '__ALL__';
+    
+    return { start, end, cliente, unidad, tipo, estado };
+  }
+  
+  function renderDetalleAcceso(){
+    const { start, end, cliente, unidad, tipo, estado } = getDetalleAccesoFilters();
+    
+    const filtered = daCache.filter(r=>{
+      const inRange = r._ts ? moment(r._ts).isBetween(start, end, undefined, '[]') : false;
+      const inCliente = (cliente==='__ALL__') || (r.CLIENTE===cliente);
+      const inUnidad  = (unidad==='__ALL__') || (r.UNIDAD===unidad);
+      const inTipo    = (tipo==='__ALL__') || (r.TIPO_ACCESO===tipo);
+      const inEstado  = (estado==='__ALL__') || (r.ESTADO===estado);
+      return inRange && inCliente && inUnidad && inTipo && inEstado;
+    });
+    
+    // Update summary cards
+    const countByType = (key) => filtered.reduce((a,c)=> a + (c.TIPO_ACCESO===key ? 1:0), 0);
+    
+    setCard(document.getElementById('da-total'), filtered.length);
+    setCard(document.getElementById('da-visita'), countByType('VISITA'));
+    setCard(document.getElementById('da-proveedor'), countByType('PROVEEDOR'));
+    setCard(document.getElementById('da-contratista'), countByType('CONTRATISTA'));
+    setCard(document.getElementById('da-empleado'), countByType('EMPLEADO'));
+    
+    // Chart 1: Línea por fecha
+    {
+      const labels = [];
+      const map = new Map();
+      for (let m = start.clone(); m.isSameOrBefore(end, 'day'); m.add(1,'day')) {
+        const key = m.format('DD/MM');
+        labels.push(key);
+        map.set(key, 0);
+      }
+      filtered.forEach(r=>{
+        const key = moment(r._ts).format('DD/MM');
+        if (map.has(key)) map.set(key, map.get(key)+1);
+      });
+      const dataValues = labels.map(l=>map.get(l)||0);
+      const totalAccesos = dataValues.reduce((a,b)=>a+b,0)||1;
+      
+
+      
+      drawDAChart('da-chart-fecha', {
+        type:'line',
+        data:{
+          labels,
+          datasets:[{
+            label:'Accesos por Fecha',
+            data: dataValues,
+            borderColor: PALETTE.blue,
+            backgroundColor:'rgba(59,130,246,.15)',
+            fill:true,
+            tension:.4,
+            pointRadius:8,
+            pointHoverRadius:11,
+            pointBorderWidth:3,
+            pointBorderColor:'#fff',
+            pointBackgroundColor: PALETTE.blue,
+            borderWidth:4,
+            segment: { borderDash: [] },
+            datalabels: {
+              display: function(context) {
+                return context.value > 0;
+              },
+              align: 'top',
+              anchor: 'end',
+              offset: 20,
+              font: { size: 13, weight: 'bold' },
+              color: '#fff',
+              backgroundColor: '#3b82f6',
+              borderRadius: 6,
+              padding: 8,
+              formatter: function(value) {
+                const pct = pf(value, totalAccesos);
+                return `${nf.format(value)}\n${pct}%`;
+              }
+            }
+          }]
+        },
+        options:{
+          responsive:true,
+          maintainAspectRatio:false,
+          layout: { padding: { top: 20, bottom: 20, left: 20, right: 20 } },
+          interaction: { mode: 'nearest', intersect: false },
+          plugins:{
+            legend:{ 
+              display:true,
+              position:'top',
+              labels: { font: { size: 13, weight: 'bold' }, padding: 20 }
+            },
+            tooltip:{
+              enabled: true,
+              backgroundColor: 'rgba(0,0,0,0.95)',
+              padding: 16,
+              cornerRadius: 10,
+              titleFont: { size: 15, weight: 'bold' },
+              bodyFont: { size: 14, weight: 'bold' },
+              displayColors: true,
+              borderColor: '#fff',
+              borderWidth: 2,
+              callbacks:{ 
+                label:(c)=> `${nf.format(c.raw)} accesos (${pf(c.raw,totalAccesos)}%)`
+              }
+            }
+          },
+          scales:{
+            y:{ 
+              ticks:{ color:themeInk(), font: { size: 13, weight: '600' }, stepSize: 1 }, 
+              grid:{ color:'rgba(0,0,0,0.08)' },
+              beginAtZero: true
+            },
+            x:{ 
+              ticks:{ color:themeInk(), font: { size: 12 } }, 
+              grid:{ display:false } 
+            }
+          }
+        }
+      });
+    }
+    
+    // Chart 2: Pie - Distribución por Tipo
+    {
+      const map = new Map();
+      filtered.forEach(r=>{
+        const k = r.TIPO_ACCESO || 'SIN TIPO';
+        map.set(k, (map.get(k)||0)+1);
+      });
+      const labels = Array.from(map.keys());
+      const values = Array.from(map.values());
+      const sum = values.reduce((x,y)=>x+y,0)||1;
+      
+      drawDAChart('da-chart-tipo', {
+        type:'pie',
+        data:{
+          labels: labels.map((l, i) => `${l}\n${nf.format(values[i])} (${pf(values[i],sum)}%)`),
+          datasets:[{
+            data:values,
+            backgroundColor:[PALETTE.blue, PALETTE.amber, PALETTE.purple, PALETTE.red, PALETTE.green],
+            borderColor: '#fff',
+            borderWidth: 3,
+            hoverBorderWidth: 4,
+            hoverOffset: 12,
+            datalabels: {
+              color: '#fff',
+              font: { size: 14, weight: 'bold' },
+              formatter: function(value, context) {
+                return `${nf.format(value)}\n${pf(value, sum)}%`;
+              },
+              textStrokeColor: '#000',
+              textStrokeWidth: 2,
+              offset: 0,
+              align: 'center',
+              anchor: 'center'
+            }
+          }]
+        },
+        options:{
+          responsive:true,
+          maintainAspectRatio:false,
+          layout: { padding: { top: 40, bottom: 40, left: 20, right: 20 } },
+          interaction: { mode: 'point', intersect: true },
+          plugins:{
+            legend:{ 
+              position:'bottom', 
+              labels:{ 
+                color:themeInk(),
+                padding: 20,
+                font: { size: 14, weight: 'bold' },
+                usePointStyle: true,
+                pointStyle: 'circle',
+                generateLabels: (chart) => {
+                  const data = chart.data;
+                  return data.labels.map((label, i) => ({
+                    text: label,
+                    fillStyle: data.datasets[0].backgroundColor[i],
+                    hidden: false,
+                    index: i
+                  }));
+                }
+              } 
+            },
+            tooltip:{
+              enabled: true,
+              backgroundColor: 'rgba(0,0,0,0.95)',
+              padding: 16,
+              cornerRadius: 10,
+              titleFont: { size: 15, weight: 'bold' },
+              bodyFont: { size: 14, weight: 'bold' },
+              borderColor: '#fff',
+              borderWidth: 2,
+              callbacks:{ 
+                label:(c)=> `${nf.format(c.raw)} (${pf(c.raw,sum)}%)`
+              }
+            }
+          }
+        }
+      });
+    }
+    
+    // Chart 3: Bar - Top Clientes
+    {
+      const map = new Map();
+      filtered.forEach(r=>{
+        const k = r.CLIENTE || 'SIN CLIENTE';
+        map.set(k, (map.get(k)||0)+1);
+      });
+      const arr = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]).slice(0,10);
+      const labels = arr.map(x=>x[0]);
+      const values = arr.map(x=>x[1]);
+      const total = values.reduce((a,b)=>a+b,0)||1;
+      
+      drawDAChart('da-chart-clientes', {
+        type:'bar',
+        data:{
+          labels: labels.map((l, i) => `${l}\n${nf.format(values[i])}`),
+          datasets:[{
+            label:'Accesos',
+            data:values,
+            backgroundColor: PALETTE.blue,
+            borderRadius: 8,
+            borderSkipped: false,
+            hoverBackgroundColor: PALETTE.cyan,
+            hoverBorderRadius: 8,
+            datalabels: {
+              color: '#fff',
+              font: { size: 12, weight: 'bold' },
+              formatter: function(value) {
+                return `${nf.format(value)} (${pf(value, total)}%)`;
+              },
+              anchor: 'end',
+              align: 'end',
+              offset: 12,
+              backgroundColor: '#3b82f6',
+              borderRadius: 4,
+              padding: 8
+            }
+          }]
+        },
+        options:{
+          indexAxis:'y',
+          responsive:true,
+          maintainAspectRatio:false,
+          layout: { padding: { top: 20, bottom: 20, left: 20, right: 120 } },
+          interaction: { mode: 'index', intersect: false },
+          plugins:{
+            legend:{ display:true, position: 'top', labels: { font: { size: 13, weight: 'bold' }, padding: 15 } },
+            tooltip:{
+              enabled: true,
+              backgroundColor: 'rgba(0,0,0,0.95)',
+              padding: 16,
+              cornerRadius: 10,
+              titleFont: { size: 15, weight: 'bold' },
+              bodyFont: { size: 14, weight: 'bold' },
+              borderColor: '#fff',
+              borderWidth: 2,
+              callbacks:{ label:(c)=> `${nf.format(c.raw)} (${pf(c.raw,total)}%)` }
+            }
+          },
+          scales:{ 
+            x:{ 
+              ticks:{ color:themeInk(), font: { size: 13, weight: '600' } }, 
+              grid:{ color:'rgba(0,0,0,0.08)' },
+              beginAtZero: true
+            }, 
+            y:{ 
+              ticks:{ color:themeInk(), font: { size: 12, weight: 'bold' } }, 
+              grid:{ display:false }
+            } 
+          }
+        }
+      });
+    }
+    
+    // Chart 4: Doughnut - Estado de Accesos
+    {
+      const map = new Map();
+      filtered.forEach(r=>{
+        const k = r.ESTADO || 'SIN ESTADO';
+        map.set(k, (map.get(k)||0)+1);
+      });
+      const labels = Array.from(map.keys());
+      const values = Array.from(map.values());
+      const sum = values.reduce((x,y)=>x+y,0)||1;
+      
+      drawDAChart('da-chart-estado', {
+        type:'doughnut',
+        data:{
+          labels: labels.map((l, i) => `${l}\n${nf.format(values[i])} (${pf(values[i],sum)}%)`),
+          datasets:[{
+            data:values,
+            backgroundColor:[PALETTE.green, PALETTE.amber, PALETTE.red],
+            borderColor: '#fff',
+            borderWidth: 3,
+            hoverBorderWidth: 4,
+            hoverOffset: 12,
+            datalabels: {
+              color: '#fff',
+              font: { size: 14, weight: 'bold' },
+              formatter: function(value) {
+                return `${nf.format(value)}\n${pf(value, sum)}%`;
+              },
+              textStrokeColor: '#000',
+              textStrokeWidth: 2,
+              offset: 0,
+              align: 'center',
+              anchor: 'center'
+            }
+          }]
+        },
+        options:{
+          responsive:true,
+          maintainAspectRatio:false,
+          layout: { padding: { top: 40, bottom: 40, left: 20, right: 20 } },
+          cutout:'58%',
+          interaction: { mode: 'point', intersect: true },
+          plugins:{
+            legend:{ 
+              position:'bottom', 
+              labels:{ 
+                color:themeInk(),
+                padding: 20,
+                font: { size: 14, weight: 'bold' },
+                usePointStyle: true,
+                pointStyle: 'circle',
+                generateLabels: (chart) => {
+                  const data = chart.data;
+                  return data.labels.map((label, i) => ({
+                    text: label,
+                    fillStyle: data.datasets[0].backgroundColor[i],
+                    hidden: false,
+                    index: i
+                  }));
+                }
+              } 
+            },
+            tooltip:{
+              enabled: true,
+              backgroundColor: 'rgba(0,0,0,0.95)',
+              padding: 16,
+              cornerRadius: 10,
+              titleFont: { size: 15, weight: 'bold' },
+              bodyFont: { size: 14, weight: 'bold' },
+              borderColor: '#fff',
+              borderWidth: 2,
+              callbacks:{ 
+                label:(c)=> `${nf.format(c.raw)} (${pf(c.raw,sum)}%)`
+              }
+            }
+          }
+        }
+      });
+    }
+    
+    // Chart 5: Bar - Accesos por Unidad
+    {
+      const map = new Map();
+      filtered.forEach(r=>{
+        const k = r.UNIDAD || 'SIN UNIDAD';
+        map.set(k, (map.get(k)||0)+1);
+      });
+      const arr = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]);
+      const labels = arr.map(x=>x[0]);
+      const values = arr.map(x=>x[1]);
+      const total = values.reduce((a,b)=>a+b,0)||1;
+      
+      drawDAChart('da-chart-unidad', {
+        type:'bar',
+        data:{
+          labels: labels.map((l, i) => `${l}\n${nf.format(values[i])}`),
+          datasets:[{
+            label:'Accesos',
+            data:values,
+            backgroundColor: PALETTE.blueLt,
+            borderRadius: 8,
+            borderSkipped: false,
+            hoverBackgroundColor: PALETTE.blue,
+            hoverBorderRadius: 8,
+            datalabels: {
+              color: '#fff',
+              font: { size: 12, weight: 'bold' },
+              formatter: function(value) {
+                return `${nf.format(value)}\n${pf(value, total)}%`;
+              },
+              anchor: 'end',
+              align: 'top',
+              offset: 12,
+              backgroundColor: '#60a5fa',
+              borderRadius: 4,
+              padding: 8
+            }
+          }]
+        },
+        options:{
+          responsive:true,
+          maintainAspectRatio:false,
+          layout: { padding: { top: 20, bottom: 20, left: 20, right: 20 } },
+          interaction: { mode: 'index', intersect: false },
+          plugins:{
+            legend:{ display:true, position: 'top', labels: { font: { size: 13, weight: 'bold' }, padding: 15 } },
+            tooltip:{
+              enabled: true,
+              backgroundColor: 'rgba(0,0,0,0.95)',
+              padding: 16,
+              cornerRadius: 10,
+              titleFont: { size: 15, weight: 'bold' },
+              bodyFont: { size: 14, weight: 'bold' },
+              borderColor: '#fff',
+              borderWidth: 2,
+              callbacks:{ label:(c)=> `${nf.format(c.raw)} (${pf(c.raw,total)}%)` }
+            }
+          },
+          scales:{
+            y:{ 
+              ticks:{ color:themeInk(), font: { size: 13, weight: '600' } }, 
+              grid:{ color:'rgba(0,0,0,0.08)' },
+              beginAtZero: true
+            },
+            x:{ 
+              ticks:{ color:themeInk(), autoSkip:false, maxRotation:45, minRotation:0, font: { size: 12, weight: 'bold' } },
+              grid:{ display:false }
+            }
+          }
+        }
+      });
+    }
+    
+    // Chart 6: Bar - Accesos por Empresa
+    {
+      const map = new Map();
+      filtered.forEach(r=>{
+        const k = r.EMPRESA || 'SIN EMPRESA';
+        map.set(k, (map.get(k)||0)+1);
+      });
+      const arr = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]).slice(0,15);
+      const labels = arr.map(x=>x[0]);
+      const values = arr.map(x=>x[1]);
+      const total = values.reduce((a,b)=>a+b,0)||1;
+      
+      drawDAChart('da-chart-empresa', {
+        type:'bar',
+        data:{
+          labels: labels.map((l, i) => `${l}\n${nf.format(values[i])}`),
+          datasets:[{
+            label:'Accesos',
+            data:values,
+            backgroundColor: PALETTE.purple,
+            borderRadius: 8,
+            borderSkipped: false,
+            hoverBackgroundColor: PALETTE.pink,
+            hoverBorderRadius: 8,
+            datalabels: {
+              color: '#fff',
+              font: { size: 12, weight: 'bold' },
+              formatter: function(value) {
+                return `${nf.format(value)}\n${pf(value, total)}%`;
+              },
+              anchor: 'end',
+              align: 'top',
+              offset: 12,
+              backgroundColor: '#8b5cf6',
+              borderRadius: 4,
+              padding: 8
+            }
+          }]
+        },
+        options:{
+          responsive:true,
+          maintainAspectRatio:false,
+          layout: { padding: { top: 20, bottom: 20, left: 20, right: 20 } },
+          interaction: { mode: 'index', intersect: false },
+          plugins:{
+            legend:{ display:true, position: 'top', labels: { font: { size: 13, weight: 'bold' }, padding: 15 } },
+            tooltip:{
+              enabled: true,
+              backgroundColor: 'rgba(0,0,0,0.95)',
+              padding: 16,
+              cornerRadius: 10,
+              titleFont: { size: 15, weight: 'bold' },
+              bodyFont: { size: 14, weight: 'bold' },
+              borderColor: '#fff',
+              borderWidth: 2,
+              callbacks:{ label:(c)=> `${nf.format(c.raw)} (${pf(c.raw,total)}%)` }
+            }
+          },
+          scales:{
+            y:{ 
+              ticks:{ color:themeInk(), font: { size: 13, weight: '600' } }, 
+              grid:{ color:'rgba(0,0,0,0.08)' },
+              beginAtZero: true
+            },
+            x:{ 
+              ticks:{ color:themeInk(), autoSkip:false, maxRotation:45, minRotation:0, font: { size: 12, weight: 'bold' } },
+              grid:{ display:false }
+            }
+          }
+        }
+      });
+    }
+    
+    // Render table
+    renderDetalleAccesoTable(filtered);
+  }
+  
+  function drawDAChart(canvasId, config){
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (daCharts[canvasId]) daCharts[canvasId].destroy();
+    
+    // NO SOBRESCRIBIR opciones que ya existen
+    if (!config.options) config.options = {};
+    if (!config.options.plugins) config.options.plugins = {};
+    
+    // Solo aplicar valores por defecto si no existen
+    if (!config.options.responsive) config.options.responsive = true;
+    if (!config.options.maintainAspectRatio) config.options.maintainAspectRatio = false;
+    
+    // NO reemplazar tooltip ni legend si ya existen en config
+    // Solo agregar defaults si no están presentes
+    if (!config.options.plugins.tooltip) {
+      config.options.plugins.tooltip = {
+        enabled: true,
+        mode: 'index',
+        intersect: false,
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        padding: 12
+      };
+    }
+    
+    if (!config.options.plugins.legend) {
+      config.options.plugins.legend = {
+        display: true,
+        position: 'top'
+      };
+    }
+    
+    daCharts[canvasId] = new Chart(ctx, config);
+  }
+  
+  function renderDetalleAccesoTable(filtered){
+    const tbody = document.getElementById('da-tbody');
+    if (!tbody) return;
+    
+    const search = document.getElementById('da-search')?.value.toUpperCase() || '';
+    const sort = document.getElementById('da-sort')?.value || 'fecha-desc';
+    
+    let data = filtered.filter(r=>{
+      const txt = `${r.CLIENTE}|${r.UNIDAD}|${r.USUARIO}`.toUpperCase();
+      return txt.includes(search);
+    });
+    
+    if (sort === 'fecha-desc') {
+      data.sort((a,b)=> (b._ts || 0) - (a._ts || 0));
+    } else if (sort === 'fecha-asc') {
+      data.sort((a,b)=> (a._ts || 0) - (b._ts || 0));
+    } else if (sort === 'cliente') {
+      data.sort((a,b)=> a.CLIENTE.localeCompare(b.CLIENTE));
+    }
+    
+    tbody.innerHTML = data.slice(0, 500).map(r=>`
+      <tr>
+        <td>${r.FECHA_INGRESO} ${r.HORA_INGRESO}</td>
+        <td>${r.CLIENTE}</td>
+        <td>${r.UNIDAD}</td>
+        <td>${r.TIPO_ACCESO}</td>
+        <td>${r.USUARIO}</td>
+        <td>${r.EMPRESA}</td>
+        <td>${r.ESTADO}</td>
+        <td>${r.duracion}</td>
+      </tr>
+    `).join('');
+  }
+  
+  function exportarDetalleAccesoExcel(){
+    const { start, end, cliente, unidad, tipo, estado } = getDetalleAccesoFilters();
+    const filtered = daCache.filter(r=>{
+      const inRange = r._ts ? moment(r._ts).isBetween(start, end, undefined, '[]') : false;
+      const inCliente = (cliente==='__ALL__') || (r.CLIENTE===cliente);
+      const inUnidad  = (unidad==='__ALL__') || (r.UNIDAD===unidad);
+      const inTipo    = (tipo==='__ALL__') || (r.TIPO_ACCESO===tipo);
+      const inEstado  = (estado==='__ALL__') || (r.ESTADO===estado);
+      return inRange && inCliente && inUnidad && inTipo && inEstado;
+    });
+    
+    let html = `<table><thead><tr><th>FECHA_INGRESO</th><th>HORA_INGRESO</th><th>FECHA_SALIDA</th><th>HORA_SALIDA</th><th>CLIENTE</th><th>UNIDAD</th><th>TIPO_ACCESO</th><th>ESTADO</th><th>EMPRESA</th><th>USUARIO</th><th>DURACION</th></tr></thead><tbody>`;
+    
+    filtered.forEach(r=>{
+      html += `<tr>
+        <td>${r.FECHA_INGRESO}</td>
+        <td>${r.HORA_INGRESO}</td>
+        <td>${r.FECHA_SALIDA}</td>
+        <td>${r.HORA_FIN}</td>
+        <td>${r.CLIENTE}</td>
+        <td>${r.UNIDAD}</td>
+        <td>${r.TIPO_ACCESO}</td>
+        <td>${r.ESTADO}</td>
+        <td>${r.EMPRESA}</td>
+        <td>${r.USUARIO}</td>
+        <td>${r.duracion}</td>
+      </tr>`;
+    });
+    
+    html += '</tbody></table>';
+    
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel; charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `Detalle_Acceso_${moment().format('YYYYMMDD_HHmmss')}.xls`;
+    link.click();
+  }
+
+  // ============================================================================
+  // CREAR RONDAS - PROGRAMADOR DE HORARIOS
+  // ============================================================================
+  const crearRondaForm = document.getElementById('crearRondaForm');
+  const rondaCliente = document.getElementById('ronda-cliente');
+  const rondaUnidad = document.getElementById('ronda-unidad');
+  const rondaNombre = document.getElementById('ronda-nombre');
+  const rondaPuntosContainer = document.getElementById('rondaPuntosContainer');
+  const rondaHorario = document.getElementById('ronda-horario');
+  const rondaTolerancia = document.getElementById('ronda-tolerancia');
+  const rondaToleranciaTipo = document.getElementById('ronda-tolerancia-tipo');
+  const rondaFrecuencia = document.getElementById('ronda-frecuencia');
+  const rondaDiasSemanales = document.getElementById('rondaDiasSemanales');
+  const rondaDiasMes = document.getElementById('rondaDiasMes');
+  const rondasListContainer = document.getElementById('rondasListContainer');
+
+  let rondaList = [];
+
+  // Cargar clientes para rondas
+  async function loadRondaClientes() {
+    try {
+      const snap = await db.collection('CLIENTE_UNIDAD').get();
+      if (snap.empty) {
+        rondaCliente.innerHTML = '<option value="">No hay clientes</option>';
+        return;
+      }
+      const clientes = snap.docs.map(d => d.id).sort((a,b) => a.localeCompare(b, 'es'));
+      rondaCliente.innerHTML = '<option value="">Seleccionar Cliente</option>' +
+        clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+    } catch (e) {
+      console.error('loadRondaClientes error:', e);
+    }
+  }
+
+  // Cargar unidades cuando cambia cliente en rondas
+  if (rondaCliente) {
+    rondaCliente.addEventListener('change', async () => {
+      const selectedCliente = rondaCliente.value;
+      if (!selectedCliente) {
+        if (rondaUnidad) rondaUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>';
+        rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">Selecciona un cliente y unidad primero</p>';
+        return;
+      }
+
+      try {
+        const doc = await db.collection('CLIENTE_UNIDAD').doc(selectedCliente).get();
+        if (doc.exists) {
+          const data = doc.data();
+          let unidades = [];
+          if (Array.isArray(data.unidades)) {
+            unidades = data.unidades;
+          } else if (data.unidades && typeof data.unidades === 'object') {
+            unidades = Object.keys(data.unidades);
+          }
+          
+          if (rondaUnidad) {
+            rondaUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>' +
+              unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+          }
+        }
+      } catch (e) {
+        console.error('Error loading ronda unidades:', e);
+      }
+    });
+  }
+
+  // Cargar QRs cuando cambia unidad
+  if (rondaUnidad) {
+    rondaUnidad.addEventListener('change', async () => {
+      const selectedCliente = rondaCliente?.value;
+      const selectedUnidad = rondaUnidad.value;
+
+      if (!selectedCliente || !selectedUnidad) {
+        rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">Selecciona cliente y unidad primero</p>';
+        return;
+      }
+
+      try {
+        const snap = await db.collection('QR_CODES')
+          .where('cliente', '==', selectedCliente)
+          .where('unidad', '==', selectedUnidad)
+          .get();
+
+        if (snap.empty) {
+          rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">No hay QRs para esta unidad</p>';
+          return;
+        }
+
+        let html = '';
+        snap.docs.forEach(doc => {
+          const qrData = doc.data();
+          
+          // Verificar si el QR tiene preguntas asignadas
+          const tienePreguntas = qrData.requireQuestion === 'si' && qrData.questions && qrData.questions.length > 0;
+          const preguntasTexto = tienePreguntas 
+            ? `<div style="margin-top: 8px; padding: 8px; background-color: #e8f4f8; border-left: 3px solid #0284c7; border-radius: 4px;">
+                 <small style="color: #0284c7; font-weight: 600;">📋 Preguntas asignadas:</small>
+                 <ul style="margin: 6px 0 0 20px; padding: 0; font-size: 12px; color: #333;">
+                   ${qrData.questions.map(q => `<li>${q}</li>`).join('')}
+                 </ul>
+               </div>`
+            : '';
+          
+          html += `
+            <label style="display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; border-radius: 6px; transition: background 0.2s;">
+              <input type="checkbox" class="ronda-punto-qr" value="${doc.id}" data-nombre="${qrData.nombre || 'N/A'}" data-id="${doc.id}" style="margin-top: 4px; cursor: pointer;" />
+              <div style="flex: 1;">
+                <strong>${qrData.nombre || 'Sin nombre'}</strong>
+                <small style="color: #999; display: block; margin-top: 2px;">${doc.id}</small>
+                ${preguntasTexto}
+              </div>
+            </label>
+          `;
+        });
+        rondaPuntosContainer.innerHTML = html;
+      } catch (e) {
+        console.error('Error loading QRs:', e);
+        rondaPuntosContainer.innerHTML = '<p style="color: red;">Error cargando QRs</p>';
+      }
+    });
+  }
+
+  // Mostrar/ocultar opciones de frecuencia
+  if (rondaFrecuencia) {
+    rondaFrecuencia.addEventListener('change', (e) => {
+      const value = e.target.value;
+      rondaDiasSemanales.style.display = value === 'semanal' ? 'block' : 'none';
+      rondaDiasMes.style.display = value === 'dias-especificos' ? 'block' : 'none';
+    });
+  }
+
+  // Guardar ronda
+  if (crearRondaForm) {
+    crearRondaForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const cliente = rondaCliente?.value;
+      const unidad = rondaUnidad?.value;
+      const nombre = rondaNombre?.value?.trim();
+      const horario = rondaHorario?.value;
+      const tolerancia = parseInt(rondaTolerancia?.value || 0);
+      const toleranciaTipo = rondaToleranciaTipo?.value;
+      const frecuencia = rondaFrecuencia?.value;
+
+      if (!cliente || !unidad || !nombre || !horario || !frecuencia) {
+        if (UI && UI.toast) UI.toast('❌ Por favor completa todos los campos');
+        return;
+      }
+
+      // Obtener QRs seleccionados con sus preguntas
+      const checkboxes = document.querySelectorAll('.ronda-punto-qr:checked');
+      if (checkboxes.length === 0) {
+        if (UI && UI.toast) UI.toast('❌ Selecciona al menos un punto de ronda');
+        return;
+      }
+
+      // Construir puntos de ronda con información de QR incluyendo preguntas
+      const puntosRonda = [];
+      for (const cb of checkboxes) {
+        const qrId = cb.value;
+        const nombre = cb.dataset.nombre;
+        
+        try {
+          // Obtener documento del QR para traer sus preguntas
+          const qrDoc = await db.collection('QR_CODES').doc(qrId).get();
+          if (qrDoc.exists) {
+            const qrData = qrDoc.data();
+            puntosRonda.push({
+              qrId: qrId,
+              nombre: nombre,
+              requireQuestion: qrData.requireQuestion || 'no',
+              questions: qrData.questions || []
+            });
+          } else {
+            puntosRonda.push({
+              qrId: qrId,
+              nombre: nombre,
+              requireQuestion: 'no',
+              questions: []
+            });
+          }
+        } catch (e) {
+          console.error('Error getting QR data:', e);
+          puntosRonda.push({
+            qrId: qrId,
+            nombre: nombre,
+            requireQuestion: 'no',
+            questions: []
+          });
+        }
+      }
+
+      // Validar días según frecuencia
+      let diasConfig = null;
+      if (frecuencia === 'semanal') {
+        const diasSemanalesCbs = document.querySelectorAll('input[name="dia-semana"]:checked');
+        if (diasSemanalesCbs.length === 0) {
+          if (UI && UI.toast) UI.toast('❌ Selecciona al menos un día de la semana');
+          return;
+        }
+        diasConfig = Array.from(diasSemanalesCbs).map(cb => cb.value);
+      } else if (frecuencia === 'dias-especificos') {
+        const diasMesInput = document.getElementById('ronda-dias-mes')?.value?.trim();
+        if (!diasMesInput) {
+          if (UI && UI.toast) UI.toast('❌ Ingresa los días del mes');
+          return;
+        }
+        diasConfig = diasMesInput.split(',').map(d => parseInt(d.trim())).filter(d => d >= 1 && d <= 31);
+        if (diasConfig.length === 0) {
+          if (UI && UI.toast) UI.toast('❌ Ingresa días válidos (1-31)');
+          return;
+        }
+      }
+
+      const submitBtn = crearRondaForm.querySelector('button[type="submit"]');
+      const editingId = submitBtn?.dataset.editingId;
+
+      const rondaData = {
+        cliente,
+        unidad,
+        nombre,
+        horario,
+        tolerancia,
+        toleranciaTipo,
+        frecuencia,
+        diasConfig,
+        puntosRonda,
+        activa: true
+      };
+
+      try {
+        UI.showOverlay('Guardando...', editingId ? 'Actualizando ronda' : 'Creando ronda');
+        
+        if (editingId) {
+          // Actualizar ronda existente
+          await db.collection('Rondas_QR').doc(editingId).update(rondaData);
+          const index = rondaList.findIndex(r => r.id === editingId);
+          if (index !== -1) {
+            rondaList[index] = { id: editingId, ...rondaData };
+          }
+          if (UI && UI.toast) UI.toast('✅ Ronda actualizada exitosamente');
+        } else {
+          // Crear ronda nueva
+          const newRonda = {
+            id: `ronda_${Date.now()}`,
+            ...rondaData,
+            createdAt: new Date().toISOString()
+          };
+          await db.collection('Rondas_QR').doc(newRonda.id).set(newRonda);
+          rondaList.push(newRonda);
+          if (UI && UI.toast) UI.toast('✅ Ronda creada exitosamente');
+        }
+        
+        // Resetear formulario
+        crearRondaForm.reset();
+        rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">Selecciona un cliente y unidad primero</p>';
+        
+        // Resetear botón
+        if (submitBtn) {
+          submitBtn.textContent = '➕ Crear Ronda';
+          submitBtn.style.background = '';
+          delete submitBtn.dataset.editingId;
+        }
+        const formTitle = document.querySelector('[data-form-title]');
+        if (formTitle) {
+          formTitle.textContent = '📋 Crear Nueva Ronda';
+          formTitle.style.color = '';
+        }
+        
+        renderRondasList();
+      } catch (error) {
+        console.error('Error guardando ronda:', error);
+        if (UI && UI.toast) UI.toast('❌ Error: ' + error.message);
+      } finally {
+        UI.hideOverlay();
+      }
+    });
+  }
+
+  // Manejador del botón Cancelar Edición
+  const cancelBtn = document.getElementById('ronda-btn-cancelar');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      // Resetear formulario
+      crearRondaForm.reset();
+      rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">Selecciona un cliente y unidad primero</p>';
+      
+      // Resetear botón submit
+      const submitBtn = crearRondaForm?.querySelector('button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.textContent = '➕ Crear Ronda';
+        submitBtn.style.background = '';
+        delete submitBtn.dataset.editingId;
+      }
+
+      // Resetear título
+      const formTitle = document.querySelector('[data-form-title]');
+      if (formTitle) {
+        formTitle.textContent = '📋 Crear Nueva Ronda';
+        formTitle.style.color = '';
+      }
+
+      // Ocultar botón cancelar
+      cancelBtn.style.display = 'none';
+      delete cancelBtn.dataset.editingId;
+
+      if (UI && UI.toast) UI.toast('❌ Edición cancelada');
+    });
+  }
+
+  // Renderizar lista de rondas
+  function renderRondasList() {
+    if (rondaList.length === 0) {
+      rondasListContainer.innerHTML = `
+        <div style="text-align: center; padding: 40px 20px; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); 
+                    border-radius: 12px; border: 2px dashed #999;">
+          <p style="color: #999; font-size: 16px; margin: 0;">
+            📋 No hay rondas creadas
+          </p>
+          <p style="color: #bbb; font-size: 12px; margin: 8px 0 0 0;">
+            Crea tu primera ronda usando el formulario arriba
+          </p>
+        </div>
+      `;
+      return;
+    }
+
+    let html = `
+      <div style="display: grid; gap: 16px;">
+    `;
+    rondaList.forEach((ronda, index) => {
+      const gradients = ['#e0f7fa', '#f3e5f5', '#e8f5e9', '#fff3e0', '#fce4ec'];
+      const gradient = gradients[index % gradients.length];
+      const borderColor = ['#00bcd4', '#9c27b0', '#4caf50', '#ff9800', '#e91e63'][index % 5];
+      
+      html += `
+        <div style="background: ${gradient}; border-left: 5px solid ${borderColor}; 
+                    border-radius: 12px; padding: 16px; 
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: all 0.3s ease;
+                    position: relative; overflow: hidden;">
+          
+          <!-- Background decorativo -->
+          <div style="position: absolute; top: -30px; right: -30px; width: 80px; height: 80px; 
+                      background: ${borderColor}; opacity: 0.05; border-radius: 50%;"></div>
+          
+          <div style="position: relative; z-index: 1;">
+            <!-- Header con nombre y estado -->
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+              <div>
+                <h4 style="margin: 0; color: ${borderColor}; font-size: 18px; font-weight: 600;">
+                  📍 ${ronda.nombre}
+                </h4>
+                <p style="margin: 4px 0 0; color: #666; font-size: 13px;">
+                  <span style="background: ${borderColor}; color: white; padding: 2px 8px; border-radius: 12px; 
+                               font-size: 11px; font-weight: 500;">
+                    ${ronda.cliente} • ${ronda.unidad}
+                  </span>
+                </p>
+              </div>
+              <div style="background: ${borderColor}; color: white; padding: 6px 12px; 
+                         border-radius: 20px; font-size: 12px; font-weight: 600;">
+                ${ronda.activa ? '🟢 ACTIVA' : '🔴 INACTIVA'}
+              </div>
+            </div>
+
+            <!-- Detalles en grid 2x2 -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0;">
+              <!-- Horario -->
+              <div style="background: rgba(255,255,255,0.6); padding: 10px; border-radius: 8px; 
+                         border-left: 3px solid ${borderColor};">
+                <p style="margin: 0; font-size: 11px; color: #999; text-transform: uppercase; font-weight: 500;">
+                  ⏰ Horario
+                </p>
+                <p style="margin: 4px 0 0; font-size: 14px; font-weight: 600; color: #333;">
+                  ${ronda.horario}
+                </p>
+              </div>
+
+              <!-- Frecuencia -->
+              <div style="background: rgba(255,255,255,0.6); padding: 10px; border-radius: 8px;
+                         border-left: 3px solid ${borderColor};">
+                <p style="margin: 0; font-size: 11px; color: #999; text-transform: uppercase; font-weight: 500;">
+                  📅 Frecuencia
+                </p>
+                <p style="margin: 4px 0 0; font-size: 14px; font-weight: 600; color: #333;">
+                  ${ronda.frecuencia.charAt(0).toUpperCase() + ronda.frecuencia.slice(1)}
+                </p>
+              </div>
+
+              <!-- Tolerancia -->
+              <div style="background: rgba(255,255,255,0.6); padding: 10px; border-radius: 8px;
+                         border-left: 3px solid ${borderColor};">
+                <p style="margin: 0; font-size: 11px; color: #999; text-transform: uppercase; font-weight: 500;">
+                  ⏱️ Tolerancia
+                </p>
+                <p style="margin: 4px 0 0; font-size: 14px; font-weight: 600; color: #333;">
+                  ${ronda.tolerancia} ${ronda.toleranciaTipo}
+                </p>
+              </div>
+
+              <!-- Puntos -->
+              <div style="background: rgba(255,255,255,0.6); padding: 10px; border-radius: 8px;
+                         border-left: 3px solid ${borderColor};">
+                <p style="margin: 0; font-size: 11px; color: #999; text-transform: uppercase; font-weight: 500;">
+                  📍 Puntos
+                </p>
+                <p style="margin: 4px 0 0; font-size: 14px; font-weight: 600; color: ${borderColor};">
+                  ${ronda.puntosRonda.length} punto${ronda.puntosRonda.length !== 1 ? 's' : ''}
+                </p>
+              </div>
+            </div>
+
+            <!-- Detalles de puntos -->
+            <div style="margin: 12px 0; padding: 10px; background: rgba(255,255,255,0.6); 
+                       border-radius: 8px; max-height: 120px; overflow-y: auto;">
+              <p style="margin: 0 0 6px; font-size: 11px; color: #999; font-weight: 600; text-transform: uppercase;">
+                Puntos de Ronda:
+              </p>
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                ${ronda.puntosRonda.map(p => {
+                  const tienePreguntas = p.requireQuestion === 'si' && p.questions && p.questions.length > 0;
+                  return `
+                    <div style="padding: 8px; background: white; border-radius: 6px; border-left: 3px solid ${borderColor};">
+                      <div style="display: flex; align-items: center; gap: 6px; margin-bottom: ${tienePreguntas ? '6px' : '0'};">
+                        <span style="background: ${borderColor}; color: white; padding: 2px 6px; border-radius: 4px; 
+                                   font-size: 10px; font-weight: 600;">
+                          ${p.nombre}
+                        </span>
+                        ${tienePreguntas ? '<span style="font-size: 12px; color: #0284c7;">📋</span>' : ''}
+                      </div>
+                      ${tienePreguntas ? `
+                        <div style="font-size: 11px; color: #333; margin-left: 8px;">
+                          <strong style="color: #0284c7;">Preguntas:</strong>
+                          <ul style="margin: 4px 0 0 16px; padding: 0; list-style: none;">
+                            ${p.questions.map(q => `<li style="margin: 2px 0; color: #555;">• ${q}</li>`).join('')}
+                          </ul>
+                        </div>
+                      ` : ''}
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+
+            <!-- Botones de acciones -->
+            <div style="display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end;">
+              <button type="button" class="btn small" style="background: #4CAF50; border: none; color: white; 
+                                                            padding: 8px 12px; border-radius: 6px; cursor: pointer;
+                                                            font-size: 12px; font-weight: 600; transition: all 0.2s;"
+                      onmouseover="this.style.background='#45a049'" onmouseout="this.style.background='#4CAF50'"
+                      onclick="editRonda('${ronda.id}')">
+                ✏️ Editar
+              </button>
+              <button type="button" class="btn small" style="background: #f44336; border: none; color: white; 
+                                                            padding: 8px 12px; border-radius: 6px; cursor: pointer;
+                                                            font-size: 12px; font-weight: 600; transition: all 0.2s;"
+                      onmouseover="this.style.background='#da190b'" onmouseout="this.style.background='#f44336'"
+                      onclick="showDeleteRondaModal('${ronda.id}', '${ronda.nombre}')">
+                🗑️ Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    });
+    html += '</div>';
+    rondasListContainer.innerHTML = html;
+  }
+
+  // Mostrar modal de eliminación de ronda
+  window.showDeleteRondaModal = (rondaId, rondaNombre) => {
+    const modal = document.getElementById('deleteRondaModal');
+    const nameDisplay = document.getElementById('deleteRondaName');
+    const confirmBtn = document.getElementById('deleteRondaConfirm');
+    const cancelBtn = document.getElementById('deleteRondaCancel');
+    
+    nameDisplay.textContent = rondaNombre;
+    modal.style.display = 'flex';
+    
+    // Remover listeners anteriores
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+    const newCancelBtn = cancelBtn.cloneNode(true);
+    cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+    
+    // Agregar nuevos listeners
+    document.getElementById('deleteRondaConfirm').addEventListener('click', () => {
+      deleteRonda(rondaId);
+      modal.style.display = 'none';
+    });
+    document.getElementById('deleteRondaCancel').addEventListener('click', () => {
+      modal.style.display = 'none';
+    });
+  };
+
+  // Eliminar ronda
+  window.deleteRonda = async (rondaId) => {
+    try {
+      UI.showOverlay('Eliminando...', 'Borrando ronda');
+      await db.collection('Rondas_QR').doc(rondaId).delete();
+      rondaList = rondaList.filter(r => r.id !== rondaId);
+      renderRondasList();
+      if (UI && UI.toast) UI.toast('✅ Ronda eliminada');
+    } catch (error) {
+      console.error('Error eliminando ronda:', error);
+      if (UI && UI.toast) UI.toast('❌ Error: ' + error.message);
+    } finally {
+      UI.hideOverlay();
+    }
+  };
+
+  // Editar ronda
+  window.editRonda = (rondaId) => {
+    const ronda = rondaList.find(r => r.id === rondaId);
+    if (!ronda) {
+      if (UI && UI.toast) UI.toast('❌ Ronda no encontrada');
+      return;
+    }
+
+    // Llenar el formulario con los datos de la ronda
+    if (rondaCliente) rondaCliente.value = ronda.cliente;
+    
+    // Trigger change para cargar unidades
+    rondaCliente.dispatchEvent(new Event('change'));
+    
+    setTimeout(() => {
+      if (rondaUnidad) rondaUnidad.value = ronda.unidad;
+      rondaUnidad.dispatchEvent(new Event('change'));
+    }, 300);
+
+    setTimeout(() => {
+      if (rondaNombre) rondaNombre.value = ronda.nombre;
+      if (rondaHorario) rondaHorario.value = ronda.horario;
+      if (rondaTolerancia) rondaTolerancia.value = ronda.tolerancia;
+      if (rondaToleranciaTipo) rondaToleranciaTipo.value = ronda.toleranciaTipo;
+      if (rondaFrecuencia) {
+        rondaFrecuencia.value = ronda.frecuencia;
+        rondaFrecuencia.dispatchEvent(new Event('change'));
+      }
+
+      // Marcar los QRs seleccionados
+      setTimeout(() => {
+        document.querySelectorAll('.ronda-punto-qr').forEach(cb => {
+          cb.checked = ronda.puntosRonda.some(p => p.qrId === cb.value);
+        });
+      }, 100);
+
+      // Llenar días según frecuencia
+      if (ronda.frecuencia === 'semanal' && ronda.diasConfig) {
+        document.querySelectorAll('input[name="dia-semana"]').forEach(cb => {
+          cb.checked = ronda.diasConfig.includes(cb.value);
+        });
+      } else if (ronda.frecuencia === 'dias-especificos' && ronda.diasConfig) {
+        const diasMesInput = document.getElementById('ronda-dias-mes');
+        if (diasMesInput) {
+          diasMesInput.value = ronda.diasConfig.join(', ');
+        }
+      }
+    }, 600);
+
+    // Scroll al formulario
+    document.getElementById('crearRondaForm')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    
+    // Cambiar título temporalmente
+    const formTitle = document.querySelector('[data-form-title]');
+    if (formTitle) {
+      formTitle.textContent = `✏️ Editando: ${ronda.nombre}`;
+      formTitle.style.color = '#ff9800';
+    }
+
+    // Modificar el botón submit
+    const submitBtn = crearRondaForm?.querySelector('button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.textContent = '💾 Actualizar Ronda';
+      submitBtn.style.background = '#ff9800';
+      submitBtn.dataset.editingId = rondaId;
+    }
+
+    // Mostrar botón de cancelar
+    const cancelBtn = document.getElementById('ronda-btn-cancelar');
+    if (cancelBtn) {
+      cancelBtn.style.display = 'inline-block';
+      cancelBtn.dataset.editingId = rondaId;
+    }
+
+    if (UI && UI.toast) UI.toast('📝 Ronda cargada en el formulario');
+  };
+
+  // Cargar rondas existentes
+  async function loadRondas() {
+    try {
+      const snap = await db.collection('Rondas_QR').get();
+      rondaList = snap.docs.map(doc => doc.data());
+      renderRondasList();
+    } catch (e) {
+      console.error('Error loading rondas:', e);
+    }
+  }
+
+  // Inicializar cuando se carga
+  loadRondaClientes();
+  loadRondas();
+
+  } // <-- CIERRE DEL else { window.__wiredCuadernoInc__ = true; }
+
+  // ===== QR GENERATOR =====
+  const qrForm = document.getElementById('qrForm');
+  const qrCliente = document.getElementById('qr-cliente');
+  const qrUnidad = document.getElementById('qr-unidad');
+  const qrNombre = document.getElementById('qr-nombre');
+  const qrLatitude = document.getElementById('qr-latitude');
+  const qrLongitude = document.getElementById('qr-longitude');
+  const qrWidth = document.getElementById('qr-width');
+  const qrHeight = document.getElementById('qr-height');
+  const qrGetLocationBtn = document.getElementById('qr-get-location');
+  const qrListContainer = document.getElementById('qrListContainer');
+  const qrPreviewContainer = document.getElementById('qr-preview-container');
+  
+  // Elementos para preguntas
+  const qrRequireQuestion = document.getElementById('qr-require-question');
+  const qrQuestionsContainer = document.getElementById('qr-questions-container');
+  const qrQuestionsList = document.getElementById('qr-questions-list');
+  const qrBtnAddQuestion = document.getElementById('qr-btn-add-question');
+
+  let qrList = [];
+  let qrQuestionsCount = 0;
+
+  // Función para generar vista previa del QR
+  function updateQRPreview() {
+    const nombre = qrNombre?.value?.trim();
+    const lat = qrLatitude?.value?.trim();
+    const lng = qrLongitude?.value?.trim();
+    const width = Math.min(Math.max(parseInt(qrWidth?.value || 200), 50), 500);
+    const height = Math.min(Math.max(parseInt(qrHeight?.value || 200), 50), 500);
+
+    if (!nombre || !lat || !lng) {
+      qrPreviewContainer.innerHTML = `
+        <div style="text-align: center; color: #a0aec0;">
+          <div style="font-size: 32px; margin-bottom: 12px;">📊</div>
+          <p style="margin: 0; font-weight: 600;">Completa el formulario</p>
+          <p style="margin: 4px 0 0 0; font-size: 12px;">Nombre y geolocalización son requeridos</p>
+        </div>
+      `;
+      return;
+    }
+
+    const qrData = `${nombre}|${lat}|${lng}`;
+    
+    try {
+      // Generar QR usando QRCode.js library (agregado dinámicamente)
+      const canvas = document.createElement('canvas');
+      QRCode.toCanvas(canvas, qrData, {
+        errorCorrectionLevel: 'H',
+        type: 'image/png',
+        quality: 0.95,
+        margin: 1,
+        width: width,
+        height: height,
+        color: { dark: '#000000', light: '#FFFFFF' }
+      }, (err) => {
+        if (err) {
+          qrPreviewContainer.innerHTML = `<p style="color: red;">Error generando QR</p>`;
+          return;
+        }
+        qrPreviewContainer.innerHTML = `
+          <div style="text-align: center;">
+            <img src="${canvas.toDataURL()}" style="max-width: 100%; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);" />
+            <p style="margin: 12px 0 0; color: #718096; font-size: 12px;">Tamaño: ${width}x${height}px</p>
+          </div>
+        `;
+      });
+    } catch (e) {
+      console.warn('QRCode library no cargada, usando placeholder');
+      qrPreviewContainer.innerHTML = `
+        <div style="text-align: center; color: #a0aec0;">
+          <div style="font-size: 32px; margin-bottom: 12px;">✅</div>
+          <p style="margin: 0; font-weight: 600;">QR Válido</p>
+          <p style="margin: 4px 0 0 0; font-size: 12px;">Se generará al crear</p>
+        </div>
+      `;
+    }
+  }
+
+  // Agregar listeners para actualizar preview
+  if (qrNombre) qrNombre.addEventListener('input', updateQRPreview);
+  if (qrLatitude) qrLatitude.addEventListener('input', updateQRPreview);
+  if (qrLongitude) qrLongitude.addEventListener('input', updateQRPreview);
+  if (qrWidth) qrWidth.addEventListener('change', updateQRPreview);
+  if (qrHeight) qrHeight.addEventListener('change', updateQRPreview);
+
+  // Event listener para "Se requiere pregunta"
+  if (qrRequireQuestion) {
+    qrRequireQuestion.addEventListener('change', (e) => {
+      const requireQuestion = e.target.value === 'si';
+      qrQuestionsContainer.style.display = requireQuestion ? 'block' : 'none';
+      
+      if (requireQuestion) {
+        // Limpiar lista y agregar primera pregunta vacía
+        qrQuestionsList.innerHTML = '';
+        qrQuestionsCount = 0;
+        addQuestion();
+      } else {
+        // Limpiar preguntas
+        qrQuestionsList.innerHTML = '';
+        qrQuestionsCount = 0;
+        qrBtnAddQuestion.style.display = 'none';
+      }
+    });
+  }
+
+  // Función para agregar pregunta
+  function addQuestion() {
+    if (qrQuestionsCount >= 3) return; // Máximo 3 preguntas
+    
+    const questionId = `qr-question-${qrQuestionsCount}`;
+    const questionDiv = document.createElement('div');
+    questionDiv.className = 'question-input-group';
+    questionDiv.id = questionId;
+    questionDiv.style.display = 'flex';
+    questionDiv.style.gap = '8px';
+    questionDiv.style.alignItems = 'flex-start';
+    
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'question-input';
+    input.placeholder = `Pregunta ${qrQuestionsCount + 1}`;
+    input.style.flex = '1';
+    input.style.padding = '8px 12px';
+    input.style.borderRadius = '6px';
+    input.style.border = '1px solid #ddd';
+    input.style.fontSize = '14px';
+    input.name = `question_${qrQuestionsCount}`;
+    
+    questionDiv.appendChild(input);
+    
+    // Botón para eliminar pregunta (solo si hay más de una)
+    if (qrQuestionsCount > 0) {
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'btn-remove-question';
+      removeBtn.innerHTML = '✕';
+      removeBtn.style.padding = '8px 12px';
+      removeBtn.style.borderRadius = '6px';
+      removeBtn.style.border = '1px solid #ff6b6b';
+      removeBtn.style.backgroundColor = '#ffe0e0';
+      removeBtn.style.color = '#ff6b6b';
+      removeBtn.style.cursor = 'pointer';
+      removeBtn.style.fontSize = '16px';
+      removeBtn.style.fontWeight = 'bold';
+      removeBtn.onclick = (e) => {
+        e.preventDefault();
+        removeQuestion(questionId);
+      };
+      questionDiv.appendChild(removeBtn);
+    }
+    
+    qrQuestionsList.appendChild(questionDiv);
+    qrQuestionsCount++;
+    
+    // Mostrar/ocultar botón agregar
+    updateAddQuestionButton();
+  }
+
+  // Función para eliminar pregunta
+  function removeQuestion(questionId) {
+    const questionDiv = document.getElementById(questionId);
+    if (questionDiv) {
+      questionDiv.remove();
+      qrQuestionsCount--;
+      updateAddQuestionButton();
+    }
+  }
+
+  // Función para actualizar visibilidad del botón agregar
+  function updateAddQuestionButton() {
+    qrBtnAddQuestion.style.display = qrQuestionsCount > 0 && qrQuestionsCount < 3 ? 'block' : 'none';
+  }
+
+  // Event listener para botón agregar pregunta
+  if (qrBtnAddQuestion) {
+    qrBtnAddQuestion.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (qrQuestionsCount < 3) {
+        addQuestion();
+      }
+    });
+  }
+
+
+  // Cargar clientes desde CLIENTE_UNIDAD
+  async function loadQRClientes() {
+    try {
+      if (!qrCliente) {
+        console.warn('qrCliente no existe');
+        return;
+      }
+      
+      // Esperar a que Firebase esté inicializado
+      let attempts = 0;
+      while (!firebase.apps.length && attempts < 10) {
+        await new Promise(r => setTimeout(r, 100));
+        attempts++;
+      }
+      
+      if (!firebase.apps.length) {
+        if (UI && UI.toast) UI.toast('❌ Firebase no inicializado');
+        return;
+      }
+      
+      const firestore = firebase.firestore();
+      const snap = await firestore.collection('CLIENTE_UNIDAD').get();
+      
+      if (snap.empty) {
+        console.warn('No hay clientes en CLIENTE_UNIDAD');
+        qrCliente.innerHTML = '<option value="">No hay clientes</option>';
+        return;
+      }
+      
+      const clientes = snap.docs.map(d => d.id).sort((a,b)=>a.localeCompare(b,'es'));
+      
+      qrCliente.innerHTML = '<option value="">Seleccionar Cliente</option>' +
+        clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+    } catch (e) { 
+      console.error('loadQRClientes() error:', e);
+      if (UI && UI.toast) UI.toast('❌ Error al cargar clientes: ' + e.message);
+    }
+  }
+
+  // Cargar unidades cuando cambia cliente
+  if (qrCliente) {
+    qrCliente.addEventListener('change', async () => {
+      const selectedCliente = qrCliente.value;
+      console.log('📌 Cliente seleccionado:', selectedCliente);
+      
+      if (!selectedCliente) {
+        if (qrUnidad) qrUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>';
+        return;
+      }
+
+      try {
+        // Usar firebase.firestore() directamente para evitar problemas de scope
+        const firestore = firebase.firestore();
+        console.log('📌 Leyendo documento:', selectedCliente, 'de CLIENTE_UNIDAD');
+        
+        const doc = await firestore.collection('CLIENTE_UNIDAD').doc(selectedCliente).get();
+        
+        console.log('📌 Documento existe:', doc.exists);
+        console.log('📌 Datos del documento:', doc.data());
+        
+        if (doc.exists) {
+          const data = doc.data();
+          console.log('📌 Campo unidades:', data.unidades);
+          
+          // Extract unit names (keys from the unidades object)
+          let unidades = [];
+          if (Array.isArray(data.unidades)) {
+            unidades = data.unidades;
+          } else if (data.unidades && typeof data.unidades === 'object') {
+            // Extract the keys (CHORRILLOS, LINCE, etc.) from the object
+            unidades = Object.keys(data.unidades);
+          }
+          
+          console.log('📌 Es array:', Array.isArray(data.unidades));
+          console.log('📌 Unidades finales:', unidades);
+          
+          if (qrUnidad) {
+            const html = '<option value="">Seleccionar Unidad</option>' +
+              unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+            console.log('📌 HTML generado:', html);
+            qrUnidad.innerHTML = html;
+            console.log('📌 innerHTML actualizado');
+          } else {
+            console.warn('⚠️ qrUnidad no existe');
+          }
+        } else {
+          console.warn('⚠️ Documento no existe:', selectedCliente);
+          if (qrUnidad) qrUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>';
+          if (UI && UI.toast) UI.toast('⚠️ Cliente no encontrado');
+        }
+      } catch (e) { 
+        console.error('❌ Error loading unidades:', e);
+        if (UI && UI.toast) UI.toast('❌ Error al cargar unidades: ' + e.message);
+      }
+    });
+  }
+
+  // Obtener geolocalización actual
+  if (qrGetLocationBtn) {
+    qrGetLocationBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (navigator.geolocation) {
+        if (UI && UI.showOverlay) UI.showOverlay('Obteniendo ubicación...', 'Leyendo GPS');
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            if (qrLatitude) qrLatitude.value = pos.coords.latitude.toFixed(6);
+            if (qrLongitude) qrLongitude.value = pos.coords.longitude.toFixed(6);
+            if (UI && UI.hideOverlay) UI.hideOverlay();
+            if (UI && UI.toast) UI.toast('✅ Ubicación obtenida');
+          },
+          (err) => {
+            if (UI && UI.hideOverlay) UI.hideOverlay();
+            if (UI && UI.toast) UI.toast('❌ Error al obtener ubicación: ' + err.message);
+          }
+        );
+      } else {
+        if (UI && UI.toast) UI.toast('❌ Geolocalización no disponible');
+      }
+    });
+
+    // Variables para el mapa
+    let mapInstance = null;
+    let mapMarker = null;
+    let selectedLat = -12.0464;
+    let selectedLng = -77.0428; // Lima, Perú por defecto
+    let currentLayer = 'street';
+    let tileLayers = {};
+
+    // Elementos del modal del mapa
+    const mapModal = document.getElementById('qr-map-modal');
+    const mapOpenBtn = document.getElementById('qr-open-map');
+    const mapCloseBtn = document.getElementById('qr-map-close');
+    const mapCancelBtn = document.getElementById('qr-map-cancel');
+    const mapSaveBtn = document.getElementById('qr-map-save');
+    const mapContainer = document.getElementById('qr-map-container');
+    const addressSearch = document.getElementById('qr-address-search');
+    const searchBtn = document.getElementById('qr-search-btn');
+    const mapLatDisplay = document.getElementById('qr-map-lat-display');
+    const mapLngDisplay = document.getElementById('qr-map-lng-display');
+
+    function initMap() {
+      if (mapInstance) mapInstance.remove();
+      
+      // Usar valores actuales si existen
+      if (qrLatitude?.value && qrLongitude?.value) {
+        selectedLat = parseFloat(qrLatitude.value);
+        selectedLng = parseFloat(qrLongitude.value);
+      }
+
+      mapInstance = L.map('qr-map-container').setView([selectedLat, selectedLng], 13);
+
+      // Definir capas de mapa
+      tileLayers.street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 19
+      });
+
+      tileLayers.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: '© Esri',
+        maxZoom: 19
+      });
+
+      tileLayers.terrain = L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap',
+        maxZoom: 19
+      });
+
+      // Agregar capa inicial
+      tileLayers[currentLayer].addTo(mapInstance);
+
+      mapMarker = L.marker([selectedLat, selectedLng], {
+        draggable: true,
+        icon: L.icon({
+          iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
+          shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+          iconSize: [25, 41],
+          iconAnchor: [12, 41],
+          popupAnchor: [1, -34],
+          shadowSize: [41, 41]
+        })
+      }).addTo(mapInstance);
+
+      // Actualizar coordenadas cuando se arrastra el marcador
+      mapMarker.on('dragend', () => {
+        const coords = mapMarker.getLatLng();
+        selectedLat = coords.lat;
+        selectedLng = coords.lng;
+        mapLatDisplay.value = selectedLat.toFixed(6);
+        mapLngDisplay.value = selectedLng.toFixed(6);
+      });
+
+      // Click en el mapa para colocar marcador
+      mapInstance.on('click', (e) => {
+        selectedLat = e.latlng.lat;
+        selectedLng = e.latlng.lng;
+        mapMarker.setLatLng([selectedLat, selectedLng]);
+        mapLatDisplay.value = selectedLat.toFixed(6);
+        mapLngDisplay.value = selectedLng.toFixed(6);
+      });
+
+      mapLatDisplay.value = selectedLat.toFixed(6);
+      mapLngDisplay.value = selectedLng.toFixed(6);
+
+      // Event listeners para cambiar capas
+      document.querySelectorAll('.map-layer-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const layer = btn.dataset.layer;
+          
+          // Remover capa actual
+          mapInstance.removeLayer(tileLayers[currentLayer]);
+          
+          // Agregar nueva capa
+          tileLayers[layer].addTo(mapInstance);
+          currentLayer = layer;
+
+          // Actualizar estilos de botones
+          document.querySelectorAll('.map-layer-btn').forEach(b => {
+            b.style.background = 'white';
+            b.style.borderColor = '#e2e8f0';
+            b.style.color = '#718096';
+          });
+          btn.style.background = '#3b82f6';
+          btn.style.borderColor = '#3b82f6';
+          btn.style.color = 'white';
+        });
+      });
+    }
+
+    // Abrir modal del mapa
+    if (mapOpenBtn) {
+      mapOpenBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (mapModal) {
+          mapModal.style.display = 'flex';
+          setTimeout(initMap, 100);
+        }
+      });
+    }
+
+    // Cerrar modal
+    function closeMapModal() {
+      if (mapModal) mapModal.style.display = 'none';
+      if (mapInstance) mapInstance.remove();
+      mapInstance = null;
+    }
+
+    if (mapCloseBtn) mapCloseBtn.addEventListener('click', closeMapModal);
+    if (mapCancelBtn) mapCancelBtn.addEventListener('click', closeMapModal);
+
+    // Guardar ubicación
+    if (mapSaveBtn) {
+      mapSaveBtn.addEventListener('click', () => {
+        if (qrLatitude) qrLatitude.value = selectedLat.toFixed(6);
+        if (qrLongitude) qrLongitude.value = selectedLng.toFixed(6);
+        closeMapModal();
+        if (UI && UI.toast) UI.toast('✅ Ubicación guardada');
+      });
+    }
+
+    // Búsqueda de dirección/empresa/poi
+    if (searchBtn) {
+      searchBtn.addEventListener('click', async () => {
+        const address = addressSearch?.value?.trim();
+        const searchType = document.getElementById('qr-search-type')?.value || 'address';
+        const province = document.getElementById('qr-search-province')?.value || '';
+        
+        if (!address) {
+          if (UI && UI.toast) UI.toast('❌ Ingresa un término de búsqueda');
+          return;
+        }
+
+        try {
+          if (UI && UI.showOverlay) UI.showOverlay('Buscando...', 'Conectando con Nominatim');
+
+          // Construir query según tipo de búsqueda
+          let queryAddress = address;
+          
+          if (searchType === 'company' || searchType === 'poi') {
+            // Para empresas y lugares importantes
+            queryAddress = address;
+          } else if (searchType === 'coordinates') {
+            // Si es coordenadas, parseolas directamente
+            const coords = address.split(',');
+            if (coords.length === 2) {
+              const lat = parseFloat(coords[0].trim());
+              const lng = parseFloat(coords[1].trim());
+              if (!isNaN(lat) && !isNaN(lng)) {
+                selectedLat = lat;
+                selectedLng = lng;
+                if (mapInstance) {
+                  mapInstance.setView([selectedLat, selectedLng], 15);
+                  mapMarker.setLatLng([selectedLat, selectedLng]);
+                }
+                mapLatDisplay.value = selectedLat.toFixed(6);
+                mapLngDisplay.value = selectedLng.toFixed(6);
+                if (UI && UI.hideOverlay) UI.hideOverlay();
+                if (UI && UI.toast) UI.toast('✅ Coordenadas aplicadas');
+                return;
+              }
+            }
+            if (UI && UI.hideOverlay) UI.hideOverlay();
+            if (UI && UI.toast) UI.toast('❌ Formato de coordenadas inválido. Usa: lat, lng');
+            return;
+          } else {
+            // Para direcciones, agregar provincia/país
+            if (province) {
+              queryAddress = address + ', ' + province;
+            }
+            queryAddress = queryAddress + ', Peru';
+          }
+
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryAddress)}&limit=5`
+          );
+          
+          const results = await response.json();
+          
+          if (UI && UI.hideOverlay) UI.hideOverlay();
+
+          if (results.length > 0) {
+            const result = results[0];
+            selectedLat = parseFloat(result.lat);
+            selectedLng = parseFloat(result.lon);
+
+            if (mapInstance) {
+              mapInstance.setView([selectedLat, selectedLng], 15);
+              mapMarker.setLatLng([selectedLat, selectedLng]);
+            }
+
+            mapLatDisplay.value = selectedLat.toFixed(6);
+            mapLngDisplay.value = selectedLng.toFixed(6);
+            if (UI && UI.toast) UI.toast('✅ Ubicación encontrada: ' + result.display_name.substring(0, 50) + '...');
+          } else {
+            if (UI && UI.toast) UI.toast('❌ No se encontró la ubicación. Intenta con otro término');
+          }
+        } catch (error) {
+          if (UI && UI.hideOverlay) UI.hideOverlay();
+          if (UI && UI.toast) UI.toast('❌ Error en la búsqueda: ' + error.message);
+          console.error('Error en búsqueda:', error);
+        }
+      });
+    }
+
+    // Enter en búsqueda
+    if (addressSearch) {
+      addressSearch.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') searchBtn?.click();
+      });
+    }
+
+    // Cerrar modal al hacer click fuera
+    if (mapModal) {
+      mapModal.addEventListener('click', (e) => {
+        if (e.target === mapModal) closeMapModal();
+      });
+    }
+
+    // ===== FILTROS Y DESCARGA DE QRs =====
+    const filterCliente = document.getElementById('qr-filter-cliente');
+    const filterUnidad = document.getElementById('qr-filter-unidad');
+    const filterClearBtn = document.getElementById('qr-filter-clear');
+    const downloadAllBtn = document.getElementById('qr-download-all');
+
+    // Actualizar opciones de filtros
+    function updateFilterOptions() {
+      // Obtener clientes únicos
+      const clientes = [...new Set(qrList.map(q => q.cliente))].sort();
+      
+      // Mantener valor seleccionado
+      const selectedCliente = filterCliente?.value;
+      if (filterCliente) {
+        filterCliente.innerHTML = '<option value="">Todos los Clientes</option>';
+        clientes.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c;
+          opt.textContent = c;
+          filterCliente.appendChild(opt);
+        });
+        filterCliente.value = selectedCliente;
+      }
+
+      // Obtener unidades del cliente seleccionado
+      const selectedClienteValue = filterCliente?.value;
+      let unidades = [];
+      if (selectedClienteValue) {
+        unidades = [...new Set(qrList.filter(q => q.cliente === selectedClienteValue).map(q => q.unidad))].sort();
+      } else {
+        unidades = [...new Set(qrList.map(q => q.unidad))].sort();
+      }
+
+      const selectedUnidad = filterUnidad?.value;
+      if (filterUnidad) {
+        filterUnidad.innerHTML = '<option value="">Todas las Unidades</option>';
+        unidades.forEach(u => {
+          const opt = document.createElement('option');
+          opt.value = u;
+          opt.textContent = u;
+          filterUnidad.appendChild(opt);
+        });
+        filterUnidad.value = selectedUnidad;
+      }
+    }
+
+    // Aplicar filtros
+    function applyFilters() {
+      const clienteFilter = filterCliente?.value || '';
+      const unidadFilter = filterUnidad?.value || '';
+
+      let filtered = qrList;
+
+      if (clienteFilter) {
+        filtered = filtered.filter(q => q.cliente === clienteFilter);
+      }
+
+      if (unidadFilter) {
+        filtered = filtered.filter(q => q.unidad === unidadFilter);
+      }
+
+      renderQRList(filtered);
+    }
+
+    // Event listeners de filtros
+    if (filterCliente) {
+      filterCliente.addEventListener('change', () => {
+        updateFilterOptions();
+        applyFilters();
+      });
+    }
+
+    if (filterUnidad) {
+      filterUnidad.addEventListener('change', applyFilters);
+    }
+
+    if (filterClearBtn) {
+      filterClearBtn.addEventListener('click', () => {
+        if (filterCliente) filterCliente.value = '';
+        if (filterUnidad) filterUnidad.value = '';
+        applyFilters();
+      });
+    }
+
+    // Descargar todos los QRs en PDF
+    if (downloadAllBtn) {
+      downloadAllBtn.addEventListener('click', () => {
+        // Mostrar modal para elegir tamaño
+        const sizeModal = document.getElementById('qrSizeModal');
+        if (sizeModal) {
+          sizeModal.style.display = 'block';
+          sizeModal.setAttribute('aria-hidden', 'false');
+        }
+      });
+    }
+
+    // Manejar el formulario de tamaño
+    const qrSizeForm = document.getElementById('qrSizeForm');
+    const qrSizeModal = document.getElementById('qrSizeModal');
+    const qrSizeCancel = document.getElementById('qrSizeCancel');
+
+    if (qrSizeCancel) {
+      qrSizeCancel.addEventListener('click', () => {
+        if (qrSizeModal) {
+          qrSizeModal.style.display = 'none';
+          qrSizeModal.setAttribute('aria-hidden', 'true');
+        }
+      });
+    }
+
+    if (qrSizeForm) {
+      qrSizeForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const bulkWidth = parseInt(document.getElementById('qrBulkWidth')?.value || 80);
+        const bulkHeight = parseInt(document.getElementById('qrBulkHeight')?.value || 80);
+
+        // Cerrar modal
+        if (qrSizeModal) {
+          qrSizeModal.style.display = 'none';
+          qrSizeModal.setAttribute('aria-hidden', 'true');
+        }
+
+        // Proceder con la descarga
+        await downloadAllQRsWithSize(bulkWidth, bulkHeight);
+      });
+    }
+
+    // Función para descargar todos con tamaño específico
+    async function downloadAllQRsWithSize(qrWidth, qrHeight) {
+      const clienteFilter = filterCliente?.value || '';
+      const unidadFilter = filterUnidad?.value || '';
+
+      let qrsToDownload = qrList;
+
+      if (clienteFilter) {
+        qrsToDownload = qrsToDownload.filter(q => q.cliente === clienteFilter);
+      }
+
+      if (unidadFilter) {
+        qrsToDownload = qrsToDownload.filter(q => q.unidad === unidadFilter);
+      }
+
+      if (qrsToDownload.length === 0) {
+        if (UI && UI.toast) UI.toast('❌ No hay QRs para descargar');
+        return;
+      }
+
+      if (UI && UI.showOverlay) UI.showOverlay('Generando PDF...', 'Procesando ' + qrsToDownload.length + ' QRs');
+
+      try {
+        // Esperar a que todas las imágenes QR se generen
+        const qrImages = [];
+        
+        for (const qr of qrsToDownload) {
+          await new Promise(resolve => {
+            const tempContainer = document.createElement('div');
+            tempContainer.style.display = 'none';
+            tempContainer.style.width = '256px';
+            tempContainer.style.height = '256px';
+            document.body.appendChild(tempContainer);
+
+            new QRCode(tempContainer, {
+              text: qr.id,
+              width: 256,
+              height: 256,
+              correctLevel: QRCode.CorrectLevel.H
+            });
+
+            setTimeout(() => {
+              const canvas = tempContainer.querySelector('canvas');
+              if (canvas) {
+                qrImages.push({
+                  data: canvas.toDataURL('image/png'),
+                  qr: qr
+                });
+              }
+              if (document.body.contains(tempContainer)) {
+                document.body.removeChild(tempContainer);
+              }
+              resolve();
+            }, 300);
+          });
+        }
+
+        if (window.pdfMake) {
+          const timestamp = moment().format('DD/MM/YYYY HH:mm:ss');
+          const docContent = [];
+
+          // Título
+          docContent.push({
+            text: 'Reporte de Códigos QR',
+            fontSize: 20,
+            bold: true,
+            alignment: 'center',
+            margin: [0, 0, 0, 10]
+          });
+
+          // Resumen
+          docContent.push({
+            text: `Total de QRs: ${qrsToDownload.length} | Generado: ${timestamp}`,
+            fontSize: 10,
+            color: '#666',
+            alignment: 'center',
+            margin: [0, 0, 0, 20]
+          });
+
+          // QRs en tabla
+          const tableBody = [];
+          tableBody.push([
+            { text: 'QR', bold: true, alignment: 'center' },
+            { text: 'Nombre', bold: true },
+            { text: 'Cliente', bold: true },
+            { text: 'Unidad', bold: true },
+            { text: 'Ubicación', bold: true }
+          ]);
+
+          qrImages.forEach((item, idx) => {
+            // Usar los tamaños configurados en el formulario modal
+            tableBody.push([
+              { image: item.data, width: qrWidth, height: qrHeight, alignment: 'center' },
+              item.qr.nombre,
+              item.qr.cliente,
+              item.qr.unidad,
+              `${item.qr.latitude.toFixed(4)}\n${item.qr.longitude.toFixed(4)}`
+            ]);
+          });
+
+          docContent.push({
+            table: {
+              headerRows: 1,
+              widths: ['15%', '20%', '20%', '15%', '30%'],
+              body: tableBody
+            },
+            margin: [0, 0, 0, 0]
+          });
+
+          const docDefinition = {
+            content: docContent,
+            pageSize: 'A4',
+            pageOrientation: 'landscape',
+            margin: [20, 20, 20, 20]
+          };
+
+          const pdfName = `QRs_${moment().format('YYYYMMDD_HHmmss')}.pdf`;
+          pdfMake.createPdf(docDefinition).download(pdfName);
+          if (UI && UI.toast) UI.toast('✅ PDF descargado con ' + qrsToDownload.length + ' QRs');
+        } else {
+          if (UI && UI.toast) UI.toast('❌ pdfMake no disponible');
+        }
+      } catch (error) {
+        console.error('Error descargando todos los QRs:', error);
+        if (UI && UI.toast) UI.toast('❌ Error: ' + error.message);
+      } finally {
+        if (UI && UI.hideOverlay) UI.hideOverlay();
+      }
+    }
+
+    // Actualizar filtros cuando se agregan QRs
+    const originalRenderQRList = renderQRList;
+    window.renderQRListWithFilters = function(filtered) {
+      updateFilterOptions();
+      originalRenderQRList(filtered);
+    };
+
+    // Llamar a la función original pero con actualización de filtros
+    renderQRList = function(filtered) {
+      updateFilterOptions();
+      originalRenderQRList(filtered);
+    };
+
+    // Inicializar filtros
+    updateFilterOptions();
+  }
+
+  // Agregar QR
+  if (qrForm) {
+    qrForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const cliente = qrCliente?.value?.trim();
+      const unidad = qrUnidad?.value?.trim();
+      const nombre = qrNombre?.value?.trim();
+      const lat = parseFloat(qrLatitude?.value || 0);
+      const lng = parseFloat(qrLongitude?.value || 0);
+      const width = parseInt(qrWidth?.value || 200);
+      const height = parseInt(qrHeight?.value || 200);
+      const requireQuestion = qrRequireQuestion?.value === 'si';
+
+      if (!cliente || !unidad || !nombre || !lat || !lng) {
+        if (UI && UI.toast) UI.toast('❌ Por favor completa todos los campos');
+        return;
+      }
+
+      // Validar y recopilar preguntas
+      let questions = [];
+      if (requireQuestion) {
+        const questionInputs = qrQuestionsList.querySelectorAll('.question-input');
+        if (questionInputs.length === 0) {
+          if (UI && UI.toast) UI.toast('❌ Por favor agrega al menos una pregunta');
+          return;
+        }
+        
+        questions = Array.from(questionInputs).map((input, idx) => {
+          const text = input.value?.trim();
+          if (!text) {
+            if (UI && UI.toast) UI.toast(`❌ La pregunta ${idx + 1} está vacía`);
+            throw new Error(`Pregunta ${idx + 1} requerida`);
+          }
+          return text;
+        });
+      }
+
+      const qrData = {
+        cliente,
+        unidad,
+        nombre,
+        latitude: lat,
+        longitude: lng,
+        width: width,
+        height: height,
+        requireQuestion,
+        questions: questions,
+        createdAt: new Date().toISOString(),
+        id: `qr_${Date.now()}`
+      };
+
+    try {
+      // Guardar en Firebase
+      const firestore = firebase.firestore();
+      await firestore.collection('QR_CODES').doc(qrData.id).set(qrData);
+      
+      // Agregar a lista local
+      qrList.push(qrData);
+      
+      // Limpiar formulario
+      qrForm.reset();
+      qrQuestionsContainer.style.display = 'none';
+      qrQuestionsList.innerHTML = '';
+      qrQuestionsCount = 0;
+      
+      // Actualizar vista
+      renderQRList();
+      
+      if (UI && UI.toast) UI.toast('✅ QR creado y guardado en Firebase');
+    } catch (error) {
+      console.error('Error saving QR:', error);
+      if (UI && UI.toast) UI.toast('❌ Error al guardar QR: ' + error.message);
+    }
+    });
+  }
+  // Renderizar lista de QR
+  function renderQRList(filteredList = null) {
+    const listToRender = filteredList !== null ? filteredList : qrList;
+    
+    if (listToRender.length === 0) {
+      qrListContainer.innerHTML = '<div class="qr-empty-state" style="grid-column:1/-1;"><strong>No hay QRs generados</strong><p>Completa el formulario y haz click en "Agregar QR"</p></div>';
+      return;
+    }
+
+    qrListContainer.innerHTML = '';
+
+    listToRender.forEach(qr => {
+      const item = document.createElement('div');
+      item.className = 'qr-item';
+
+      // Crear contenedor para el QR
+      const qrContainer = document.createElement('div');
+      qrContainer.className = 'qr-item-canvas';
+      
+      // Generar QR en el contenedor - Solo con el ID único
+      new QRCode(qrContainer, {
+        text: qr.id,
+        width: 160,
+        height: 160,
+        correctLevel: QRCode.CorrectLevel.H
+      });
+
+      // Info del QR
+      const info = document.createElement('div');
+      info.className = 'qr-item-info';
+      info.innerHTML = `
+        <strong>${qr.nombre}</strong>
+        <small>${qr.cliente} - ${qr.unidad}</small>
+        <small>📍 ${qr.latitude.toFixed(4)}, ${qr.longitude.toFixed(4)}</small>
+      `;
+
+      // Acciones
+      const actions = document.createElement('div');
+      actions.className = 'qr-item-actions';
+      
+      const btnDescargar = document.createElement('button');
+      btnDescargar.type = 'button';
+      btnDescargar.className = 'btn-descargar';
+      btnDescargar.textContent = '📥 Descargar';
+      btnDescargar.onclick = () => downloadQR(qr.id, qr.nombre);
+
+      const btnEliminar = document.createElement('button');
+      btnEliminar.type = 'button';
+      btnEliminar.className = 'btn-eliminar';
+      btnEliminar.textContent = '🗑️ Eliminar';
+      btnEliminar.onclick = () => deleteQR(qr.id);
+
+      actions.appendChild(btnDescargar);
+      actions.appendChild(btnEliminar);
+
+      item.appendChild(qrContainer);
+      item.appendChild(info);
+      item.appendChild(actions);
+
+      qrListContainer.appendChild(item);
+    });
+  }
+
+  // Cargar QRs cuando accedemos a la vista
+  let qrClientesLoaded = false;
+  document.addEventListener('click', (ev) => {
+    const toQR = ev.target.closest('[data-target="view-crear-qr"]');
+    if (toQR && !qrClientesLoaded) {
+      qrClientesLoaded = true;
+      loadQRClientes();
+      // Cargar QRs existentes de Firebase
+      (async () => {
+        try {
+          const firestore = firebase.firestore();
+          const snap = await firestore.collection('QR_CODES').get();
+          qrList = snap.docs.map(d => d.data());
+          renderQRList();
+        } catch (e) { console.error('Error loading QRs:', e); }
+      })();
+    }
+  });
+
+  // Funciones globales para eliminar y descargar
+  window.deleteQR = function(id) {
+    const qr = qrList.find(q => q.id === id);
+    if (!qr) {
+      if (UI && UI.toast) UI.toast('❌ QR no encontrado');
+      return;
+    }
+
+    // Mostrar modal de confirmación
+    const deleteQRModal = document.getElementById('deleteQRModal');
+    const deleteQRName = document.getElementById('deleteQRName');
+    const deleteQRConfirm = document.getElementById('deleteQRConfirm');
+    const deleteQRCancel = document.getElementById('deleteQRCancel');
+
+    deleteQRName.textContent = qr.nombre + ' (' + qr.cliente + ' - ' + qr.unidad + ')';
+    deleteQRModal.style.display = 'flex';
+
+    // Manejar cancelación
+    deleteQRCancel.onclick = () => {
+      deleteQRModal.style.display = 'none';
+    };
+
+    // Manejar confirmación
+    deleteQRConfirm.onclick = async () => {
+      try {
+        const firestore = firebase.firestore();
+        await firestore.collection('QR_CODES').doc(id).delete();
+        qrList = qrList.filter(q => q.id !== id);
+        renderQRList();
+        deleteQRModal.style.display = 'none';
+        if (UI && UI.toast) UI.toast('✅ QR eliminado correctamente');
+      } catch (e) {
+        console.error('Error deleting QR:', e);
+        if (UI && UI.toast) UI.toast('❌ Error al eliminar QR');
+      }
+    };
+
+    // Cerrar modal si se hace clic fuera
+    deleteQRModal.addEventListener('click', (e) => {
+      if (e.target === deleteQRModal) {
+        deleteQRModal.style.display = 'none';
+      }
+    });
+  };
+
+  window.downloadQR = function(id, nombre) {
+    const qr = qrList.find(q => q.id === id);
+    if (!qr) {
+      if (UI && UI.toast) UI.toast('❌ QR no encontrado');
+      return;
+    }
+
+    try {
+      // Crear contenedor temporal para generar QR
+      const tempContainer = document.createElement('div');
+      tempContainer.style.display = 'none';
+      tempContainer.style.width = '256px';
+      tempContainer.style.height = '256px';
+      document.body.appendChild(tempContainer);
+
+      if (window.QRCode) {
+        new QRCode(tempContainer, {
+          text: qr.id,
+          width: 256,
+          height: 256,
+          correctLevel: QRCode.CorrectLevel.H
+        });
+
+        // Esperar a que se genere el QR
+        setTimeout(() => {
+          try {
+            // Obtener canvas del QR
+            let qrCanvas = null;
+            const img = tempContainer.querySelector('img');
+            
+            if (img) {
+              // Si es imagen, convertir a canvas
+              qrCanvas = document.createElement('canvas');
+              qrCanvas.width = 256;
+              qrCanvas.height = 256;
+              const ctx = qrCanvas.getContext('2d');
+              const tempImg = new Image();
+              tempImg.onload = function() {
+                ctx.drawImage(tempImg, 0, 0);
+                generatePDFWithQR(qrCanvas.toDataURL('image/png'));
+              };
+              tempImg.src = img.src;
+            } else {
+              // Si ya es canvas
+              const canvas = tempContainer.querySelector('canvas');
+              if (canvas) {
+                generatePDFWithQR(canvas.toDataURL('image/png'));
+              }
+            }
+
+            function generatePDFWithQR(imageDataUrl) {
+              if (!window.pdfMake) {
+                if (UI && UI.toast) UI.toast('❌ pdfMake no disponible');
+                if (document.body.contains(tempContainer)) document.body.removeChild(tempContainer);
+                return;
+              }
+
+              const timestamp = moment().format('DD/MM/YYYY HH:mm:ss');
+              
+              const docDefinition = {
+                content: [
+                  {
+                    text: 'Código QR',
+                    fontSize: 20,
+                    bold: true,
+                    alignment: 'center',
+                    margin: [0, 0, 0, 20]
+                  },
+                  {
+                    text: 'Nombre: ' + (nombre || 'N/A'),
+                    fontSize: 12,
+                    margin: [0, 0, 0, 8]
+                  },
+                  {
+                    text: 'Cliente: ' + (qr.cliente || 'N/A'),
+                    fontSize: 12,
+                    margin: [0, 0, 0, 8]
+                  },
+                  {
+                    text: 'Unidad: ' + (qr.unidad || 'N/A'),
+                    fontSize: 12,
+                    margin: [0, 0, 0, 8]
+                  },
+                  {
+                    text: 'Ubicación: ' + (qr.latitude || 0) + ', ' + (qr.longitude || 0),
+                    fontSize: 12,
+                    margin: [0, 0, 0, 20]
+                  },
+                  {
+                    image: imageDataUrl,
+                    width: qr.width || 200,
+                    height: qr.height || 200,
+                    alignment: 'center',
+                    margin: [0, 20, 0, 20]
+                  },
+                  {
+                    text: 'Generado: ' + timestamp,
+                    fontSize: 10,
+                    color: '#666',
+                    alignment: 'center'
+                  }
+                ],
+                pageSize: 'A4',
+                margin: [40, 40, 40, 40]
+              };
+
+              try {
+                const pdfName = `QR_${nombre}_${moment().format('YYYYMMDD_HHmmss')}.pdf`;
+                pdfMake.createPdf(docDefinition).download(pdfName);
+                if (UI && UI.toast) UI.toast('✅ QR descargado en PDF');
+              } catch (pdfError) {
+                console.error('Error en pdfMake:', pdfError);
+                if (UI && UI.toast) UI.toast('❌ Error al generar PDF');
+              }
+
+              // Limpiar
+              if (document.body.contains(tempContainer)) {
+                document.body.removeChild(tempContainer);
+              }
+            }
+          } catch (innerError) {
+            console.error('Error procesando QR:', innerError);
+            if (UI && UI.toast) UI.toast('❌ Error al procesar QR');
+            if (document.body.contains(tempContainer)) document.body.removeChild(tempContainer);
+          }
+        }, 500);
+
+      } else {
+        if (UI && UI.toast) UI.toast('❌ Librería QR no disponible');
+      }
+    } catch (e) {
+      console.error('Error descargando QR:', e);
+      if (UI && UI.toast) UI.toast('❌ Error: ' + e.message);
+    }
+  };
+
+  // ==================== CONTROL VEHICULAR ====================
+  // Variables globales para Control Vehicular
+  let cvData = [];
+  let cvChartFecha = null;
+  let cvChartEstado = null;
+
+  // Función para cargar datos de Control Vehicular
+  async function loadControlVehicularData() {
+    try {
+      // Validar que db esté disponible
+      if (!window.db) {
+        console.warn('Firebase db no está inicializado');
+        UI.toast('Esperando inicialización de Firebase...');
+        return;
+      }
+
+      try {
+        const snapshot = await window.db.collection('ACCESO_VEHICULAR').orderBy('timestamp', 'desc').get();
+        cvData = [];
+
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          cvData.push({
+            id: doc.id,
+            ...data,
+            timestamp: data.timestamp?.toDate?.() || new Date(data.timestamp || 0)
+          });
+        });
+      } catch (firebaseErr) {
+        console.warn('Error accediendo a ACCESO_VEHICULAR:', firebaseErr.message);
+        UI.toast('Sin datos disponibles');
+        cvData = [];
+      }
+
+      fillControlVehicularTable();
+      updateControlVehicularCharts();
+      updateControlVehicularCards();
+    } catch (err) {
+      console.error('Error loading Control Vehicular:', err.message);
+      UI.toast('Error al cargar datos');
+    }
+  }
+
+  // Función para llenar la tabla de Control Vehicular
+  function fillControlVehicularTable() {
+    const tbody = document.getElementById('cv-tbody');
+    if (!tbody) return;
+    
+    const fechaInicio = document.getElementById('cv-fecha-inicio')?.value;
+    const fechaFin = document.getElementById('cv-fecha-fin')?.value;
+    const cliente = document.getElementById('cv-cliente')?.value;
+    const unidad = document.getElementById('cv-unidad')?.value;
+    const estado = document.getElementById('cv-estado')?.value;
+
+    let filtered = cvData.filter(row => {
+      if (!row.timestamp) return false;
+
+      const rowDate = row.timestamp instanceof Date ? row.timestamp : new Date(row.timestamp);
+      const dateStr = rowDate.toISOString().split('T')[0];
+
+      if (fechaInicio && dateStr < fechaInicio) return false;
+      if (fechaFin && dateStr > fechaFin) return false;
+      if (cliente && row.cliente !== cliente) return false;
+      if (unidad && row.unidad !== unidad) return false;
+      if (estado && row.estado !== estado) return false;
+
+      return true;
+    });
+
+    tbody.innerHTML = filtered.map(row => {
+      // Convertir fechaIngreso
+      let fechaIngresoStr = '';
+      if (row.fechaIngreso) {
+        let tsIngreso;
+        if (row.fechaIngreso.toDate) {
+          // Es un Timestamp de Firestore
+          tsIngreso = row.fechaIngreso.toDate();
+        } else if (row.fechaIngreso instanceof Date) {
+          tsIngreso = row.fechaIngreso;
+        } else {
+          tsIngreso = new Date(row.fechaIngreso);
+        }
+        if (tsIngreso instanceof Date && !isNaN(tsIngreso)) {
+          fechaIngresoStr = tsIngreso.toLocaleString('es-PE');
+        }
+      }
+
+      // Convertir fechaSalida
+      let fechaSalidaStr = '';
+      if (row.fechaSalida) {
+        let tsSalida;
+        if (row.fechaSalida.toDate) {
+          // Es un Timestamp de Firestore
+          tsSalida = row.fechaSalida.toDate();
+        } else if (row.fechaSalida instanceof Date) {
+          tsSalida = row.fechaSalida;
+        } else {
+          tsSalida = new Date(row.fechaSalida);
+        }
+        if (tsSalida instanceof Date && !isNaN(tsSalida)) {
+          fechaSalidaStr = tsSalida.toLocaleString('es-PE');
+        }
+      }
+
+      let estadoColor = '#999';
+      if (row.estado === 'ingreso') estadoColor = '#10b981';
+      if (row.estado === 'salida') estadoColor = '#3b82f6';
+
+      // HTML para la imagen (miniatura clickeable)
+      let imagenHTML = '';
+      if (row.fotoURL) {
+        const escapedUrl = row.fotoURL.replace(/"/g, '&quot;');
+        imagenHTML = `<img src="${escapedUrl}" alt="Foto" style="width: 40px; height: 40px; border-radius: 4px; cursor: pointer; object-fit: cover;" onclick="event.stopPropagation(); showImageModal('${escapedUrl}');" />`;
+      } else {
+        imagenHTML = '<span style="color: #999; font-size: 11px;">Sin foto</span>';
+      }
+
+      return `<tr>
+        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${fechaIngresoStr}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${fechaSalidaStr}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${row.placa || ''}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${row.cliente || ''}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${row.unidad || ''}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${row.puesto || ''}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${row.usuario || ''}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${row.usuarioSalida || ''}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">
+          <span style="display: inline-block; padding: 4px 12px; background: ${estadoColor}20; color: ${estadoColor}; border-radius: 12px; font-weight: 600; font-size: 11px;">
+            ${row.estado || ''}
+          </span>
+        </td>
+        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${row.observaciones || ''}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0;">${row.comentarioSalida || ''}</td>
+        <td style="padding: 10px; border-bottom: 1px solid #e2e8f0; text-align: center;">${imagenHTML}</td>
+      </tr>`;
+    }).join('');
+
+    UI.toast(`Resultados: ${filtered.length}`);
+  }
+
+  // Función para actualizar tarjetas de resumen
+  function updateControlVehicularCards() {
+    const fechaInicio = document.getElementById('cv-fecha-inicio')?.value;
+    const fechaFin = document.getElementById('cv-fecha-fin')?.value;
+    const cliente = document.getElementById('cv-cliente')?.value;
+    const unidad = document.getElementById('cv-unidad')?.value;
+    const estado = document.getElementById('cv-estado')?.value;
+
+    let filtered = cvData.filter(row => {
+      if (!row.timestamp) return false;
+
+      const rowDate = row.timestamp instanceof Date ? row.timestamp : new Date(row.timestamp);
+      const dateStr = rowDate.toISOString().split('T')[0];
+
+      if (fechaInicio && dateStr < fechaInicio) return false;
+      if (fechaFin && dateStr > fechaFin) return false;
+      if (cliente && row.cliente !== cliente) return false;
+      if (unidad && row.unidad !== unidad) return false;
+      if (estado && row.estado !== estado) return false;
+
+      return true;
+    });
+
+    // Total de registros (Ingresados = total de documentos)
+    const total = filtered.length;
+    
+    // Pendientes de Salida = registros con estado "ingreso"
+    const pendientes = filtered.filter(r => r.estado === 'ingreso').length;
+    
+    // Salidas = registros con estado "salida"
+    const salidas = filtered.filter(r => r.estado === 'salida').length;
+
+    const totalEl = document.getElementById('cv-total');
+    const ingresadosEl = document.getElementById('cv-ingresados');
+    const pendientesEl = document.getElementById('cv-pendientes');
+    const salidasEl = document.getElementById('cv-salidas');
+
+    if (totalEl) totalEl.textContent = total;
+    if (ingresadosEl) ingresadosEl.textContent = total;
+    if (pendientesEl) pendientesEl.textContent = pendientes;
+    if (salidasEl) salidasEl.textContent = salidas;
+  }
+
+  // Función para actualizar gráficos
+  function updateControlVehicularCharts() {
+    const fechaInicio = document.getElementById('cv-fecha-inicio')?.value;
+    const fechaFin = document.getElementById('cv-fecha-fin')?.value;
+    const cliente = document.getElementById('cv-cliente')?.value;
+    const unidad = document.getElementById('cv-unidad')?.value;
+    const estado = document.getElementById('cv-estado')?.value;
+
+    let filtered = cvData.filter(row => {
+      if (!row.timestamp) return false;
+
+      const rowDate = row.timestamp instanceof Date ? row.timestamp : new Date(row.timestamp);
+      const dateStr = rowDate.toISOString().split('T')[0];
+
+      if (fechaInicio && dateStr < fechaInicio) return false;
+      if (fechaFin && dateStr > fechaFin) return false;
+      if (cliente && row.cliente !== cliente) return false;
+      if (unidad && row.unidad !== unidad) return false;
+      if (estado && row.estado !== estado) return false;
+
+      return true;
+    });
+
+    // Chart por fecha (línea)
+    const fechasMap = {};
+    filtered.forEach(row => {
+      const ts = row.timestamp instanceof Date ? row.timestamp : new Date(row.timestamp);
+      const dateStr = ts.toISOString().split('T')[0];
+      fechasMap[dateStr] = (fechasMap[dateStr] || 0) + 1;
+    });
+
+    const sortedFechas = Object.keys(fechasMap).sort();
+    const ctxFecha = document.getElementById('cv-chart-fecha')?.getContext('2d');
+    if (ctxFecha) {
+      if (cvChartFecha) cvChartFecha.destroy();
+      cvChartFecha = new Chart(ctxFecha, {
+        type: 'line',
+        data: {
+          labels: sortedFechas,
+          datasets: [{
+            label: 'Accesos por Fecha',
+            data: sortedFechas.map(f => fechasMap[f]),
+            borderColor: '#3b82f6',
+            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.3,
+            pointBackgroundColor: '#3b82f6',
+            pointRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          plugins: { legend: { display: true } }
+        }
+      });
+    }
+
+    // Chart por estado (doughnut)
+    const estadosMap = {};
+    filtered.forEach(row => {
+      const est = row.estado || 'Sin Estado';
+      estadosMap[est] = (estadosMap[est] || 0) + 1;
+    });
+
+    const estadoLabels = Object.keys(estadosMap);
+    const estadoData = Object.values(estadosMap);
+    const estadoColors = {
+      'ingreso': '#10b981',
+      'salida': '#3b82f6',
+      'Sin Estado': '#999'
+    };
+
+    const ctxEstado = document.getElementById('cv-chart-estado')?.getContext('2d');
+    if (ctxEstado) {
+      if (cvChartEstado) cvChartEstado.destroy();
+      cvChartEstado = new Chart(ctxEstado, {
+        type: 'doughnut',
+        data: {
+          labels: estadoLabels,
+          datasets: [{
+            data: estadoData,
+            backgroundColor: estadoLabels.map(e => estadoColors[e] || '#999'),
+            borderWidth: 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          plugins: { legend: { position: 'bottom' } }
+        }
+      });
+    }
+  }
+
+  // Event listeners para Control Vehicular
+  document.getElementById('cv-btn-buscar')?.addEventListener('click', () => {
+    fillControlVehicularTable();
+    updateControlVehicularCharts();
+    updateControlVehicularCards();
+  });
+
+  document.getElementById('cv-btn-limpiar')?.addEventListener('click', () => {
+    const fechaInicio = document.getElementById('cv-fecha-inicio');
+    const fechaFin = document.getElementById('cv-fecha-fin');
+    const cliente = document.getElementById('cv-cliente');
+    const unidad = document.getElementById('cv-unidad');
+    const estado = document.getElementById('cv-estado');
+    
+    if (fechaInicio) fechaInicio.value = '';
+    if (fechaFin) fechaFin.value = '';
+    if (cliente) cliente.value = '';
+    if (unidad) unidad.value = '';
+    if (estado) estado.value = '';
+    
+    cvData = [];
+    loadControlVehicularData();
+  });
+
+  document.getElementById('cv-btn-excel')?.addEventListener('click', exportControlVehicularExcel);
+  document.getElementById('cv-btn-pdf')?.addEventListener('click', exportControlVehicularPDF);
+
+  // Cargar clientes para select
+  async function loadControlVehicularFilters() {
+    try {
+      // Validar que db esté disponible
+      if (!window.db) {
+        console.warn('Firebase db no está inicializado');
+        return;
+      }
+
+      const clientesSet = new Set();
+      const unidadesSet = new Set();
+      
+      try {
+        const snapshot = await window.db.collection('ACCESO_VEHICULAR').get();
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          if (data.cliente) clientesSet.add(data.cliente);
+          if (data.unidad) unidadesSet.add(data.unidad);
+        });
+      } catch (firebaseErr) {
+        console.warn('ACCESO_VEHICULAR no existe o error de acceso:', firebaseErr.message);
+      }
+
+      const clienteSelect = document.getElementById('cv-cliente');
+      const unidadSelect = document.getElementById('cv-unidad');
+      
+      if (!clienteSelect || !unidadSelect) return;
+      
+      const currentClienteValue = clienteSelect.value;
+      const currentUnidadValue = unidadSelect.value;
+      
+      // Cargar clientes
+      clienteSelect.innerHTML = '<option value="">Todos</option>';
+      Array.from(clientesSet).sort().forEach(cliente => {
+        const opt = document.createElement('option');
+        opt.value = cliente;
+        opt.textContent = cliente;
+        clienteSelect.appendChild(opt);
+      });
+      clienteSelect.value = currentClienteValue;
+      
+      // Cargar unidades
+      unidadSelect.innerHTML = '<option value="">Todas</option>';
+      Array.from(unidadesSet).sort().forEach(unidad => {
+        const opt = document.createElement('option');
+        opt.value = unidad;
+        opt.textContent = unidad;
+        unidadSelect.appendChild(opt);
+      });
+      unidadSelect.value = currentUnidadValue;
+      
+    } catch (err) {
+      console.error('Error loading CV filters:', err.message);
+    }
+  }
+
+  // Función para exportar a Excel
+  async function exportControlVehicularExcel() {
+    try {
+      const fechaInicio = document.getElementById('cv-fecha-inicio')?.value;
+      const fechaFin = document.getElementById('cv-fecha-fin')?.value;
+      const cliente = document.getElementById('cv-cliente')?.value;
+      const estado = document.getElementById('cv-estado')?.value;
+
+      let filtered = cvData.filter(row => {
+        if (!row.timestamp) return false;
+
+        const rowDate = row.timestamp instanceof Date ? row.timestamp : new Date(row.timestamp);
+        const dateStr = rowDate.toISOString().split('T')[0];
+
+        if (fechaInicio && dateStr < fechaInicio) return false;
+        if (fechaFin && dateStr > fechaFin) return false;
+        if (cliente && row.cliente !== cliente) return false;
+        if (estado && row.estado !== estado) return false;
+
+        return true;
+      });
+
+      const excelData = filtered.map(row => {
+        const ts = row.timestamp instanceof Date ? row.timestamp : new Date(row.timestamp);
+        const fechaHora = ts.toLocaleString('es-PE');
+
+        return {
+          'Fecha/Hora': fechaHora,
+          'Placa': row.placa || '',
+          'Tipo Acceso': row.tipoAcceso || '',
+          'Operador': row.operador || '',
+          'Cliente': row.cliente || '',
+          'Estado': row.estado || '',
+          'Observación': row.observacion || ''
+        };
+      });
+
+      const ws = XLSX.utils.json_to_sheet(excelData);
+      ws['!cols'] = [
+        { wch: 20 },
+        { wch: 12 },
+        { wch: 15 },
+        { wch: 20 },
+        { wch: 20 },
+        { wch: 18 },
+        { wch: 30 }
+      ];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Control Vehicular');
+      XLSX.writeFile(wb, 'ControlVehicular.xlsx');
+      UI.toast('Excel exportado exitosamente');
+    } catch (err) {
+      console.error('Error exporting Excel:', err);
+      UI.toast('Error al exportar Excel');
+    }
+  }
+
+  // Función para exportar a PDF
+  async function exportControlVehicularPDF() {
+    try {
+      // Validar que pdfMake esté disponible
+      if (!window.pdfMake || !window.pdfMake.createPdf) {
+        UI.toast('Las librerías de PDF se están cargando, intenta de nuevo en unos segundos');
+        console.warn('pdfMake no está cargado aún');
+        return;
+      }
+
+      UI.showOverlay('Generando PDF', 'Por favor espera...');
+
+      const fechaInicio = document.getElementById('cv-fecha-inicio')?.value;
+      const fechaFin = document.getElementById('cv-fecha-fin')?.value;
+      const cliente = document.getElementById('cv-cliente')?.value;
+      const unidad = document.getElementById('cv-unidad')?.value;
+      const estado = document.getElementById('cv-estado')?.value;
+
+      let filtered = cvData.filter(row => {
+        if (!row.timestamp) return false;
+
+        const rowDate = row.timestamp instanceof Date ? row.timestamp : new Date(row.timestamp);
+        const dateStr = rowDate.toISOString().split('T')[0];
+
+        if (fechaInicio && dateStr < fechaInicio) return false;
+        if (fechaFin && dateStr > fechaFin) return false;
+        if (cliente && row.cliente !== cliente) return false;
+        if (unidad && row.unidad !== unidad) return false;
+        if (estado && row.estado !== estado) return false;
+
+        return true;
+      });
+
+      // Cargar logo
+      let logoBase64 = '';
+      try {
+        const res = await fetch('logo_liberman.png');
+        const blob = await res.blob();
+        const reader = new FileReader();
+        await new Promise((resolve, reject) => {
+          reader.onload = () => {
+            logoBase64 = reader.result;
+            resolve();
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (e) {
+        console.warn('Logo not found:', e.message);
+      }
+
+      // Estadísticas
+      const total = filtered.length;
+      const ingresados = total;
+      const pendientes = filtered.filter(r => r.estado === 'ingreso').length;
+      const salidas = filtered.filter(r => r.estado === 'salida').length;
+
+      // Crear gráfico estado en canvas
+      const canvas = document.createElement('canvas');
+      canvas.width = 400;
+      canvas.height = 300;
+      const ctx = canvas.getContext('2d');
+
+      let chartImage = null;
+      if (total > 0) {
+        const ingresoCount = pendientes;
+        const salidaCount = salidas;
+        const porcentajeIngreso = ((ingresoCount / total) * 100).toFixed(1);
+        const porcentajeSalida = ((salidaCount / total) * 100).toFixed(1);
+
+        const chartEstado = new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: [
+              `Pendiente de Salida\n${ingresoCount}\n(${porcentajeIngreso}%)`,
+              `Salidas Autorizadas\n${salidaCount}\n(${porcentajeSalida}%)`
+            ],
+            datasets: [{
+              data: [ingresoCount, salidaCount],
+              backgroundColor: ['#f59e0b', '#3b82f6'],
+              borderColor: ['#d97706', '#1e40af'],
+              borderWidth: 3,
+              borderRadius: 8
+            }]
+          },
+          options: {
+            responsive: false,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                display: true,
+                position: 'bottom',
+                labels: {
+                  font: { size: 13, weight: 'bold' },
+                  padding: 15,
+                  usePointStyle: true,
+                  pointStyle: 'circle',
+                  color: '#2d3748'
+                }
+              },
+              tooltip: {
+                enabled: true,
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                padding: 12,
+                font: { size: 12 }
+              }
+            }
+          }
+        });
+
+        await new Promise(r => setTimeout(r, 900));
+        chartImage = canvas.toDataURL('image/png');
+        chartEstado.destroy();
+      }
+      canvas.remove();
+
+      // Tabla de estadísticas mejorada
+      const statsTable = {
+        headerRows: 1,
+        widths: ['25%', '25%', '25%', '25%'],
+        body: [
+          [
+            { text: 'Total Accesos', style: 'statHeader', fillColor: '#3b82f6' },
+            { text: 'Ingresados', style: 'statHeader', fillColor: '#10b981' },
+            { text: 'Pendientes', style: 'statHeader', fillColor: '#f59e0b' },
+            { text: 'Salidas', style: 'statHeader', fillColor: '#8b5cf6' }
+          ],
+          [
+            { text: total.toString(), style: 'statValue', fillColor: '#dbeafe' },
+            { text: ingresados.toString(), style: 'statValue', fillColor: '#dcfce7' },
+            { text: pendientes.toString(), style: 'statValue', fillColor: '#fef3c7' },
+            { text: salidas.toString(), style: 'statValue', fillColor: '#ede9fe' }
+          ]
+        ],
+        layout: {
+          hLineWidth: function() { return 1; },
+          vLineWidth: function() { return 1; },
+          hLineColor: function() { return '#e5e7eb'; },
+          vLineColor: function() { return '#e5e7eb'; },
+          paddingLeft: function() { return 8; },
+          paddingRight: function() { return 8; },
+          paddingTop: function() { return 10; },
+          paddingBottom: function() { return 10; }
+        }
+      };
+
+      // Tabla de detalle mejorada
+      const detailTableData = filtered.map(row => {
+        // Convertir fechaIngreso
+        let fechaIngresoStr = '';
+        if (row.fechaIngreso) {
+          let tsIngreso;
+          if (row.fechaIngreso.toDate) {
+            tsIngreso = row.fechaIngreso.toDate();
+          } else if (row.fechaIngreso instanceof Date) {
+            tsIngreso = row.fechaIngreso;
+          } else {
+            tsIngreso = new Date(row.fechaIngreso);
+          }
+          if (tsIngreso instanceof Date && !isNaN(tsIngreso)) {
+            fechaIngresoStr = tsIngreso.toLocaleString('es-PE');
+          }
+        }
+
+        // Convertir fechaSalida
+        let fechaSalidaStr = '';
+        if (row.fechaSalida) {
+          let tsSalida;
+          if (row.fechaSalida.toDate) {
+            tsSalida = row.fechaSalida.toDate();
+          } else if (row.fechaSalida instanceof Date) {
+            tsSalida = row.fechaSalida;
+          } else {
+            tsSalida = new Date(row.fechaSalida);
+          }
+          if (tsSalida instanceof Date && !isNaN(tsSalida)) {
+            fechaSalidaStr = tsSalida.toLocaleString('es-PE');
+          }
+        }
+
+        let estadoColor = '#999';
+        let estadoBgColor = '#f3f4f6';
+        if (row.estado === 'ingreso') {
+          estadoColor = '#d97706';
+          estadoBgColor = '#fef3c7';
+        }
+        if (row.estado === 'salida') {
+          estadoColor = '#1e40af';
+          estadoBgColor = '#dbeafe';
+        }
+
+        return [
+          { text: fechaIngresoStr, fontSize: 8, style: 'detailCell' },
+          { text: fechaSalidaStr, fontSize: 8, style: 'detailCell' },
+          { text: row.placa || '', fontSize: 8, style: 'detailCell', bold: true },
+          { text: row.cliente || '', fontSize: 8, style: 'detailCell' },
+          { text: row.unidad || '', fontSize: 8, style: 'detailCell' },
+          { text: row.puesto || '', fontSize: 8, style: 'detailCell' },
+          { text: row.usuario || '', fontSize: 8, style: 'detailCell' },
+          { text: row.usuarioSalida || '', fontSize: 8, style: 'detailCell' },
+          { text: row.estado?.toUpperCase() || '', fontSize: 8, bold: true, color: estadoColor, fillColor: estadoBgColor, alignment: 'center' },
+          { text: row.observaciones || '', fontSize: 8, style: 'detailCell' }
+        ];
+      });
+
+      const detailTable = {
+        headerRows: 1,
+        widths: ['9%', '9%', '8%', '11%', '9%', '8%', '9%', '9%', '11%', '17%'],
+        body: [
+          [
+            { text: 'F/H Ingreso', style: 'detailHeader' },
+            { text: 'F/H Salida', style: 'detailHeader' },
+            { text: 'Placa', style: 'detailHeader' },
+            { text: 'Cliente', style: 'detailHeader' },
+            { text: 'Unidad', style: 'detailHeader' },
+            { text: 'Puesto', style: 'detailHeader' },
+            { text: 'Usr Ingreso', style: 'detailHeader' },
+            { text: 'Usr Salida', style: 'detailHeader' },
+            { text: 'Estado', style: 'detailHeader' },
+            { text: 'Observaciones', style: 'detailHeader' }
+          ],
+          ...detailTableData
+        ],
+        layout: {
+          hLineWidth: function(i) { return i === 0 || i === 1 ? 2 : 0.5; },
+          vLineWidth: function() { return 0.5; },
+          hLineColor: function() { return '#e5e7eb'; },
+          vLineColor: function() { return '#e5e7eb'; },
+          fillColor: function(i) {
+            if (i === 0) return '#2c5aa0';
+            return i % 2 === 0 ? '#f9fafb' : 'white';
+          },
+          paddingLeft: function() { return 4; },
+          paddingRight: function() { return 4; },
+          paddingTop: function() { return 5; },
+          paddingBottom: function() { return 5; }
+        }
+      };
+
+      // Construir documento PDF
+      const docDef = {
+        pageSize: 'A4',
+        pageMargins: [40, 80, 40, 40],
+        header: function(currentPage) {
+          if (currentPage === 1) {
+            return {
+              columns: [
+                logoBase64 ? {
+                  image: logoBase64,
+                  width: 70,
+                  height: 70
+                } : { text: '' },
+                {
+                  stack: [
+                    {
+                      text: 'CONTROL VEHICULAR',
+                      fontSize: 20,
+                      bold: true,
+                      color: '#2c5aa0',
+                      alignment: 'center'
+                    },
+                    {
+                      text: 'Reporte de Accesos',
+                      fontSize: 12,
+                      color: '#64748b',
+                      alignment: 'center',
+                      margin: [0, 5, 0, 0]
+                    }
+                  ]
+                },
+                {
+                  text: '',
+                  width: 70
+                }
+              ],
+              margin: [40, 15, 40, 20]
+            };
+          }
+        },
+        footer: function(currentPage, pageCount) {
+          return {
+            columns: [
+              {
+                text: `${new Date().toLocaleDateString('es-PE')} ${new Date().toLocaleTimeString('es-PE')}`,
+                fontSize: 9,
+                color: '#999'
+              },
+              {
+                text: `Página ${currentPage} de ${pageCount}`,
+                alignment: 'right',
+                fontSize: 9,
+                color: '#999'
+              }
+            ],
+            margin: [40, 0, 40, 15]
+          };
+        },
+        content: [
+          // Sección de estadísticas
+          {
+            stack: [
+              {
+                text: '📊 RESUMEN DE ESTADÍSTICAS',
+                style: 'sectionTitle',
+                margin: [0, 0, 0, 12]
+              },
+              {
+                table: statsTable,
+                margin: [0, 0, 0, 20]
+              }
+            ]
+          },
+
+          // Sección de gráfico y distribución
+          {
+            stack: [
+              {
+                text: '🥧 DISTRIBUCIÓN POR ESTADO',
+                style: 'sectionTitle',
+                margin: [0, 0, 0, 12]
+              },
+              {
+                alignment: 'center',
+                ...(chartImage ? { image: chartImage, width: 280, height: 210 } : {})
+              }
+            ],
+            margin: [0, 0, 0, 25]
+          },
+
+          // Sección de detalle
+          {
+            stack: [
+              {
+                text: '📋 DETALLE DE ACCESOS VEHICULARES',
+                style: 'sectionTitle',
+                margin: [0, 0, 0, 12]
+              },
+              {
+                table: detailTable,
+                margin: [0, 0, 0, 15]
+              }
+            ]
+          },
+
+          // Resumen final
+          {
+            stack: [
+              {
+                text: `Total de registros reportados: ${total}`,
+                fontSize: 11,
+                bold: true,
+                color: '#2c5aa0',
+                margin: [0, 15, 0, 5]
+              },
+              {
+                text: `Generado: ${new Date().toLocaleDateString('es-PE')} a las ${new Date().toLocaleTimeString('es-PE')}`,
+                fontSize: 9,
+                color: '#999'
+              }
+            ]
+          }
+        ],
+        styles: {
+          sectionTitle: {
+            fontSize: 13,
+            bold: true,
+            color: '#2c5aa0',
+            border: [false, false, false, true],
+            borderColor: '#cbd5e0',
+            paddingBottom: 8
+          },
+          statHeader: {
+            fontSize: 11,
+            bold: true,
+            color: 'white',
+            alignment: 'center'
+          },
+          statValue: {
+            fontSize: 16,
+            bold: true,
+            color: '#2c5aa0',
+            alignment: 'center'
+          },
+          detailHeader: {
+            fontSize: 9,
+            bold: true,
+            color: 'white',
+            alignment: 'center',
+            fillColor: '#2c5aa0'
+          },
+          detailCell: {
+            alignment: 'left'
+          }
+        }
+      };
+
+      UI.hideOverlay();
+      window.pdfMake.createPdf(docDef).download(`ControlVehicular_${new Date().getTime()}.pdf`);
+      UI.toast('✅ PDF exportado correctamente');
+
+    } catch (err) {
+      console.error('Error exporting PDF:', err);
+      UI.hideOverlay();
+      UI.toast('❌ Error al exportar PDF');
+    }
+  }
+
+  // Cuando se selecciona Control Vehicular, cargar datos
+  const cvBtn = document.querySelector('[data-target="kpi-control-vehicular"]');
+  if (cvBtn) {
+    cvBtn.addEventListener('click', () => {
+      loadControlVehicularFilters();
+      loadControlVehicularData();
+    });
+  }
+
+}); // Cierre DOMContentLoaded
+
+// Función para mostrar modal de imagen ampliada
+function showImageModal(imageUrl) {
+  // Crear modal si no existe
+  let modal = document.getElementById('cv-image-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'cv-image-modal';
+    modal.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.8);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10000;
+      padding: 20px;
+      box-sizing: border-box;
+    `;
+    
+    const content = document.createElement('div');
+    content.style.cssText = `
+      position: relative;
+      background: white;
+      border-radius: 12px;
+      max-width: 90vw;
+      max-height: 90vh;
+      overflow: auto;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    `;
+    
+    const img = document.createElement('img');
+    img.id = 'cv-modal-image';
+    img.style.cssText = `
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 12px;
+    `;
+    
+    const closeBtn = document.createElement('button');
+    closeBtn.innerHTML = '✕';
+    closeBtn.style.cssText = `
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: #ef4444;
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      font-size: 24px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      transition: background 0.3s;
+    `;
+    closeBtn.onmouseover = () => closeBtn.style.background = '#dc2626';
+    closeBtn.onmouseout = () => closeBtn.style.background = '#ef4444';
+    closeBtn.onclick = () => {
+      modal.style.display = 'none';
+    };
+    
+    content.appendChild(img);
+    content.appendChild(closeBtn);
+    modal.appendChild(content);
+    document.body.appendChild(modal);
+    
+    // Cerrar al hacer clic en el fondo
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        modal.style.display = 'none';
+      }
+    });
+  }
+  
+  // Mostrar imagen
+  document.getElementById('cv-modal-image').src = imageUrl;
+  modal.style.display = 'flex';
+  
+  // Cerrar con tecla Esc
+  const handleKeyPress = (e) => {
+    if (e.key === 'Escape') {
+      modal.style.display = 'none';
+      document.removeEventListener('keydown', handleKeyPress);
+    }
+  };
+  document.addEventListener('keydown', handleKeyPress);
+}
+
+// === FIX: ensure mobile overlay does not block clicks after resize ===
+window.addEventListener('resize', () => {
+  try {
+    if (window.innerWidth >= 1024) {
+      document.getElementById('sidebar')?.classList.remove('show');
+      document.getElementById('menu-overlay')?.classList.remove('show');
+    }
+  } catch (e) { /* noop */ }
+});
+
+// === Opcional: actualizar color por tema dinámicamente ===
+
+(function listenThemeChanges() {
+  try {
+    const mql = window.matchMedia?.('(prefers-color-scheme: dark)');
+    const apply = () => {
+      if (!window.Chart?.defaults) return;
+      const ink = getComputedStyle(document.documentElement).getPropertyValue('--fg')?.trim() || '#111';
+      Chart.defaults.color = ink;
+    };
+    mql?.addEventListener?.('change', apply);
+    const obs = new MutationObserver((() => {
+      let t; return () => { clearTimeout(t); t = setTimeout(apply, 50); };
+    })());
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+  } catch (e) { /* noop */ }
+})();

@@ -1,0 +1,75 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LiderControl  Ingreso</title>
+  <link rel="icon" href="favicon.ico" />
+  <link rel="stylesheet" href="login.css" />
+</head>
+<body class="auth-body">
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="brand">
+        <div class="brand-logo">
+          <img src="logo_liberman.png" alt="Logo Liderman" />
+        </div>
+        <h1>LiderControl</h1>
+        <p>Sistema de Gestión</p>
+      </div>
+
+      <form id="loginForm" autocomplete="on" novalidate>
+        <div class="alerts">
+          <div id="errorBox" class="alert err"></div>
+          <div id="successBox" class="alert ok"></div>
+        </div>
+
+        <label class="field">
+          <span>Correo</span>
+          <input type="email" id="email" placeholder="usuario@empresa.com" required />
+        </label>
+
+        <label class="field">
+          <span>Contraseña</span>
+          <div class="field-pass">
+            <input type="password" id="password" placeholder="" required />
+            <button type="button" id="togglePwd" class="icon-btn"></button>
+          </div>
+          <small id="capsHint"></small>
+        </label>
+
+        <label class="remember">
+          <input type="checkbox" id="remember" />
+          <span>Recuérdame en este dispositivo</span>
+        </label>
+
+        <button type="submit" class="btn-primary" id="loginBtn">Ingresar</button>
+
+        <div class="footer-links">
+          <a href="#" id="resetPwdLink">¿Olvidaste tu contraseña?</a>
+          <small>© 2025 LiderControl · Todos los derechos reservados</small>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <div class="overlay-box">
+      <div class="spinner"></div>
+      <p style="margin: 0; color: var(--text-muted); font-size: 12px;">Verificando credenciales...</p>
+    </div>
+  </div>
+
+  <div class="toasts" id="toast"></div>
+
+  <!-- Firebase SDK (Compat) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+
+  <!-- Configuración y Scripts -->
+  <script src="firebase-config.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

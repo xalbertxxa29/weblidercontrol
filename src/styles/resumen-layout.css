@@ -1,0 +1,447 @@
+/* ============================================
+   KPI RESUMEN - LAYOUT SIN ESPACIOS EN BLANCO
+   ============================================ */
+
+/* ===== CONTENEDOR PRINCIPAL ===== */
+#kpi-resumen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* ===== FILTROS Y STATS (SOLO PARA RESUMEN) ===== */
+#kpi-resumen .filters-stats-container {
+  display: flex;
+  gap: 1rem;
+  padding: 1.25rem;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  align-items: flex-end;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+#kpi-resumen .filters-wrapper {
+  display: flex;
+  gap: 1rem;
+  flex: 1;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  min-width: 300px;
+}
+
+#kpi-resumen .filter-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+#kpi-resumen .filter-label {
+  font-size: 0.65rem;
+  color: #666;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+#kpi-resumen .filter-item select,
+#kpi-resumen .filter-item input {
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: #1a202c;
+  background-color: #f8fafc;
+  height: 32px;
+  min-width: 110px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+
+#kpi-resumen .filter-item select:focus,
+#kpi-resumen .filter-item input:focus {
+  border-color: #4287f5;
+  background-color: #fff;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(66, 135, 245, 0.1);
+}
+
+#kpi-resumen .stats-card {
+  background: linear-gradient(135deg, #4287f5, #3b7be0);
+  color: white;
+  padding: 0.75rem 1.25rem;
+  border-radius: 6px;
+  text-align: center;
+  min-width: 160px;
+  box-shadow: 0 2px 8px rgba(66, 135, 245, 0.15);
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+  white-space: nowrap;
+}
+
+#kpi-resumen .stats-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(66, 135, 245, 0.2);
+}
+
+#kpi-resumen .stats-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 0.25rem;
+}
+
+#kpi-resumen .stats-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  opacity: 0.95;
+}
+
+#resumen-btn-refresh {
+  background: linear-gradient(135deg, #4287f5, #3b7be0) !important;
+  color: white !important;
+  border: none !important;
+  padding: 0.5rem 1rem !important;
+  border-radius: 4px !important;
+  font-weight: 600 !important;
+  font-size: 0.75rem !important;
+  cursor: pointer !important;
+  transition: all 0.2s !important;
+  height: 32px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.3px !important;
+  white-space: nowrap !important;
+}
+
+#resumen-btn-refresh:hover {
+  background: linear-gradient(135deg, #3b7be0, #3474d4) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* ===== GRID DE GRÁFICOS ===== */
+#kpi-resumen .resumen-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 360px;
+  grid-auto-rows: minmax(340px, auto);
+  gap: 1.25rem;
+  padding: 1.25rem;
+  flex: 1;
+  overflow: auto;
+  background: #f4f7fa;
+}
+
+/* ===== CARDS BASE ===== */
+#kpi-resumen .kpi-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 1rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  height: 100%;
+  overflow: hidden;
+}
+
+#kpi-resumen .kpi-card h4 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #2d3748;
+  margin: 0 0 0.75rem 0;
+  flex-shrink: 0;
+  line-height: 1.3;
+}
+
+#kpi-resumen .kpi-card canvas {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  width: 100%;
+}
+
+/* ===== HEATMAP TABLE (SOLO PARA RESUMEN) ===== */
+#resumen-heatmap-wrap {
+  flex: 1;
+  overflow-y: scroll;
+  overflow-x: auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+/* Mostrar scrollbar elegante */
+#resumen-heatmap-wrap::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+#resumen-heatmap-wrap::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+#resumen-heatmap-wrap::-webkit-scrollbar-thumb {
+  background: #cbd5e0;
+  border-radius: 4px;
+}
+
+#resumen-heatmap-wrap::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Firefox */
+#resumen-heatmap-wrap {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e0 #f1f5f9;
+}
+
+#resumen-heatmap-wrap table {
+  font-size: 0.7rem;
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+#resumen-heatmap-wrap th,
+#resumen-heatmap-wrap td {
+  padding: 4px 3px;
+  border: 1px solid #e5e7eb;
+  text-align: center;
+  white-space: nowrap;
+}
+
+#resumen-heatmap-wrap thead {
+  position: sticky;
+  top: 0;
+  background: #f8fafc;
+  z-index: 10;
+}
+
+
+/* ===== MAPA CONTAINER ===== */
+#kpi-resumen .map-card .map-container {
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #e5e7eb;
+}
+
+#kpi-resumen .map-container .leaflet-container {
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 6px;
+}
+
+/* ===== POSICIONAMIENTO ESPECIFICO ===== */
+#kpi-resumen .card-riesgo {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+#kpi-resumen .card-categoria {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+#kpi-resumen .heatmap-card {
+  grid-column: 3;
+  grid-row: 1;
+  min-height: 400px;
+}
+
+#kpi-resumen .card-mes {
+  grid-column: 4;
+  grid-row: 1;
+}
+
+#kpi-resumen .card-unidad {
+  grid-column: 1 / 3;
+  grid-row: 2;
+}
+
+#kpi-resumen .card-fecha {
+  grid-column: 3 / 5;
+  grid-row: 2;
+}
+
+#kpi-resumen .card-sedes {
+  grid-column: 1 / 5;
+  grid-row: 3;
+  min-height: 1000px;
+  max-height: 1600px;
+}
+
+/* ============================================
+   RESPONSIVE - TABLETS Y PANTALLAS MEDIANAS
+   ============================================ */
+
+@media (max-width: 1400px) {
+  #kpi-resumen .resumen-grid {
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1rem;
+    padding: 1rem;
+  }
+
+  #kpi-resumen .card-sedes {
+    grid-column: 1 / 4;
+    grid-row: auto;
+    min-height: 300px;
+  }
+
+  #kpi-resumen .card-riesgo,
+  #kpi-resumen .card-categoria,
+  #kpi-resumen .card-heatmap {
+    grid-column: auto;
+  }
+
+  #kpi-resumen .card-unidad,
+  #kpi-resumen .card-fecha,
+  #kpi-resumen .card-mes {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 1024px) {
+  #kpi-resumen .resumen-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    padding: 1rem;
+  }
+
+  #kpi-resumen .card-riesgo,
+  #kpi-resumen .card-categoria {
+    grid-column: auto;
+  }
+
+  #kpi-resumen .card-heatmap,
+  #kpi-resumen .card-unidad,
+  #kpi-resumen .card-fecha,
+  #kpi-resumen .card-mes,
+  #kpi-resumen .card-sedes {
+    grid-column: 1 / -1;
+  }
+
+  #kpi-resumen .kpi-card {
+    min-height: 280px;
+  }
+}
+
+@media (max-width: 768px) {
+  #kpi-resumen .filters-stats-container {
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1rem;
+  }
+
+  #kpi-resumen .filters-wrapper {
+    width: 100%;
+    gap: 0.75rem;
+  }
+
+  #kpi-resumen .filter-item {
+    flex: 1 1 calc(50% - 0.4rem);
+  }
+
+  #kpi-resumen .filter-item select,
+  #kpi-resumen .filter-item input {
+    width: 100%;
+    min-width: auto;
+  }
+
+  #kpi-resumen .stats-card {
+    width: 100%;
+    white-space: normal;
+  }
+
+  #kpi-resumen #resumen-btn-refresh {
+    width: 100% !important;
+  }
+
+  #kpi-resumen .resumen-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    padding: 1rem;
+  }
+
+  #kpi-resumen .card-riesgo,
+  #kpi-resumen .card-categoria,
+  #kpi-resumen .card-heatmap,
+  #kpi-resumen .card-unidad,
+  #kpi-resumen .card-fecha,
+  #kpi-resumen .card-mes,
+  #kpi-resumen .card-sedes {
+    grid-column: 1 !important;
+  }
+
+  #kpi-resumen .kpi-card {
+    min-height: 260px;
+    padding: 0.75rem;
+  }
+
+  #kpi-resumen .kpi-card h4 {
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+  }
+
+  #kpi-resumen .heatmap-card table {
+    font-size: 0.7rem;
+  }
+
+  #kpi-resumen .heatmap-card th,
+  #kpi-resumen .heatmap-card td {
+    padding: 4px 2px;
+  }
+}
+
+@media (max-width: 480px) {
+  #kpi-resumen .filters-stats-container {
+    padding: 0.75rem;
+    gap: 0.5rem;
+  }
+
+  #kpi-resumen .filter-label {
+    font-size: 0.6rem;
+  }
+
+  #kpi-resumen .filter-item select,
+  #kpi-resumen .filter-item input {
+    font-size: 0.75rem;
+    height: 28px;
+    padding: 0.4rem;
+  }
+
+  #kpi-resumen .stats-value {
+    font-size: 1.5rem;
+  }
+
+  #kpi-resumen .stats-label {
+    font-size: 0.6rem;
+  }
+
+  #kpi-resumen .resumen-grid {
+    gap: 0.75rem;
+    padding: 0.75rem;
+  }
+
+  #kpi-resumen .kpi-card {
+    min-height: 240px;
+    padding: 0.6rem;
+    border-radius: 6px;
+  }
+
+  #kpi-resumen .kpi-card h4 {
+    font-size: 0.8rem;
+    margin-bottom: 0.4rem;
+  }
+}
