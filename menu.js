@@ -2697,6 +2697,13 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Obtener TODOS los documentos
       const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
+      let registros = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data
+        };
+      });
       
       // Ordenar por horarioInicio (más recientes primero)
       registros.sort((a, b) => {
