@@ -3267,7 +3267,7 @@ document.addEventListener('DOMContentLoaded', () => {
       detalleRondasFilters.unidad = unidadSelect?.value || '';
       detalleRondasFilters.estado = estadoSelect?.value || '';
       
-      const snapshot = await db.collection('RONDAS_COMPLETADAS').get();
+      const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
       let registros = snapshot.docs.map(doc => {
         const data = doc.data();
         return {
@@ -6125,6 +6125,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Cargar clientes para Rondas y QR después de que accessControl esté listo
       loadRondaClientes();
       loadQRClientes();
+      loadRondas();
 
       initResumenDashboard();
     }
@@ -6892,7 +6893,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const rondaDiasMes = document.getElementById('rondaDiasMes');
   const rondasListContainer = document.getElementById('rondasListContainer');
 
+  // Elementos de filtros de Rondas Creadas
+  const rondasFilterCliente = document.getElementById('rondas-filter-cliente');
+  const rondasFilterUnidad = document.getElementById('rondas-filter-unidad');
+  const rondasFilterClear = document.getElementById('rondas-filter-clear');
+
   let rondaList = [];
+  let rondasFilters = {
+    cliente: '',
+    unidad: ''
+  };
 
   // Cargar clientes para rondas
   async function loadRondaClientes() {
@@ -7194,7 +7204,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Renderizar lista de rondas
   function renderRondasList() {
-    if (rondaList.length === 0) {
+    // Aplicar filtro de cliente según restricciones de usuario
+    let rondasFiltradas = rondaList;
+    
+    if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
+      // Si es cliente, filtrar solo sus rondas
+      rondasFiltradas = rondaList.filter(r => r.cliente === window.accessControl.clienteAsignado);
+    }
+    
+    // Aplicar filtros de la UI
+    if (rondasFilters.cliente) {
+      rondasFiltradas = rondasFiltradas.filter(r => r.cliente === rondasFilters.cliente);
+    }
+    if (rondasFilters.unidad) {
+      rondasFiltradas = rondasFiltradas.filter(r => r.unidad === rondasFilters.unidad);
+    }
+    
+    // Actualizar opciones de filtros
+    updateRondasFilterOptions();
+    
+    if (rondasFiltradas.length === 0) {
       rondasListContainer.innerHTML = `
         <div style="text-align: center; padding: 40px 20px; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); 
                     border-radius: 12px; border: 2px dashed #999;">
@@ -7212,7 +7241,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let html = `
       <div style="display: grid; gap: 16px;">
     `;
-    rondaList.forEach((ronda, index) => {
+    rondasFiltradas.forEach((ronda, index) => {
       const gradients = ['#e0f7fa', '#f3e5f5', '#e8f5e9', '#fff3e0', '#fce4ec'];
       const gradient = gradients[index % gradients.length];
       const borderColor = ['#00bcd4', '#9c27b0', '#4caf50', '#ff9800', '#e91e63'][index % 5];
@@ -7351,7 +7380,61 @@ document.addEventListener('DOMContentLoaded', () => {
     rondasListContainer.innerHTML = html;
   }
 
-  // Mostrar modal de eliminación de ronda
+  // Actualizar opciones de filtros en Rondas Creadas
+  function updateRondasFilterOptions() {
+    // Obtener clientes únicos de rondaList respetando restricciones de usuario
+    let clientesUnicos = new Set();
+    let unidadesUnicos = new Set();
+    
+    let rondasAccesibles = rondaList;
+    if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
+      rondasAccesibles = rondaList.filter(r => r.cliente === window.accessControl.clienteAsignado);
+    }
+    
+    rondasAccesibles.forEach(ronda => {
+      if (ronda.cliente) clientesUnicos.add(ronda.cliente);
+      if (ronda.unidad) unidadesUnicos.add(ronda.unidad);
+    });
+    
+    // Actualizar select de cliente
+    if (rondasFilterCliente) {
+      const clienteActual = rondasFilterCliente.value;
+      rondasFilterCliente.innerHTML = '<option value="">Todos los Clientes</option>' +
+        Array.from(clientesUnicos).sort().map(c => `<option value="${c}">${c}</option>`).join('');
+      rondasFilterCliente.value = clienteActual;
+    }
+    
+    // Actualizar select de unidad
+    if (rondasFilterUnidad) {
+      const unidadActual = rondasFilterUnidad.value;
+      rondasFilterUnidad.innerHTML = '<option value="">Todas las Unidades</option>' +
+        Array.from(unidadesUnicos).sort().map(u => `<option value="${u}">${u}</option>`).join('');
+      rondasFilterUnidad.value = unidadActual;
+    }
+  }
+
+  // Aplicar filtros en Rondas Creadas
+  function applyRondasFilters() {
+    rondasFilters.cliente = rondasFilterCliente?.value || '';
+    rondasFilters.unidad = rondasFilterUnidad?.value || '';
+    renderRondasList();
+  }
+
+  // Event listeners para filtros de Rondas Creadas
+  if (rondasFilterCliente) {
+    rondasFilterCliente.addEventListener('change', applyRondasFilters);
+  }
+  if (rondasFilterUnidad) {
+    rondasFilterUnidad.addEventListener('change', applyRondasFilters);
+  }
+  if (rondasFilterClear) {
+    rondasFilterClear.addEventListener('click', () => {
+      rondasFilters = { cliente: '', unidad: '' };
+      if (rondasFilterCliente) rondasFilterCliente.value = '';
+      if (rondasFilterUnidad) rondasFilterUnidad.value = '';
+      renderRondasList();
+    });
+  }
   window.showDeleteRondaModal = (rondaId, rondaNombre) => {
     const modal = document.getElementById('deleteRondaModal');
     const nameDisplay = document.getElementById('deleteRondaName');
@@ -7472,17 +7555,24 @@ document.addEventListener('DOMContentLoaded', () => {
   // Cargar rondas existentes
   async function loadRondas() {
     try {
-      const snap = await db.collection('Rondas_QR').get();
-      rondaList = snap.docs.map(doc => doc.data());
+      const snap = await getQueryWithClienteFilter('Rondas_QR').get();
+      rondaList = snap.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data
+        };
+      });
+      updateRondasFilterOptions();
       renderRondasList();
     } catch (e) {
     }
   }
 
   // Inicializar cuando se carga
-  // Nota: loadRondaClientes() y loadQRClientes() se llamarán después de que accessControl esté inicializado
+  // Nota: loadRondaClientes(), loadQRClientes() y loadRondas() se llamarán después de que accessControl esté inicializado
   // loadRondaClientes();
-  loadRondas();
+  // loadRondas();
 
   } // <-- CIERRE DEL else { window.__wiredCuadernoInc__ = true; }
 
@@ -8435,12 +8525,18 @@ document.addEventListener('DOMContentLoaded', () => {
     if (toQR && !qrClientesLoaded) {
       qrClientesLoaded = true;
       loadQRClientes();
-      // Cargar QRs existentes de Firebase
+      // Cargar QRs existentes de Firebase con filtro de cliente
       (async () => {
         try {
           const firestore = firebase.firestore();
-          const snap = await firestore.collection('QR_CODES').get();
-          qrList = snap.docs.map(d => d.data());
+          const snap = await getQueryWithClienteFilter('QR_CODES').get();
+          qrList = snap.docs.map(d => {
+            const data = d.data();
+            return {
+              id: d.id,
+              ...data
+            };
+          });
           renderQRList();
         } catch (e) {; }
       })();

@@ -1294,6 +1294,18 @@
               <!-- Sección de Rondas Creadas -->
               <div class="results-section" style="margin-top: 28px;">
                 <h3>📋 Rondas Creadas</h3>
+                
+                <!-- Filtros de Rondas Creadas -->
+                <div style="display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap;">
+                  <select id="rondas-filter-cliente" style="padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 10px; flex: 1; min-width: 150px;">
+                    <option value="">Todos los Clientes</option>
+                  </select>
+                  <select id="rondas-filter-unidad" style="padding: 10px 12px; border: 2px solid #e2e8f0; border-radius: 10px; flex: 1; min-width: 150px;">
+                    <option value="">Todas las Unidades</option>
+                  </select>
+                  <button type="button" class="btn-modern secondary" id="rondas-filter-clear" style="white-space: nowrap;">🔄 Limpiar</button>
+                </div>
+                
                 <div id="rondasListContainer" style="display: grid; gap: 16px;">
                   <div class="empty-state">
                     <div class="empty-state-icon">📋</div>
