@@ -72,6 +72,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- Cliente/Unidad ---
   const clienteUnidadSearchInput = document.getElementById('clienteUnidadSearchInput');
   const clienteUnidadTbody = document.getElementById('clienteUnidadTbody');
+  const cuAgregarClienteBtn = document.getElementById('cuAgregarClienteBtn');
+  const cuAgregarUnidadBtn = document.getElementById('cuAgregarUnidadBtn');
+  const cuAgregarPuestoBtn = document.getElementById('cuAgregarPuestoBtn');
 
   // --- Cuaderno ---
   const cuadernoClienteSelect = document.getElementById('cuaderno-cliente');
@@ -112,7 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       if (!cuadernoClienteSelect && !cuadernoUnidadSelect) return;
       // Reducido de 2000 a 500 para mejor rendimiento
-      const snap = await db.collection(COLLECTIONS.LOGBOOK).orderBy('__name__', 'desc').limit(500).get();
+      const snap = await getQueryWithClienteFilter(COLLECTIONS.LOGBOOK).orderBy('__name__', 'desc').limit(500).get();
       const rows = snap.docs.map(d => d.data());
       const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
 
@@ -135,7 +138,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadIncidenciasFilters() {
     try {
       // Reducido de 5000 a 1000 para mejor rendimiento
-      const snap = await db.collection(COLLECTIONS.INCIDENTS).orderBy('__name__', 'desc').limit(1000).get();
+      const snap = await getQueryWithClienteFilter(COLLECTIONS.INCIDENTS).orderBy('__name__', 'desc').limit(1000).get();
       const rows = snap.docs.map(d => d.data());
       const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
 
@@ -143,12 +146,34 @@ document.addEventListener('DOMContentLoaded', () => {
       const unidades = uniq(rows.map(r => r.unidad));
       const estados  = uniq(rows.map(r => r.estado));
 
-      if (incCliente) incCliente.innerHTML =
-        '<option value="">Todos</option>' + clientes.map(v=>`<option>${v}</option>`).join('');
-      if (incUnidad) incUnidad.innerHTML =
-        '<option value="">Todos</option>' + unidades.map(v=>`<option>${v}</option>`).join('');
-      if (incEstado) incEstado.innerHTML =
-        '<option value="">Todos</option>' + estados.map(v=>`<option>${v}</option>`).join('');
+      // Obtener filtros del usuario
+      const clienteDelUsuario = accessControl?.getClienteFilter();
+      const unidadDelUsuario = accessControl?.getUnidadFilter?.();
+      const esCliente = !!clienteDelUsuario; // Si hay clienteFiltro, es CLIENTE; si no, es ADMIN
+
+      // Función para llenar select con soporte para deshabilitado
+      const fillSelect = (el, values, preselectedValue = null, disabled = false) => {
+        if (!el) return;
+        el.disabled = disabled;
+        let html = '';
+        if (disabled && preselectedValue) {
+          // Si está deshabilitado, mostrar solo el valor seleccionado
+          html = `<option value="${preselectedValue}" selected disabled>${preselectedValue}</option>`;
+        } else {
+          html = '<option value="">Todos</option>';
+          html += values.map(v=>{
+            const selected = preselectedValue && v === preselectedValue ? ' selected' : '';
+            return `<option value="${v}"${selected}>${v}</option>`;
+          }).join('');
+        }
+        el.innerHTML = html;
+      };
+
+      // Si es CLIENTE: Cliente bloqueado, Unidad libre (mostrando sus unidades), Estados libre
+      // Si es ADMIN: Todo libre
+      fillSelect(incCliente, clientes, clienteDelUsuario, esCliente);
+      fillSelect(incUnidad, unidades, unidadDelUsuario, false);
+      fillSelect(incEstado, estados, null, false);
 
     } catch (e) {
       console.error('loadIncidenciasFilters()', e);
@@ -158,59 +183,92 @@ document.addEventListener('DOMContentLoaded', () => {
   // Cargar filtros para Tiempo de Conexión
   async function loadTiempoConexionFilters() {
     try {
-      const snap = await db.collection('CONTROL_TIEMPOS_USUARIOS').orderBy('__name__', 'desc').limit(1000).get();
-      const rows = snap.docs.map(d => d.data());
-      const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
-
-      // Cargar caché de usuarios para obtener clientes y unidades
+      // Cargar caché de usuarios PRIMERO
       const usuariosCache = {};
-      const usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
-      usuariosSnap.forEach(doc => {
-        const userData = doc.data();
-        usuariosCache[doc.id] = {
-          nombres: userData.NOMBRES || '',
-          apellidos: userData.APELLIDOS || '',
+      let usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
+      
+      let usuarios = usuariosSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      
+      // Si es SUPERVISOR, filtrar para excluir usuarios con TIPOACCESO = 'ADMIN'
+      if (accessControl?.isSupervisor()) {
+        usuarios = usuarios.filter(u => !u.TIPOACCESO || u.TIPOACCESO !== 'ADMIN');
+      }
+      
+      usuarios.forEach(userData => {
+        usuariosCache[userData.id] = {
+          NOMBRES: userData.NOMBRES || '',
+          APELLIDOS: userData.APELLIDOS || '',
           cliente: userData.CLIENTE || '',
           unidad: userData.UNIDAD || ''
         };
       });
 
-      // Extraer usuarios del campo usuarioID
-      const usuarios = uniq(rows.map(r => r.usuarioID || r.usuario || '').filter(u => u.trim()));
-      
-      // Extraer clientes y unidades del caché
-      const clientesSet = new Set();
-      const unidadesSet = new Set();
-      usuarios.forEach(usuarioID => {
-        if (usuariosCache[usuarioID]) {
-          if (usuariosCache[usuarioID].cliente) clientesSet.add(usuariosCache[usuarioID].cliente);
-          if (usuariosCache[usuarioID].unidad) unidadesSet.add(usuariosCache[usuarioID].unidad);
-        }
-      });
-      
-      const clientes = Array.from(clientesSet).sort((a,b)=>a.localeCompare(b,'es'));
-      const unidades = Array.from(unidadesSet).sort((a,b)=>a.localeCompare(b,'es'));
+      // Usar getQueryWithClienteFilter que filtra por cliente en Firestore
+      const snap = await getQueryWithClienteFilter('CONTROL_TIEMPOS_USUARIOS').orderBy('__name__', 'desc').limit(1000).get();
+      const rows = snap.docs.map(d => d.data());
+      const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
 
-      if (tiempoConexionCliente) {
-        tiempoConexionCliente.innerHTML =
-          '<option value="">Todos</option>' + clientes.map(v=>`<option>${v}</option>`).join('');
+      // ========================
+      // RESTRICCIÓN POR CLIENTE
+      // ========================
+      if (accessControl.userType === 'CLIENTE') {
+        // Bloquear CLIENTE
+        const tcCliente = accessControl.clienteAsignado;
+        tiempoConexionCliente.innerHTML = `<option value="${tcCliente}">${tcCliente}</option>`;
+        tiempoConexionCliente.value = accessControl.clienteAsignado;
+        tiempoConexionCliente.disabled = true;
+
+        // Bloquear UNIDADES SOLO DEL CLIENTE
+        const unidades = await getUnidadesByCliente(accessControl.clienteAsignado);
+        tiempoConexionUnidad.innerHTML = '<option value="">Todas</option>';
+        unidades.forEach(u => {
+          tiempoConexionUnidad.innerHTML += `<option value="${u}">${u}</option>`;
+        });
       }
-      if (tiempoConexionUnidad) {
-        tiempoConexionUnidad.innerHTML =
-          '<option value="">Todos</option>' + unidades.map(v=>`<option>${v}</option>`).join('');
-      }
-      if (tiempoConexionUsuario) {
-        tiempoConexionUsuario.innerHTML =
-          '<option value="">Todos</option>' + usuarios.map(v=>`<option>${v}</option>`).join('');
+      // Si es ADMIN, mostrar todos
+      else {
+        const clientes = uniq(rows.map(r => {
+          const usuarioID = r.usuarioID || r.usuario;
+          return usuariosCache[usuarioID]?.cliente || r.cliente || '';
+        }).filter(Boolean));
+
+        const unidades = uniq(rows.map(r => {
+          const usuarioID = r.usuarioID || r.usuario;
+          return usuariosCache[usuarioID]?.unidad || r.unidad || '';
+        }).filter(Boolean));
+
+        tiempoConexionCliente.innerHTML = '<option value="">Todas</option>' +
+          clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+
+        tiempoConexionUnidad.innerHTML = '<option value="">Todas</option>' +
+          unidades.map(u => `<option value="${u}">${u}</option>`).join('');
       }
 
-      // Cargar la tabla con todos los datos
-      await fillTiempoConexionTable(rows);
+      // Usuarios - siempre mostrar todos los disponibles
+      const usuariosIds = uniq(rows.map(r => r.usuarioID || r.usuario).filter(Boolean));
+      tiempoConexionUsuario.innerHTML = '<option value="">Todos</option>' +
+        usuariosIds.map(uid => {
+          const userData = usuariosCache[uid];
+          const label = userData ? `${userData.NOMBRES} ${userData.APELLIDOS}` : uid;
+          return `<option value="${uid}">${label}</option>`;
+        }).join('');
 
       tiempoConexionFiltersLoaded = true;
+      console.log(`[TC] Filtros cargados - Usuarios: ${usuariosIds.length}`);
     } catch (e) {
       console.error('loadTiempoConexionFilters()', e);
     }
+  }
+
+  // Función auxiliar para obtener unidades por cliente
+  async function getUnidadesByCliente(cliente) {
+    const usuariosSnap = await db.collection(COLLECTIONS.USERS).where('CLIENTE', '==', cliente).get();
+    const unidades = new Set();
+    usuariosSnap.forEach(doc => {
+      const userData = doc.data();
+      if (userData.UNIDAD) unidades.add(userData.UNIDAD);
+    });
+    return Array.from(unidades).sort((a,b)=>a.localeCompare(b,'es'));
   }
 
   // Función auxiliar para calcular la duración entre dos fechas
@@ -265,10 +323,17 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Cargar todos los usuarios de Firebase en caché
     try {
-      const usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
-      usuariosSnap.forEach(doc => {
-        const userData = doc.data();
-        usuariosCache[doc.id] = {
+      let usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
+      
+      let usuarios = usuariosSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      
+      // Si es SUPERVISOR, filtrar para excluir usuarios con TIPOACCESO = 'ADMIN'
+      if (accessControl?.isSupervisor()) {
+        usuarios = usuarios.filter(u => !u.TIPOACCESO || u.TIPOACCESO !== 'ADMIN');
+      }
+      
+      usuarios.forEach(userData => {
+        usuariosCache[userData.id] = {
           nombres: userData.NOMBRES || '',
           apellidos: userData.APELLIDOS || '',
           cliente: userData.CLIENTE || '',
@@ -398,8 +463,32 @@ document.addEventListener('DOMContentLoaded', () => {
   const cuEditSaveBtn = document.getElementById('cuEditSave');
   const cuEditCliente = document.getElementById('cuEditCliente');
   const cuEditUnidad = document.getElementById('cuEditUnidad');
+  const cuEditPuesto = document.getElementById('cuEditPuesto');
   const cuEditClienteOriginal = document.getElementById('cuEditClienteOriginal');
   const cuEditUnidadOriginal = document.getElementById('cuEditUnidadOriginal');
+  const cuEditPuestoOriginal = document.getElementById('cuEditPuestoOriginal');
+
+  // Modal para agregar CLIENTE
+  const cuAgregarClienteModal = document.getElementById('cuAgregarClienteModal');
+  const cuAgregarClienteForm = document.getElementById('cuAgregarClienteForm');
+  const cuAgregarClienteCancel = document.getElementById('cuAgregarClienteCancel');
+  const cuNuevoCliente = document.getElementById('cuNuevoCliente');
+  const cuNuevaUnidadCliente = document.getElementById('cuNuevaUnidadCliente');
+
+  // Modal para agregar UNIDAD
+  const cuAgregarUnidadModal = document.getElementById('cuAgregarUnidadModal');
+  const cuAgregarUnidadForm = document.getElementById('cuAgregarUnidadForm');
+  const cuAgregarUnidadCancel = document.getElementById('cuAgregarUnidadCancel');
+  const cuAgregarUnidadCliente = document.getElementById('cuAgregarUnidadCliente');
+  const cuNuevaUnidad = document.getElementById('cuNuevaUnidad');
+
+  // Modal para agregar PUESTO
+  const cuAgregarPuestoModal = document.getElementById('cuAgregarPuestoModal');
+  const cuAgregarPuestoForm = document.getElementById('cuAgregarPuestoForm');
+  const cuAgregarPuestoCancel = document.getElementById('cuAgregarPuestoCancel');
+  const cuAgregarPuestoCliente = document.getElementById('cuAgregarPuestoCliente');
+  const cuAgregarPuestoUnidad = document.getElementById('cuAgregarPuestoUnidad');
+  const cuNuevoPuesto = document.getElementById('cuNuevoPuesto');
 
   // --- Estado Global ---
   const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -535,10 +624,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
   navItems.forEach(btn => {
     btn.addEventListener('click', () => {
+      const target = btn.getAttribute('data-target');
+      
+      // ===== VALIDAR CONTROL DE ACCESO (RESTRICCIÓN CRÍTICA) =====
+      if (!accessControl) {
+        console.error('[SECURITY] AccessControl no inicializado');
+        UI.showError('Error de Seguridad', 'Sistema de control de acceso no disponible');
+        return;
+      }
+      
+      // Validar acceso a la vista
+      if (!accessControl.validateViewAccess(target)) {
+        const summary = accessControl.getSummary();
+        UI.showError(
+          '🔒 Acceso Denegado',
+          `No tienes permisos para acceder a esta sección.\n\nTipo de acceso: ${summary.accessLevel} (${summary.userType})\n\nContacta al administrador si crees que esto es un error.`
+        );
+        console.error(`[SECURITY] Intento de acceso no autorizado a ${target} por usuario ${summary.userType}`);
+        return; // ← BLOQUEA AQUÍ
+      }
+      
+      // Si llegó aquí, tiene permisos
       if (window.innerWidth < 1024) toggleMenuMobile();
       navItems.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      const target = btn.getAttribute('data-target');
       views.forEach(v => v.classList.toggle('shown', v.id === target));
 
       if (target === 'view-usuarios' && (!usersTbody || !usersTbody.dataset.initialized)) {
@@ -657,7 +766,7 @@ document.addEventListener('DOMContentLoaded', () => {
     UI.showOverlay('Cargando resumen…', 'Consultando incidentes (últimos 10000)');
     try {
       // Limitar a últimos 10000 incidentes para mejor rendimiento
-      const snapshot = await db.collection(COLLECTIONS.INCIDENTS)
+      const snapshot = await getQueryWithClienteFilter(COLLECTIONS.INCIDENTS)
         .orderBy('__name__', 'desc')
         .limit(10000)
         .get();
@@ -1464,7 +1573,7 @@ document.addEventListener('DOMContentLoaded', () => {
     detalleChoices.year.setChoices(years, 'value', 'label', true);
 
     // Cargar clientes y unidades desde Firebase (límite 2000 para mejor rendimiento)
-    db.collection(COLLECTIONS.INCIDENTS)
+    getQueryWithClienteFilter(COLLECTIONS.INCIDENTS)
       .orderBy('__name__', 'desc')
       .limit(2000)
       .get()
@@ -1512,7 +1621,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const startDate = fechaInicio ? new Date(fechaInicio + 'T00:00:00') : new Date(year, 0, 1);
       const endDate = fechaFin ? new Date(fechaFin + 'T23:59:59') : new Date(parseInt(year) + 1, 0, 1);
 
-      let query = db.collection(COLLECTIONS.INCIDENTS)
+      let query = getQueryWithClienteFilter(COLLECTIONS.INCIDENTS)
         .where('timestamp', '>=', startDate)
         .where('timestamp', '<', endDate);
 
@@ -1964,16 +2073,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============================================================================
   // 5C) KPI — ACCESO PEATONAL
   // ============================================================================
-  const apCliente = document.getElementById('ap-filtro-cliente');
-  const apSedes   = document.getElementById('ap-filtro-sede');
-  const apTipo    = document.getElementById('ap-filtro-tipo');
-  const apFecha   = document.getElementById('ap-filtro-fecha');
-  const apApply   = document.getElementById('ap-btn-aplicar');
-
-  const apCardTotal       = document.getElementById('ap-total');
-  const apCardVisita      = document.getElementById('ap-visita');
-  const apCardProveedor   = document.getElementById('ap-proveedor');
-  const apCardContratista = document.getElementById('ap-contratista');
+  let apCliente, apSedes, apTipo, apFecha, apApply;
+  let apCardTotal, apCardVisita, apCardProveedor, apCardContratista, apCardEmpleado;
 
   let apCharts = {};
   let apChoices = {};
@@ -1981,6 +2082,18 @@ document.addEventListener('DOMContentLoaded', () => {
   let apCache = [];
 
   function initAccesoPeatonalDashboard(){
+    // Seleccionar elementos HTML cuando el tab está disponible
+    apCliente = document.getElementById('ap-filtro-cliente');
+    apSedes   = document.getElementById('ap-filtro-sede');
+    apTipo    = document.getElementById('ap-filtro-tipo');
+    apFecha   = document.getElementById('ap-filtro-fecha');
+    apApply   = document.getElementById('ap-btn-aplicar');
+
+    apCardTotal       = document.getElementById('ap-total');
+    apCardVisita      = document.getElementById('ap-visita');
+    apCardProveedor   = document.getElementById('ap-proveedor');
+    apCardContratista = document.getElementById('ap-contratista');
+    apCardEmpleado    = document.getElementById('ap-empleado');
     const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, shouldSort: true };
     if (window.Choices) {
       if (apCliente) apChoices.cliente = new Choices(apCliente, cfg);
@@ -1999,12 +2112,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     queryAccesoPeatonal()
       .then(() => {
+        console.log(`[AP] ÉXITO: Cargados ${apCache.length} registros`);
+        if (apCache.length === 0) {
+          console.warn('[AP] ⚠️ ADVERTENCIA: apCache está vacío - es posible que no haya datos en ACCESO_PEATONAL');
+        }
         populateAccesoPeatonalFilters(apCache);
         renderAccesoPeatonal();
       })
       .catch(e => {
-        console.error(e);
-        UI.toast('No se pudo cargar Acceso Peatonal');
+        console.error('[AP] ❌ ERROR:', e);
+        UI.toast('No se pudo cargar Acceso Peatonal: ' + e.message);
       });
 
     apApply?.addEventListener('click', renderAccesoPeatonal);
@@ -2025,7 +2142,7 @@ document.addEventListener('DOMContentLoaded', () => {
     UI.showOverlay('Cargando accesos…', 'Consultando ACCESO_PEATONAL (últimos 5000)');
     try {
       // Límite de 5000 para mejor rendimiento
-      const snap = await db.collection('ACCESO_PEATONAL')
+      const snap = await getQueryWithClienteFilter('ACCESO_PEATONAL')
         .orderBy('__name__', 'desc')
         .limit(5000)
         .get();
@@ -2052,25 +2169,74 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function populateAccesoPeatonalFilters(rows){
-    const clientes = [...new Set(rows.map(r=>r.CLIENTE).filter(Boolean))].sort();
-    const sedes    = [...new Set(rows.map(r=>r.UNIDAD).filter(Boolean))].sort();
+    // Obtener filtros del usuario PRIMERO
+    const clienteDelUsuario = accessControl?.getClienteFilter();
+    const unidadDelUsuario = accessControl?.getUnidadFilter?.();
+    const esCliente = !!clienteDelUsuario; // Si hay clienteFiltro, es CLIENTE; si no, es ADMIN
+
+    // Los datos ya vienen filtrados por cliente desde getQueryWithClienteFilter()
+    // Extraemos valores únicos para los dropdowns
+    let clientes = [...new Set(rows.map(r=>r.CLIENTE).filter(Boolean))].sort();
+    
+    // CORRECCIÓN: Si es CLIENTE, filtrar SEDES solo por sus datos
+    let sedes = [...new Set(rows.map(r=>r.UNIDAD).filter(Boolean))].sort();
+    if (esCliente) {
+      // Si es CLIENTE, mostrar solo las sedes que aparecen en sus registros
+      sedes = [...new Set(rows.filter(r => r.CLIENTE === clienteDelUsuario).map(r=>r.UNIDAD).filter(Boolean))].sort();
+    }
+    
     const tipos    = [...new Set(rows.map(r=>r.TIPO_ACCESO).filter(Boolean))].sort();
 
-    const setChoices = (inst, values) => {
+    console.log(`[AP] Filtros extraídos - Clientes: ${clientes.length}, Sedes: ${sedes.length}, Tipos: ${tipos.length}`);
+    console.log(`[AP] Clientes:`, clientes);
+    console.log(`[AP] Sedes:`, sedes);
+    console.log(`[AP] Tipos:`, tipos);
+    console.log(`[AP] clienteDelUsuario: ${clienteDelUsuario}, unidadDelUsuario: ${unidadDelUsuario}, esCliente: ${esCliente}`);
+
+    const setChoices = (inst, values, selectedValue = null, disabled = false) => {
       if (!inst) return;
       inst.clearChoices();
-      inst.setChoices([{value:'__ALL__', label:'Todos', selected:true},
-        ...values.map(v=>({value:v, label:v}))], 'value','label', false);
+      let choices;
+      if (disabled) {
+        // Si está deshabilitado, mostrar solo el valor seleccionado
+        choices = selectedValue ? [{value:selectedValue, label:selectedValue, selected:true, disabled:true}] : [];
+      } else if (selectedValue && values.includes(selectedValue)) {
+        // Pre-seleccionar el valor del usuario
+        choices = values.map(v=>({value:v, label:v, selected: v === selectedValue}));
+      } else {
+        // Mostrar opción "Todos" como predeterminado
+        choices = [{value:'__ALL__', label:'Todos', selected:true}, ...values.map(v=>({value:v, label:v}))];
+      }
+      inst.setChoices(choices, 'value','label', false);
     };
 
-    setChoices(apChoices.cliente, clientes);
-    setChoices(apChoices.sedes,   sedes);
-    setChoices(apChoices.tipo,    tipos);
+    // Si es CLIENTE: Cliente bloqueado, Sedes libre (mostrando SOLO sus sedes), Tipo libre
+    // Si es ADMIN: Todo libre
+    if (apChoices.cliente) setChoices(apChoices.cliente, clientes, clienteDelUsuario, esCliente);
+    if (apChoices.sedes)   setChoices(apChoices.sedes,   sedes, unidadDelUsuario, false);
+    if (apChoices.tipo)    setChoices(apChoices.tipo,    tipos, null, false);
 
     if (!window.Choices) {
-      if (apCliente) apCliente.innerHTML = `<option value="__ALL__" selected>Todos</option>${clientes.map(s=>`<option>${s}</option>`).join('')}`;
-      if (apSedes)   apSedes.innerHTML   = `<option value="__ALL__" selected>Todos</option>${sedes.map(s=>`<option>${s}</option>`).join('')}`;
-      if (apTipo)    apTipo.innerHTML    = `<option value="__ALL__" selected>Todos</option>${tipos.map(s=>`<option>${s}</option>`).join('')}`;
+      const fillAPSelect = (el, values, preselectedValue = null, disabled = false) => {
+        if (!el) return;
+        el.disabled = disabled;
+        let html = '';
+        if (disabled && preselectedValue) {
+          html = `<option value="${preselectedValue}" selected disabled>${preselectedValue}</option>`;
+        } else {
+          if (!preselectedValue || !values.includes(preselectedValue)) {
+            html = '<option value="__ALL__" selected>Todos</option>';
+          }
+          html += values.map(v=>{
+            const selected = preselectedValue && v === preselectedValue ? ' selected' : '';
+            return `<option value="${v}"${selected}>${v}</option>`;
+          }).join('');
+        }
+        el.innerHTML = html;
+      };
+      fillAPSelect(apCliente, clientes, clienteDelUsuario, esCliente);
+      fillAPSelect(apSedes, sedes, unidadDelUsuario, false);
+      fillAPSelect(apTipo, tipos, null, false);
     }
   }
 
@@ -2096,6 +2262,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderAccesoPeatonal(){
     const { start, end, cliente, sede, tipo } = getAPFilters();
 
+    // Los datos en apCache ya vienen filtrados por cliente desde la BD
+    // Solo aplicamos los filtros de rango de fecha y filtros de UI
     const filtered = apCache.filter(r=>{
       const inRange = r._ts ? moment(r._ts).isBetween(start, end, undefined, '[]') : false;
       const inCliente = (cliente==='__ALL__') || (r.CLIENTE===cliente);
@@ -2487,7 +2655,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadKpiRondaClientesUnidades() {
     try {
       // Obtener clientes únicos de RONDAS_COMPLETADAS
-      const snapshot = await db.collection('RONDAS_COMPLETADAS').get();
+      const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
       const clientes = new Set();
       
       snapshot.docs.forEach(doc => {
@@ -2524,7 +2692,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!cliente) return;
       
       // Obtener unidades del cliente seleccionado
-      const snapshot = await db.collection('RONDAS_COMPLETADAS')
+      const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS')
         .where('cliente', '==', cliente)
         .get();
       
@@ -2560,7 +2728,7 @@ document.addEventListener('DOMContentLoaded', () => {
       console.log('🔍 Filtros actuales:', kpiRondaFilters);
       
       // Obtener TODOS los documentos
-      const snapshot = await db.collection('RONDAS_COMPLETADAS').get();
+      const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
       let registros = snapshot.docs.map(doc => {
         const data = doc.data();
         return {
@@ -3094,7 +3262,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadDetalleRondasClientesUnidades() {
     try {
-      const snapshot = await db.collection('RONDAS_COMPLETADAS').get();
+      const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
       const clientes = new Set();
       
       snapshot.docs.forEach(doc => {
@@ -4123,7 +4291,7 @@ document.addEventListener('DOMContentLoaded', () => {
     UI.showOverlay('Buscando…', 'Consultando incidencias');
 
     try {
-      let q = db.collection(COLLECTIONS.INCIDENTS);
+      let q = getQueryWithClienteFilter(COLLECTIONS.INCIDENTS);
 
       // Fechas
       const fi = incFechaInicio?.value ? new Date(incFechaInicio.value) : null;
@@ -5038,9 +5206,23 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!usersTbody) return;
     UI.showOverlay('Cargando usuarios…', 'Consultando base de datos');
     try {
-      // Límite de 1000 usuarios para mejor rendimiento
+      // Cargar TODOS los usuarios (límite de 1000 para mejor rendimiento)
       const snap = await db.collection(COLLECTIONS.USERS).limit(1000).get();
-      cachedUsers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      
+      let usuarios = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      
+      // Si es SUPERVISOR, filtrar para excluir usuarios con TIPOACCESO = 'ADMIN'
+      if (accessControl?.isSupervisor()) {
+        usuarios = usuarios.filter(u => {
+          // Mostrar usuarios que:
+          // - NO tienen TIPOACCESO, O
+          // - Tienen TIPOACCESO pero NO es 'ADMIN'
+          return !u.TIPOACCESO || u.TIPOACCESO !== 'ADMIN';
+        });
+        console.log(`[USUARIOS] SUPERVISOR: Filtrados ${usuarios.length} usuarios (excluidos ADMIN)`);
+      }
+      
+      cachedUsers = usuarios;
       renderUsers(cachedUsers);
     } catch (e) {
       console.error('Usuarios', e);
@@ -5177,7 +5359,10 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       // Límite de 500 para mejor rendimiento
       const snap = await db.collection(COLLECTIONS.CLIENT_UNITS).limit(500).get();
-      cachedClientesUnidades = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      cachedClientesUnidades = snap.docs.map(d => {
+        const data = d.data();
+        return { id: d.id, ...data };
+      });
       renderClienteUnidad(cachedClientesUnidades);
     } catch (e) {
       console.error('Cliente/Unidad', e);
@@ -5198,20 +5383,40 @@ document.addEventListener('DOMContentLoaded', () => {
     filtered.forEach(row => {
       const unidades = row.unidades ? Object.keys(row.unidades) : [];
       unidades.forEach(u => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${row.id || ''}</td>
-          <td>${u}</td>
-          <td class="row-actions">
-            <button class="btn small secondary" data-act="edit-cu" data-id="${row.id}" data-unidad="${u}">Editar</button>
-          </td>`;
-        frag.appendChild(tr);
+        const puestosArray = Array.isArray(row.unidades[u]) ? row.unidades[u] : [];
+        
+        if (puestosArray.length > 0) {
+          // Mostrar una fila por cada puesto
+          puestosArray.forEach((puesto, index) => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${row.id || ''}</td>
+              <td>${u}</td>
+              <td>${puesto || ''}</td>
+              <td class="row-actions">
+                <button class="btn small secondary" data-act="edit-cu" data-id="${row.id}" data-unidad="${u}" data-puesto="${puesto}">Editar</button>
+              </td>`;
+            frag.appendChild(tr);
+          });
+        } else {
+          // Sin puestos, mostrar una fila con puesto vacío
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${row.id || ''}</td>
+            <td>${u}</td>
+            <td><i class="muted">Sin puestos</i></td>
+            <td class="row-actions">
+              <button class="btn small secondary" data-act="edit-cu" data-id="${row.id}" data-unidad="${u}" data-puesto="">Editar</button>
+            </td>`;
+          frag.appendChild(tr);
+        }
       });
       if (unidades.length === 0) {
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td>${row.id || ''}</td>
           <td><i class="muted">Sin unidades</i></td>
+          <td></td>
           <td></td>`;
         frag.appendChild(tr);
       }
@@ -5220,52 +5425,310 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   clienteUnidadSearchInput?.addEventListener('input', () => renderClienteUnidad(cachedClientesUnidades));
 
+  // Función para convertir a mayúsculas
+  const toUpperCase = (str) => (str || '').toUpperCase().trim();
+
+  // Botón para agregar nuevo CLIENTE
+  cuAgregarClienteBtn?.addEventListener('click', () => {
+    cuNuevoCliente.value = '';
+    cuNuevaUnidadCliente.value = '';
+    openModal(cuAgregarClienteModal);
+  });
+
+  // Botón para agregar UNIDAD a cliente existente
+  cuAgregarUnidadBtn?.addEventListener('click', async () => {
+    // Cargar clientes disponibles
+    cuAgregarUnidadCliente.innerHTML = '<option value="">-- Seleccionar Cliente --</option>';
+    cuNuevaUnidad.value = '';
+    
+    try {
+      const clientes = cachedClientesUnidades.map(c => c.id).sort();
+      clientes.forEach(cliente => {
+        const option = document.createElement('option');
+        option.value = cliente;
+        option.textContent = cliente;
+        cuAgregarUnidadCliente.appendChild(option);
+      });
+    } catch (e) {
+      console.error('Error cargando clientes:', e);
+    }
+    
+    openModal(cuAgregarUnidadModal);
+  });
+
+  // Botón para agregar PUESTO a unidad
+  cuAgregarPuestoBtn?.addEventListener('click', async () => {
+    // Limpiar y cargar clientes disponibles
+    cuAgregarPuestoCliente.innerHTML = '<option value="">-- Seleccionar Cliente --</option>';
+    cuAgregarPuestoUnidad.innerHTML = '<option value="">-- Seleccionar Unidad --</option>';
+    cuNuevoPuesto.value = '';
+    
+    try {
+      const clientes = cachedClientesUnidades.map(c => c.id).sort();
+      clientes.forEach(cliente => {
+        const option = document.createElement('option');
+        option.value = cliente;
+        option.textContent = cliente;
+        cuAgregarPuestoCliente.appendChild(option);
+      });
+    } catch (e) {
+      console.error('Error cargando clientes:', e);
+    }
+    
+    openModal(cuAgregarPuestoModal);
+  });
+
+  // Evento para cargar unidades cuando cambia cliente en agregar puesto
+  cuAgregarPuestoCliente?.addEventListener('change', (ev) => {
+    const clienteSeleccionado = ev.target.value;
+    cuAgregarPuestoUnidad.innerHTML = '<option value="">-- Seleccionar Unidad --</option>';
+    
+    if (!clienteSeleccionado) return;
+    
+    const cliente = cachedClientesUnidades.find(c => c.id === clienteSeleccionado);
+    if (cliente && cliente.unidades) {
+      const unidades = Object.keys(cliente.unidades).sort();
+      unidades.forEach(unidad => {
+        const option = document.createElement('option');
+        option.value = unidad;
+        option.textContent = unidad;
+        cuAgregarPuestoUnidad.appendChild(option);
+      });
+    }
+  });
+
+  // Cancelar modal agregar cliente
+  cuAgregarClienteCancel?.addEventListener('click', () => closeModal(cuAgregarClienteModal));
+
+  // Cancelar modal agregar unidad
+  cuAgregarUnidadCancel?.addEventListener('click', () => closeModal(cuAgregarUnidadModal));
+
+  // Cancelar modal agregar puesto
+  cuAgregarPuestoCancel?.addEventListener('click', () => closeModal(cuAgregarPuestoModal));
+
+  // Enviar formulario agregar CLIENTE
+  cuAgregarClienteForm?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const nuevoCliente = toUpperCase(cuNuevoCliente.value);
+    const nuevaUnidad = toUpperCase(cuNuevaUnidadCliente.value);
+
+    if (!nuevoCliente || !nuevaUnidad) {
+      UI.toast('Por favor completa todos los campos');
+      return;
+    }
+
+    // Validar que el cliente no exista
+    if (cachedClientesUnidades.some(c => c.id === nuevoCliente)) {
+      UI.toast('❌ Este cliente ya existe');
+      return;
+    }
+
+    UI.showOverlay('Creando…', 'Agregando nuevo cliente');
+    try {
+      await db.collection(COLLECTIONS.CLIENT_UNITS).doc(nuevoCliente).set({
+        unidades: { [nuevaUnidad]: [] }
+      });
+
+      // Recargar datos
+      await loadClienteUnidad();
+      UI.toast('✅ Cliente y unidad agregados correctamente');
+      closeModal(cuAgregarClienteModal);
+    } catch (e) {
+      console.error('Error:', e);
+      UI.toast('❌ Error al crear cliente');
+    } finally {
+      UI.hideOverlay();
+    }
+  });
+
+  // Enviar formulario agregar UNIDAD
+  cuAgregarUnidadForm?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const cliente = toUpperCase(cuAgregarUnidadCliente.value);
+    const nuevaUnidad = toUpperCase(cuNuevaUnidad.value);
+
+    if (!cliente || !nuevaUnidad) {
+      UI.toast('Por favor selecciona un cliente y escribe la unidad');
+      return;
+    }
+
+    // Validar que la unidad no exista para este cliente
+    const clienteRow = cachedClientesUnidades.find(c => c.id === cliente);
+    if (clienteRow && clienteRow.unidades && clienteRow.unidades[nuevaUnidad]) {
+      UI.toast('❌ Esta unidad ya existe para este cliente');
+      return;
+    }
+
+    UI.showOverlay('Creando…', 'Agregando unidad');
+    try {
+      const ref = db.collection(COLLECTIONS.CLIENT_UNITS).doc(cliente);
+      const snap = await ref.get();
+      const data = snap.data() || {};
+      const unidades = data.unidades || {};
+      unidades[nuevaUnidad] = [];
+      
+      await ref.set({ unidades }, { merge: true });
+
+      // Recargar datos
+      await loadClienteUnidad();
+      UI.toast('✅ Unidad agregada correctamente');
+      closeModal(cuAgregarUnidadModal);
+    } catch (e) {
+      console.error('Error:', e);
+      UI.toast('❌ Error al agregar unidad');
+    } finally {
+      UI.hideOverlay();
+    }
+  });
+
+  // Enviar formulario agregar PUESTO
+  cuAgregarPuestoForm?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const cliente = toUpperCase(cuAgregarPuestoCliente.value);
+    const unidad = toUpperCase(cuAgregarPuestoUnidad.value);
+    const nuevoPuesto = toUpperCase(cuNuevoPuesto.value);
+
+    if (!cliente || !unidad || !nuevoPuesto) {
+      UI.toast('Por favor completa todos los campos');
+      return;
+    }
+
+    // Validar que el puesto no exista para esta unidad
+    const clienteRow = cachedClientesUnidades.find(c => c.id === cliente);
+    if (clienteRow && clienteRow.unidades && clienteRow.unidades[unidad]) {
+      const puestosArray = Array.isArray(clienteRow.unidades[unidad]) ? clienteRow.unidades[unidad] : [];
+      if (puestosArray.includes(nuevoPuesto)) {
+        UI.toast('❌ Este puesto ya existe para esta unidad');
+        return;
+      }
+    }
+
+    UI.showOverlay('Creando…', 'Agregando puesto');
+    try {
+      const ref = db.collection(COLLECTIONS.CLIENT_UNITS).doc(cliente);
+      const snap = await ref.get();
+      const data = snap.data() || {};
+      const unidades = data.unidades || {};
+      
+      // Obtener array de puestos o crear uno nuevo
+      let puestosArray = Array.isArray(unidades[unidad]) ? unidades[unidad] : [];
+      
+      // Agregar el nuevo puesto
+      puestosArray.push(nuevoPuesto);
+      unidades[unidad] = puestosArray;
+      
+      await ref.set({ unidades }, { merge: true });
+
+      // Recargar datos
+      await loadClienteUnidad();
+      UI.toast('✅ Puesto agregado correctamente');
+      closeModal(cuAgregarPuestoModal);
+    } catch (e) {
+      console.error('Error:', e);
+      UI.toast('❌ Error al agregar puesto');
+    } finally {
+      UI.hideOverlay();
+    }
+  });
+
   clienteUnidadTbody?.addEventListener('click', async (ev) => {
     const btn = ev.target.closest('button[data-act="edit-cu"]');
     if (!btn) return;
     const docId = btn.dataset.id;
     const oldU = btn.dataset.unidad;
+    const oldPuesto = btn.dataset.puesto || '';
 
     cuEditClienteOriginal.value = docId;
     cuEditUnidadOriginal.value = oldU;
+    cuEditPuestoOriginal.value = oldPuesto;
     cuEditCliente.value = docId;
+    cuEditCliente.disabled = true;
     cuEditUnidad.value = oldU;
+    cuEditPuesto.value = oldPuesto;
 
     openModal(cuEditModal);
   });
 
-  cuEditCancelBtn?.addEventListener('click', () => closeModal(cuEditModal));
+  cuEditCancelBtn?.addEventListener('click', () => {
+    closeModal(cuEditModal);
+  });
+  
   cuEditForm?.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const docId = cuEditClienteOriginal.value;
     const oldU = cuEditUnidadOriginal.value;
-    const newCliente = cuEditCliente.value.trim();
-    const newUnidad = cuEditUnidad.value.trim();
-    if (!docId || !oldU || !newCliente || !newUnidad) return;
+    const oldPuesto = cuEditPuestoOriginal.value;
+    const newUnidad = toUpperCase(cuEditUnidad.value);
+    const newPuesto = toUpperCase(cuEditPuesto.value);
+    
+    if (!docId || !oldU || !newUnidad || !newPuesto) return;
 
-    if (newCliente !== docId) {
-      UI.toast('Para mover una unidad a otro cliente se requiere un flujo adicional.');
+    // Validar que haya cambios
+    if (newUnidad === oldU && newPuesto === oldPuesto) {
+      UI.toast('No hay cambios para guardar');
       return;
     }
 
-    UI.showOverlay('Actualizando…', 'Modificando unidad');
+    // Obtener datos actuales
+    const clienteRow = cachedClientesUnidades.find(c => c.id === docId);
+    if (!clienteRow) {
+      UI.toast('❌ Cliente no encontrado');
+      return;
+    }
+
+    const unidades = clienteRow.unidades || {};
+    
+    // Si cambió el nombre de la unidad
+    if (newUnidad !== oldU) {
+      if (unidades[newUnidad]) {
+        UI.toast('❌ Esta unidad ya existe para este cliente');
+        return;
+      }
+    }
+
+    // Validar que el nuevo puesto no exista en la unidad (si cambió)
+    const targetUnit = newUnidad !== oldU ? unidades[newUnidad] : unidades[oldU];
+    const puestosArray = Array.isArray(targetUnit) ? targetUnit : [];
+    
+    if (newPuesto !== oldPuesto && puestosArray.includes(newPuesto)) {
+      UI.toast('❌ Este puesto ya existe en esta unidad');
+      return;
+    }
+
+    UI.showOverlay('Actualizando…', 'Guardando cambios');
     try {
       const ref = db.collection(COLLECTIONS.CLIENT_UNITS).doc(docId);
       const snap = await ref.get();
       const data = snap.data() || {};
-      const unidades = data.unidades || {};
-      unidades[newUnidad] = unidades[oldU] ?? true;
-      delete unidades[oldU];
-      await ref.set({ unidades }, { merge: true });
+      const updatedUnidades = data.unidades || {};
 
-      const row = cachedClientesUnidades.find(r => r.id === docId);
-      if (row) { row.unidades = unidades; }
+      // Si cambió el nombre de la unidad
+      if (newUnidad !== oldU) {
+        updatedUnidades[newUnidad] = updatedUnidades[oldU] ?? [];
+        delete updatedUnidades[oldU];
+      }
+
+      // Actualizar el puesto en la unidad
+      const unitPuestosArray = Array.isArray(updatedUnidades[newUnidad]) ? updatedUnidades[newUnidad] : [];
+      const puestoIndex = unitPuestosArray.indexOf(oldPuesto);
+      
+      if (puestoIndex !== -1) {
+        unitPuestosArray[puestoIndex] = newPuesto;
+      }
+      
+      updatedUnidades[newUnidad] = unitPuestosArray;
+      await ref.set({ unidades: updatedUnidades }, { merge: true });
+
+      // Actualizar cache
+      const updatedRow = cachedClientesUnidades.find(r => r.id === docId);
+      if (updatedRow) { updatedRow.unidades = updatedUnidades; }
+      
       renderClienteUnidad(cachedClientesUnidades);
-      UI.toast('Unidad actualizada');
+      UI.toast('✅ Cambios guardados');
       closeModal(cuEditModal);
     } catch (e) {
       console.error(e);
-      UI.confirm({ title: 'Error', message: 'No se pudo actualizar la unidad.', kind: 'err' });
+      UI.toast('❌ Error al guardar cambios');
     } finally { UI.hideOverlay(); }
   });
 
@@ -5275,7 +5738,7 @@ document.addEventListener('DOMContentLoaded', () => {
     UI.showOverlay('Buscando…', 'Consultando cuaderno');
 
     try {
-      let q = db.collection(COLLECTIONS.LOGBOOK);
+      let q = getQueryWithClienteFilter(COLLECTIONS.LOGBOOK);
       const fi = cuadernoFechaInicio?.value ? new Date(cuadernoFechaInicio.value) : null;
       const ff = cuadernoFechaFin?.value ? new Date(cuadernoFechaFin.value) : null;
       if (fi) q = q.where('timestamp', '>=', fi);
@@ -5397,38 +5860,41 @@ document.addEventListener('DOMContentLoaded', () => {
   // 7) TIEMPO DE CONEXIÓN - EVENT LISTENERS
   // ============================================================================
   tiempoConexionBtnBuscar?.addEventListener('click', async () => {
-    UI.showOverlay();
+    UI.showOverlay('Buscando…', 'Consultando CONTROL_TIEMPOS_USUARIOS');
     try {
-      let query = db.collection('CONTROL_TIEMPOS_USUARIOS');
+      // PATRÓN CUADERNO CON FILTRO DE ACCESO
+      let q = getQueryWithClienteFilter('CONTROL_TIEMPOS_USUARIOS');
 
-      // Filtro por fechas
-      const fechaInicio = tiempoConexionFechaInicio?.value;
-      const fechaFin = tiempoConexionFechaFin?.value;
+      // Aplicar filtros de fecha
+      const fi = tiempoConexionFechaInicio?.value ? new Date(tiempoConexionFechaInicio.value) : null;
+      const ff = tiempoConexionFechaFin?.value ? new Date(tiempoConexionFechaFin.value) : null;
+      if (fi) q = q.where('horaInicio', '>=', fi);
+      if (ff) q = q.where('horaInicio', '<=', new Date(ff.getFullYear(), ff.getMonth(), ff.getDate() + 1));
 
-      if (fechaInicio) {
-        const d = new Date(fechaInicio);
-        query = query.where('horaInicio', '>=', d);
+      // Aplicar filtros de cliente y unidad
+      const clienteFiltro = accessControl.userType === 'CLIENTE' 
+        ? accessControl.clienteAsignado 
+        : tiempoConexionCliente?.value || '';
+
+      const unidadFiltro = tiempoConexionUnidad?.value || '';
+
+      if (clienteFiltro) {
+        q = q.where('cliente', '==', clienteFiltro);
       }
-      if (fechaFin) {
-        const d = new Date(fechaFin);
-        d.setDate(d.getDate() + 1);
-        query = query.where('horaInicio', '<', d);
+      if (unidadFiltro) {
+        q = q.where('unidad', '==', unidadFiltro);
       }
 
-      // Filtro por usuario
-      const usuarioFilter = tiempoConexionUsuario?.value;
-      if (usuarioFilter) {
-        query = query.where('usuarioID', '==', usuarioFilter);
+      // Aplicar filtro de usuario si está seleccionado
+      const usr = tiempoConexionUsuario?.value || '';
+      if (usr) {
+        q = q.where('usuarioID', '==', usr);
       }
 
-      const snap = await query.orderBy('horaInicio', 'desc').limit(1000).get();
-      let rows = snap.docs.map(d => d.data());
+      // Ejecutar query
+      const snap = await q.orderBy('horaInicio', 'desc').limit(1000).get();
 
-      // Filtro por cliente y unidad (en memoria, ya que no podemos hacer múltiples where con OR)
-      const clienteFilter = tiempoConexionCliente?.value;
-      const unidadFilter = tiempoConexionUnidad?.value;
-
-      // Cargar caché de usuarios para filtrar
+      // Cargar caché de usuarios para mapear usuarioID a cliente/unidad
       const usuariosCache = {};
       const usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
       usuariosSnap.forEach(doc => {
@@ -5439,19 +5905,64 @@ document.addEventListener('DOMContentLoaded', () => {
         };
       });
 
-      // Aplicar filtros de cliente y unidad
-      if (clienteFilter || unidadFilter) {
-        rows = rows.filter(r => {
-          const usuarioID = r.usuarioID || r.usuario;
-          const usuarioData = usuariosCache[usuarioID] || {};
-          const matches = true;
-          if (clienteFilter && usuarioData.cliente !== clienteFilter) return false;
-          if (unidadFilter && usuarioData.unidad !== unidadFilter) return false;
-          return matches;
-        });
-      }
+      // Mapear datos enriquecidos - EXTRAYENDO CAMPOS CORRECTOS DE FIREBASE
+      const rows = snap.docs.map(d => {
+        const data = d.data();
+        const usuarioID = data.usuarioID || data.usuario || '';
+        const usuarioData = usuariosCache[usuarioID] || {};
+        
+        // Extraer datos de Firebase correctamente
+        const horaInicio = data.horaInicio?.toDate ? data.horaInicio.toDate() : new Date(data.horaInicio || 0);
+        const horaCierre = data.horaCierre?.toDate ? data.horaCierre.toDate() : (data.horaFin?.toDate ? data.horaFin.toDate() : null);
+        
+        // Solo la FECHA de horaInicio
+        const fechaStr = horaInicio instanceof Date && !Number.isNaN(horaInicio.getTime())
+          ? horaInicio.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' })
+          : 'N/A';
+        
+        // Solo la HORA de horaInicio
+        const horaInicioStr = horaInicio instanceof Date && !Number.isNaN(horaInicio.getTime())
+          ? horaInicio.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })
+          : '--';
+        
+        // Solo la HORA de horaCierre
+        const horaCierreStr = horaCierre instanceof Date && !Number.isNaN(horaCierre.getTime())
+          ? horaCierre.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })
+          : '--';
 
-      await fillTiempoConexionTable(rows);
+        // Calcular duración
+        let duracion = '--';
+        if (horaInicio instanceof Date && horaCierre instanceof Date) {
+          duracion = calcularDuracionTiempo(horaInicio, horaCierre);
+        }
+
+        return {
+          id: d.id,
+          ...data,
+          nombreUsuario: data.nombreUsuario || '',
+          cliente: data.cliente || usuarioData.cliente || '',
+          unidad: data.unidad || usuarioData.unidad || '',
+          fechaStr,
+          horaInicioStr,
+          horaCierreStr,
+          duracion
+        };
+      });
+
+      // Renderizar tabla
+      tiempoConexionTbody.innerHTML = rows.map(r => {
+        return `<tr>
+          <td>${r.nombreUsuario || ''}</td>
+          <td>${r.cliente || ''}</td>
+          <td>${r.unidad || ''}</td>
+          <td>${r.fechaStr}</td>
+          <td>${r.horaInicioStr}</td>
+          <td>${r.horaCierreStr}</td>
+          <td>${r.duracion}</td>
+        </tr>`;
+      }).join('');
+
+      tiempoConexionTbody.dataset.rows = JSON.stringify(rows);
       UI.toast(`Resultados: ${rows.length}`);
     } catch (e) {
       console.error('Error al buscar Tiempo de Conexión:', e);
@@ -5476,19 +5987,30 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
     const rows = JSON.parse(raw);
 
-    // Crear libro XLS con datos enriquecidos
+    // Crear libro XLS con datos correctos
     let html = '<table border="1"><tr style="background-color:#2c5aa0;color:white;font-weight:bold;">';
     html += '<th>USUARIO</th><th>CLIENTE</th><th>UNIDAD</th><th>FECHA</th><th>HORA INICIO</th><th>HORA FIN</th><th>TIEMPO CONEXIÓN</th></tr>';
 
     rows.forEach(r => {
-      // Usar datos ya procesados y enriquecidos
-      html += `<tr><td>${r.nombreCompleto}</td><td>${r.cliente}</td><td>${r.unidad}</td><td>${r.fechaInicio}</td><td>${r.horaInicio}</td><td>${r.horaFin}</td><td>${r.duracion}</td></tr>`;
+      html += `<tr>
+        <td>${r.nombreUsuario || ''}</td>
+        <td>${r.cliente || ''}</td>
+        <td>${r.unidad || ''}</td>
+        <td>${r.fechaStr}</td>
+        <td>${r.horaInicioStr}</td>
+        <td>${r.horaCierreStr}</td>
+        <td>${r.duracion}</td>
+      </tr>`;
     });
 
     html += '</table>';
 
-    const wb = XLSX.utils.table_to_book(new DOMParser().parseFromString(html, 'text/html').querySelector('table'));
-    XLSX.writeFile(wb, 'tiempo_conexion.xlsx');
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'tiempo_conexion.xls';
+    a.click();
+    URL.revokeObjectURL(a.href);
     UI.toast('Exportación completada');
   });
 
@@ -5579,13 +6101,13 @@ document.addEventListener('DOMContentLoaded', () => {
                   { text: 'TIEMPO CONEXIÓN', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' }
                 ],
                 ...rows.map((r, idx) => [
-                  { text: r.nombreCompleto, fontSize: 9 },
-                  { text: r.cliente, fontSize: 9 },
-                  { text: r.unidad, fontSize: 9 },
-                  { text: r.fechaInicio, fontSize: 9 },
-                  { text: r.horaInicio, fontSize: 9 },
-                  { text: r.horaFin, fontSize: 9 },
-                  { text: r.duracion, fontSize: 9, bold: true, color: '#3b82f6' }
+                  { text: r.nombreUsuario || '', fontSize: 9 },
+                  { text: r.cliente || '', fontSize: 9 },
+                  { text: r.unidad || '', fontSize: 9 },
+                  { text: r.fechaStr || '', fontSize: 9 },
+                  { text: r.horaInicioStr || '', fontSize: 9 },
+                  { text: r.horaCierreStr || '', fontSize: 9 },
+                  { text: r.duracion || '', fontSize: 9, bold: true, color: '#3b82f6' }
                 ])
               ]
             },
@@ -5633,6 +6155,53 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
+  // ============================================================================
+  // CONTROL DE ACCESO BASADO EN ROLES
+  // ============================================================================
+  window.accessControl = null;
+
+  /**
+   * Crea una query con filtro automático por cliente
+   * Si el usuario es CLIENTE, filtra por su cliente asignado
+   * Si es ADMIN, devuelve la query sin filtro
+   */
+  function getQueryWithClienteFilter(collectionName) {
+    let query = db.collection(collectionName);
+    const clienteFiltro = window.accessControl?.getClienteFilter();
+    if (clienteFiltro) {
+      console.log(`[FILTER] Aplicando filtro cliente: ${clienteFiltro}`);
+      // Soportar ambos campos: 'cliente' (minúsculas) y 'CLIENTE' (mayúsculas)
+      const isAccesoPeatonal = collectionName === 'ACCESO_PEATONAL';
+      const fieldName = isAccesoPeatonal ? 'CLIENTE' : 'cliente';
+      query = query.where(fieldName, '==', clienteFiltro);
+    } else {
+      console.log('[FILTER] Sin filtro de cliente (ADMIN)');
+    }
+    return query;
+  }
+
+  // Monitor de seguridad: Impide que se muestren vistas sin permisos
+  const securityMonitor = setInterval(() => {
+    if (!window.accessControl) return;
+    
+    // Validar que NO se muestren vistas bloqueadas
+    window.accessControl.restrictedViews.forEach(restrictedView => {
+      const view = document.getElementById(restrictedView);
+      if (view && view.classList.contains('shown')) {
+        console.error(`[SECURITY VIOLATION] Vista bloqueada detectada: ${restrictedView}`);
+        view.classList.remove('shown');
+        UI.showError(
+          '🔒 Violación de Seguridad',
+          'Se detectó un intento de acceso no autorizado. La sesión será cerrada.'
+        );
+        setTimeout(() => {
+          auth.signOut();
+          location.replace('index.html');
+        }, 2000);
+      }
+    });
+  }, 500); // Verifica cada 500ms
+
   auth.onAuthStateChanged(async (user) => {
     if (!user) {
       location.replace('index.html');
@@ -5643,9 +6212,34 @@ document.addEventListener('DOMContentLoaded', () => {
       if (userMetaEl) userMetaEl.textContent = 'Bienvenido(a)';
       if (avatarEl) avatarEl.textContent = (name[0] || 'U').toUpperCase();
 
+      // ===== INICIALIZAR CONTROL DE ACCESO =====
+      window.accessControl = new AccessControl(db, auth);
+      const accessInitialized = await window.accessControl.initialize(user);
+      
+      if (accessInitialized) {
+        // Aplicar restricciones de vista al DOM
+        window.accessControl.applyDOMRestrictions();
+        
+        // Log de acceso para debug
+        console.log('[AUTH] Resumen de acceso:', window.accessControl.getSummary());
+        console.log('[SECURITY] Monitor de seguridad activado');
+      } else {
+        console.warn('[AUTH] No se pudo inicializar el control de acceso');
+        // Por seguridad, cerrar sesión si no se puede verificar permisos
+        UI.showError('Error de Seguridad', 'No se pudo verificar tus permisos. Intenta de nuevo.');
+        setTimeout(() => {
+          auth.signOut();
+        }, 2000);
+        return;
+      }
+
       // Filtros de cuaderno e incidencias al arranque (ligero)
       tryLoadCuadernoFilters();
       loadIncidenciasFilters();
+      
+      // Cargar clientes para Rondas y QR después de que accessControl esté listo
+      loadRondaClientes();
+      loadQRClientes();
 
       initResumenDashboard();
     }
@@ -5680,7 +6274,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function queryDetalleAcceso(){
     UI.showOverlay('Cargando accesos…', 'Consultando ACCESO_PEATONAL');
     try {
-      const snap = await db.collection('ACCESO_PEATONAL').get();
+      const snap = await getQueryWithClienteFilter('ACCESO_PEATONAL').get();
       daCache = snap.docs.map(d=>{
         const x = d.data();
         const inStr  = `${x.FECHA_INGRESO ?? ''} ${x.HORA_INGRESO ?? ''}`.trim();
@@ -5722,20 +6316,48 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   
   function populateDetalleAccesoFilters(rows){
+    // Obtener filtros del usuario PRIMERO
+    const clienteDelUsuario = accessControl?.getClienteFilter();
+    const unidadDelUsuario = accessControl?.getUnidadFilter?.();
+    const esCliente = !!clienteDelUsuario; // Si hay clienteFiltro, es CLIENTE; si no, es ADMIN
+    
     const clientes = [...new Set(rows.map(r=>r.CLIENTE).filter(Boolean))].sort();
-    const unidades = [...new Set(rows.map(r=>r.UNIDAD).filter(Boolean))].sort();
+    
+    // CORRECCIÓN: Si es CLIENTE, filtrar UNIDADES solo por sus datos
+    let unidades = [...new Set(rows.map(r=>r.UNIDAD).filter(Boolean))].sort();
+    if (esCliente) {
+      // Si es CLIENTE, mostrar solo las unidades que aparecen en sus registros
+      unidades = [...new Set(rows.filter(r => r.CLIENTE === clienteDelUsuario).map(r=>r.UNIDAD).filter(Boolean))].sort();
+    }
+    
     const tipos = [...new Set(rows.map(r=>r.TIPO_ACCESO).filter(Boolean))].sort();
     const estados = [...new Set(rows.map(r=>r.ESTADO).filter(Boolean))].sort();
     
-    const fillSelect = (el, values) => {
+    const fillSelect = (el, values, preselectedValue = null, disabled = false) => {
       if (!el) return;
-      el.innerHTML = '<option value="__ALL__">Todos</option>' + values.map(v=>`<option value="${v}">${v}</option>`).join('');
+      el.disabled = disabled;
+      let html = '';
+      if (disabled && preselectedValue) {
+        // Si está deshabilitado, mostrar solo el valor seleccionado
+        html = `<option value="${preselectedValue}" selected disabled>${preselectedValue}</option>`;
+      } else {
+        if (!preselectedValue || !values.includes(preselectedValue)) {
+          html = '<option value="__ALL__">Todos</option>';
+        }
+        html += values.map(v=>{
+          const selected = preselectedValue && v === preselectedValue ? ' selected' : '';
+          return `<option value="${v}"${selected}>${v}</option>`;
+        }).join('');
+      }
+      el.innerHTML = html;
     };
     
-    fillSelect(document.getElementById('da-cliente'), clientes);
-    fillSelect(document.getElementById('da-unidad'), unidades);
-    fillSelect(document.getElementById('da-tipo'), tipos);
-    fillSelect(document.getElementById('da-estado'), estados);
+    // Si es CLIENTE: Cliente bloqueado, Unidad libre (mostrando SOLO sus unidades), Tipo libre, Estado libre
+    // Si es ADMIN: Todo libre
+    fillSelect(document.getElementById('da-cliente'), clientes, clienteDelUsuario, esCliente);
+    fillSelect(document.getElementById('da-unidad'), unidades, unidadDelUsuario, false);
+    fillSelect(document.getElementById('da-tipo'), tipos, null, false);
+    fillSelect(document.getElementById('da-estado'), estados, null, false);
   }
   
   function getDetalleAccesoFilters(){
@@ -6390,7 +7012,18 @@ document.addEventListener('DOMContentLoaded', () => {
   // Cargar clientes para rondas
   async function loadRondaClientes() {
     try {
-      const snap = await db.collection('CLIENTE_UNIDAD').get();
+      let snap;
+      
+      // Aplicar filtro de acceso según tipo de usuario
+      if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
+        // Si es cliente, solo mostrar su cliente asignado
+        const doc = await db.collection('CLIENTE_UNIDAD').doc(window.accessControl.clienteAsignado).get();
+        snap = { empty: !doc.exists, docs: doc.exists ? [doc] : [] };
+      } else {
+        // Si es admin, mostrar todos los clientes
+        snap = await db.collection('CLIENTE_UNIDAD').get();
+      }
+      
       if (snap.empty) {
         rondaCliente.innerHTML = '<option value="">No hay clientes</option>';
         return;
@@ -6969,7 +7602,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Inicializar cuando se carga
-  loadRondaClientes();
+  // Nota: loadRondaClientes() y loadQRClientes() se llamarán después de que accessControl esté inicializado
+  // loadRondaClientes();
   loadRondas();
 
   } // <-- CIERRE DEL else { window.__wiredCuadernoInc__ = true; }
@@ -7179,7 +7813,17 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       
       const firestore = firebase.firestore();
-      const snap = await firestore.collection('CLIENTE_UNIDAD').get();
+      let snap;
+      
+      // Aplicar filtro de acceso según tipo de usuario
+      if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
+        // Si es cliente, solo mostrar su cliente asignado
+        const doc = await firestore.collection('CLIENTE_UNIDAD').doc(window.accessControl.clienteAsignado).get();
+        snap = { empty: !doc.exists, docs: doc.exists ? [doc] : [] };
+      } else {
+        // Si es admin, mostrar todos los clientes
+        snap = await firestore.collection('CLIENTE_UNIDAD').get();
+      }
       
       if (snap.empty) {
         console.warn('No hay clientes en CLIENTE_UNIDAD');
@@ -8147,7 +8791,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       try {
-        const snapshot = await window.db.collection('ACCESO_VEHICULAR').orderBy('timestamp', 'desc').get();
+        const snapshot = await getQueryWithClienteFilter('ACCESO_VEHICULAR').orderBy('timestamp', 'desc').get();
         cvData = [];
 
         snapshot.forEach(doc => {
@@ -8449,7 +9093,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const unidadesSet = new Set();
       
       try {
-        const snapshot = await window.db.collection('ACCESO_VEHICULAR').get();
+        const snapshot = await getQueryWithClienteFilter('ACCESO_VEHICULAR').get();
         snapshot.forEach(doc => {
           const data = doc.data();
           if (data.cliente) clientesSet.add(data.cliente);
@@ -8955,6 +9599,851 @@ document.addEventListener('DOMContentLoaded', () => {
       UI.hideOverlay();
       UI.toast('❌ Error al exportar PDF');
     }
+  }
+
+  // ============================================================================
+  // INCIDENCIA QR (RONDA MANUAL)
+  // ============================================================================
+  let iqrCharts = {
+    fecha: null,
+    estado: null,
+    cliente: null,
+    unidad: null
+  };
+  let iqrAllData = [];
+  let iqrChoices = {
+    cliente: null,
+    unidad: null
+  };
+
+  async function initIncidenciaQR() {
+    console.log('[IQR INIT] Inicializando Incidencia QR');
+    const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
+    
+    // Solo inicializar Choices si no están ya inicializados
+    if (window.Choices && !iqrChoices.cliente) {
+      try {
+        iqrChoices.cliente = new Choices('#iqr-cliente', cfg);
+        iqrChoices.unidad = new Choices('#iqr-unidad', cfg);
+        console.log('[IQR INIT] Choices inicializadas');
+      } catch (e) {
+        console.warn('Choices ya está inicializado:', e.message);
+      }
+    }
+
+    // Agregar listeners (una sola vez)
+    const btnAplicar = document.getElementById('iqr-btn-aplicar');
+    const btnLimpiar = document.getElementById('iqr-btn-limpiar');
+    const btnExcel = document.getElementById('iqr-btn-excel');
+    const btnPdf = document.getElementById('iqr-btn-pdf');
+    
+    // Remover listeners anteriores para evitar duplicados
+    if (btnAplicar) {
+      btnAplicar.removeEventListener('click', loadAndRenderIncidenciaQR);
+      btnAplicar.addEventListener('click', async () => {
+        await loadAndRenderIncidenciaQR();
+      });
+    }
+    
+    if (btnLimpiar) {
+      btnLimpiar.removeEventListener('click', limpiarFiltrosIQR);
+      btnLimpiar.addEventListener('click', limpiarFiltrosIQR);
+    }
+    
+    if (btnExcel) {
+      btnExcel.removeEventListener('click', exportIncidenciaQRExcel);
+      btnExcel.addEventListener('click', exportIncidenciaQRExcel);
+    }
+    
+    if (btnPdf) {
+      btnPdf.removeEventListener('click', exportIncidenciaQRPDF);
+      btnPdf.addEventListener('click', exportIncidenciaQRPDF);
+    }
+
+    // Cargar datos iniciales
+    console.log('[IQR INIT] Cargando datos iniciales...');
+    await loadAndRenderIncidenciaQR();
+    console.log('[IQR INIT] Inicialización completada');
+  }
+
+  function limpiarFiltrosIQR() {
+    document.getElementById('iqr-fecha-inicio').value = '';
+    document.getElementById('iqr-fecha-fin').value = '';
+    if (iqrChoices.cliente) {
+      try {
+        iqrChoices.cliente.setChoiceByValue('Todos');
+      } catch (e) {
+        // Si falla, simplemente continuar
+        const select = document.getElementById('iqr-cliente');
+        if (select) select.value = 'Todos';
+      }
+    }
+    if (iqrChoices.unidad) {
+      try {
+        iqrChoices.unidad.setChoiceByValue('Todos');
+      } catch (e) {
+        const select = document.getElementById('iqr-unidad');
+        if (select) select.value = 'Todas';
+      }
+    }
+    loadAndRenderIncidenciaQR();
+  }
+
+  async function loadAndRenderIncidenciaQR() {
+    UI.showOverlay('Cargando Incidencias QR…', 'Consultando RONDA_MANUAL');
+    try {
+      // Primero intentamos con filtro de cliente, si no funciona cargamos todos
+      let snapshot;
+      try {
+        snapshot = await getQueryWithClienteFilter('RONDA_MANUAL')
+          .orderBy('__name__', 'desc')
+          .limit(10000)
+          .get();
+      } catch (e) {
+        console.warn('Error con filtro de cliente, cargando sin filtro:', e.message);
+        // Si falla el filtro, cargar sin filtro (admin)
+        snapshot = await db.collection('RONDA_MANUAL')
+          .orderBy('__name__', 'desc')
+          .limit(10000)
+          .get();
+      }
+
+      iqrAllData = snapshot.docs.map(doc => {
+        const data = doc.data();
+        
+        // Parsear fecha - puede venir en varios formatos
+        let fecha = new Date();
+        if (data.fechaHora) {
+          if (typeof data.fechaHora === 'string') {
+            // Intentar parsear string en formato "DD/MM/YYYY, HH:MM:SS"
+            try {
+              fecha = new Date(data.fechaHora);
+              if (isNaN(fecha.getTime())) {
+                // Si falla, usar fecha actual
+                fecha = new Date();
+              }
+            } catch (e) {
+              fecha = new Date();
+            }
+          } else if (data.fechaHora.toDate) {
+            fecha = data.fechaHora.toDate();
+          }
+        } else if (data.timestamp) {
+          fecha = data.timestamp.toDate ? data.timestamp.toDate() : new Date(data.timestamp);
+        }
+
+        return {
+          id: doc.id,
+          ...data,
+          fecha: fecha,
+        };
+      });
+
+      console.log(`[IQR] Total registros cargados: ${iqrAllData.length}`);
+      console.log('[IQR] Primer registro:', iqrAllData[0]);
+      
+      // Actualizar opciones de filtros
+      populateIncidenciaQRFilters();
+      
+      // Renderizar todo
+      renderIncidenciaQR();
+    } catch (e) {
+      console.error('Error al cargar Incidencia QR:', e);
+      UI.toast('Error al cargar datos de Incidencia QR: ' + e.message);
+    } finally {
+      UI.hideOverlay();
+    }
+  }
+
+  function populateIncidenciaQRFilters() {
+    console.log('[IQR POPULATE] Iniciando con', iqrAllData.length, 'registros');
+    const clientes = [...new Set(iqrAllData.map(d => d.cliente).filter(Boolean))].sort();
+    const unidades = [...new Set(iqrAllData.map(d => d.unidad).filter(Boolean))].sort();
+
+    console.log('[IQR POPULATE] Clientes únicos:', clientes);
+    console.log('[IQR POPULATE] Unidades únicas:', unidades);
+
+    const clienteSelect = document.getElementById('iqr-cliente');
+    const unidadSelect = document.getElementById('iqr-unidad');
+
+    if (clienteSelect && iqrChoices.cliente) {
+      try {
+        iqrChoices.cliente.clearStore();
+        iqrChoices.cliente.setChoices(
+          [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
+          'value', 'label', false
+        );
+        console.log('[IQR POPULATE] Cliente Choices actualizado');
+      } catch (e) {
+        console.warn('Error al actualizar cliente Choices:', e.message);
+      }
+    } else {
+      console.warn('[IQR POPULATE] Cliente select o Choices no encontrado');
+    }
+
+    if (unidadSelect && iqrChoices.unidad) {
+      try {
+        iqrChoices.unidad.clearStore();
+        iqrChoices.unidad.setChoices(
+          [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
+          'value', 'label', false
+        );
+        console.log('[IQR POPULATE] Unidad Choices actualizado');
+      } catch (e) {
+        console.warn('Error al actualizar unidad Choices:', e.message);
+      }
+    } else {
+      console.warn('[IQR POPULATE] Unidad select o Choices no encontrado');
+    }
+  }
+
+  function renderIncidenciaQR() {
+    console.log('[IQR] renderIncidenciaQR iniciado');
+    const filteredData = getFilteredIncidenciaQRData();
+    console.log(`[IQR] Datos filtrados: ${filteredData.length}`);
+    updateIncidenciaQRStats(filteredData);
+    renderIncidenciaQRCharts(filteredData);
+    renderIncidenciaQRTable(filteredData);
+  }
+
+  function getFilteredIncidenciaQRData() {
+    let data = [...iqrAllData];
+    console.log('[IQR FILTER] Inicio con:', data.length, 'registros');
+
+    // Filtro de cliente - SOLO si se seleccionó algo diferente a "Todos"
+    const clienteSelect = document.getElementById('iqr-cliente');
+    const clienteVal = clienteSelect?.value;
+    console.log('[IQR FILTER] clienteVal:', clienteVal);
+    if (clienteVal && clienteVal !== 'Todos' && clienteVal.trim() !== '') {
+      const beforeCount = data.length;
+      data = data.filter(d => d.cliente && d.cliente.trim() === clienteVal.trim());
+      console.log(`[IQR FILTER] Después cliente filter: ${beforeCount} → ${data.length}`);
+    }
+
+    // Filtro de unidad - SOLO si se seleccionó algo diferente a "Todas"
+    const unidadSelect = document.getElementById('iqr-unidad');
+    const unidadVal = unidadSelect?.value;
+    console.log('[IQR FILTER] unidadVal:', unidadVal);
+    if (unidadVal && unidadVal !== 'Todas' && unidadVal.trim() !== '') {
+      const beforeCount = data.length;
+      data = data.filter(d => d.unidad && d.unidad.trim() === unidadVal.trim());
+      console.log(`[IQR FILTER] Después unidad filter: ${beforeCount} → ${data.length}`);
+    }
+
+    // Filtro de fechas
+    const fechaInicio = document.getElementById('iqr-fecha-inicio')?.value;
+    const fechaFin = document.getElementById('iqr-fecha-fin')?.value;
+    console.log('[IQR FILTER] fechaInicio:', fechaInicio, 'fechaFin:', fechaFin);
+    if (fechaInicio) {
+      const start = new Date(fechaInicio);
+      start.setHours(0, 0, 0, 0);
+      const beforeCount = data.length;
+      data = data.filter(d => d.fecha >= start);
+      console.log(`[IQR FILTER] Después inicio filter: ${beforeCount} → ${data.length}`);
+    }
+    if (fechaFin) {
+      const end = new Date(fechaFin);
+      end.setHours(23, 59, 59, 999);
+      const beforeCount = data.length;
+      data = data.filter(d => d.fecha <= end);
+      console.log(`[IQR FILTER] Después fin filter: ${beforeCount} → ${data.length}`);
+    }
+
+    console.log('[IQR FILTER] Total final después filtros:', data.length);
+    if (data.length > 0) console.log('[IQR FILTER] Primer registro filtrado:', data[0]);
+    return data;
+  }
+
+  function updateIncidenciaQRStats(data) {
+    console.log('[IQR STATS] Calculando con', data.length, 'registros');
+    const total = data.length;
+
+    console.log('[IQR STATS] Total: ' + total);
+
+    document.getElementById('iqr-total').textContent = total;
+
+    console.log('[IQR STATS] Elementos actualizados en DOM');
+  }
+
+  function renderIncidenciaQRCharts(data) {
+    console.log('[IQR CHARTS] Renderizando gráficos con', data.length, 'registros');
+    
+    // Gráfico de Incidencias por Fecha (usando timestamp)
+    const byDate = {};
+    data.forEach(d => {
+      const dateKey = d.fecha.toISOString().split('T')[0];
+      byDate[dateKey] = (byDate[dateKey] || 0) + 1;
+    });
+    const sortedDates = Object.keys(byDate).sort();
+    console.log('[IQR CHARTS] Fechas encontradas:', sortedDates.length);
+    if (iqrCharts.fecha) iqrCharts.fecha.destroy();
+    const ctxFecha = document.getElementById('iqr-chart-fecha')?.getContext('2d');
+    if (ctxFecha) {
+      iqrCharts.fecha = new Chart(ctxFecha, {
+        type: 'line',
+        data: {
+          labels: sortedDates,
+          datasets: [{
+            label: 'Incidencias por Fecha',
+            data: sortedDates.map(d => byDate[d]),
+            borderColor: '#3b82f6',
+            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            tension: 0.4,
+            fill: true
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } }
+        }
+      });
+      console.log('[IQR CHARTS] Gráfico de fecha creado');
+    }
+
+    // Gráfico de Cantidad de Incidencias por Punto (nombrePunto)
+    const byPunto = {};
+    data.forEach(d => {
+      const punto = d.nombrePunto || 'Sin Punto';
+      byPunto[punto] = (byPunto[punto] || 0) + 1;
+    });
+    console.log('[IQR CHARTS] Puntos encontrados:', Object.keys(byPunto));
+    if (iqrCharts.estado) iqrCharts.estado.destroy();
+    const ctxEstado = document.getElementById('iqr-chart-estado')?.getContext('2d');
+    if (ctxEstado) {
+      iqrCharts.estado = new Chart(ctxEstado, {
+        type: 'doughnut',
+        data: {
+          labels: Object.keys(byPunto),
+          datasets: [{
+            data: Object.values(byPunto),
+            backgroundColor: ['#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#f97316', '#06b6d4']
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false }
+      });
+      console.log('[IQR CHARTS] Gráfico de puntos creado');
+    }
+
+    // Gráfico de Cantidad de Registros por Usuario
+    const byUsuario = {};
+    data.forEach(d => {
+      const usuario = d.usuario || 'Sin usuario';
+      byUsuario[usuario] = (byUsuario[usuario] || 0) + 1;
+    });
+    console.log('[IQR CHARTS] Usuarios encontrados:', Object.keys(byUsuario));
+    if (iqrCharts.cliente) iqrCharts.cliente.destroy();
+    const ctxCliente = document.getElementById('iqr-chart-cliente')?.getContext('2d');
+    if (ctxCliente) {
+      iqrCharts.cliente = new Chart(ctxCliente, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(byUsuario),
+          datasets: [{
+            label: 'Cantidad de Registros por Usuario',
+            data: Object.values(byUsuario),
+            backgroundColor: '#3b82f6'
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y' }
+      });
+      console.log('[IQR CHARTS] Gráfico de usuario creado');
+    }
+
+    // Gráfico de Incidencias por Unidad
+    const byUnidad = {};
+    data.forEach(d => {
+      const unidad = d.unidad || 'Sin unidad';
+      byUnidad[unidad] = (byUnidad[unidad] || 0) + 1;
+    });
+    console.log('[IQR CHARTS] Unidades encontradas:', Object.keys(byUnidad));
+    if (iqrCharts.unidad) iqrCharts.unidad.destroy();
+    const ctxUnidad = document.getElementById('iqr-chart-unidad')?.getContext('2d');
+    if (ctxUnidad) {
+      iqrCharts.unidad = new Chart(ctxUnidad, {
+        type: 'bar',
+        data: {
+          labels: Object.keys(byUnidad),
+          datasets: [{
+            label: 'Incidencias por Unidad',
+            data: Object.values(byUnidad),
+            backgroundColor: '#10b981'
+          }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y' }
+      });
+      console.log('[IQR CHARTS] Gráfico de unidad creado');
+    }
+    console.log('[IQR CHARTS] Todos los gráficos renderizados');
+  }
+
+  function renderChart(existingChart, canvasId, config, setChart) {
+    const ctx = document.getElementById(canvasId)?.getContext('2d');
+    if (!ctx) return;
+    
+    if (existingChart) existingChart.destroy();
+    const newChart = new Chart(ctx, config);
+    setChart(newChart);
+  }
+
+  function renderIncidenciaQRTable(data) {
+    console.log('[IQR TABLE] Renderizando tabla con', data.length, 'registros');
+    const tbody = document.getElementById('iqr-tbody');
+    if (!tbody) {
+      console.error('[IQR TABLE] No se encontró elemento iqr-tbody');
+      return;
+    }
+
+    tbody.innerHTML = '';
+    if (data.length === 0) {
+      console.log('[IQR TABLE] Sin datos, mostrando mensaje');
+      tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 20px; color: #a0aec0;">No hay datos para mostrar</td></tr>';
+      return;
+    }
+
+    data.forEach((d, index) => {
+      const fila = document.createElement('tr');
+      
+      // Parsear fecha
+      let fechaStr = '-';
+      if (d.fecha instanceof Date) {
+        fechaStr = d.fecha.toLocaleString('es-PE', { 
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+      } else if (typeof d.fechaHora === 'string') {
+        fechaStr = d.fechaHora;
+      }
+
+      // Determinar estado - si tiene respuestas, está completada
+      const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
+      const estadoClass = tieneRespuestas ? 'iqr-estado-completado' : 'iqr-estado-pendiente';
+      const estadoText = tieneRespuestas ? '✓ Completada' : '⏳ Pendiente';
+
+      // Construir QR
+      const codigoQR = d.codigoQRleido || d.qrId || 'N/A';
+
+      // Obtener primera pregunta y respuesta si existen
+      let pregunta = '-';
+      let respuesta = '-';
+      
+      if (d.preguntas && typeof d.preguntas === 'object') {
+        const preguntasKeys = Object.keys(d.preguntas);
+        if (preguntasKeys.length > 0) {
+          pregunta = d.preguntas[preguntasKeys[0]];
+        }
+      }
+      
+      if (d.respuestas && typeof d.respuestas === 'object') {
+        const respuestasKeys = Object.keys(d.respuestas);
+        if (respuestasKeys.length > 0) {
+          respuesta = d.respuestas[respuestasKeys[0]];
+        }
+      }
+
+      const fotoCell = d.foto ? `<img src="${d.foto}" alt="Foto" style="max-width: 40px; cursor: pointer;" onclick="showImageModal('${d.foto}')">` : '-';
+
+      fila.innerHTML = `
+        <td>${fechaStr}</td>
+        <td>${d.usuario || d.nombrePunto || '-'}</td>
+        <td>${d.cliente || '-'}</td>
+        <td>${d.unidad || '-'}</td>
+        <td><span class="iqr-badge">${codigoQR}</span></td>
+        <td>${pregunta}</td>
+        <td>${respuesta}</td>
+        <td>${d.puesto || '-'}</td>
+        <td><span class="${estadoClass}">${estadoText}</span></td>
+        <td class="iqr-foto-cell">${fotoCell}</td>
+      `;
+      tbody.appendChild(fila);
+      
+      if (index === 0) {
+        console.log('[IQR TABLE] Primera fila agregada:', {fecha: fechaStr, usuario: d.usuario, cliente: d.cliente, estado: estadoText});
+      }
+    });
+    console.log('[IQR TABLE] Tabla completada con', data.length, 'filas');
+  }
+
+  async function exportIncidenciaQRExcel() {
+    try {
+      UI.showOverlay('Exportando Excel…', 'Preparando documento...');
+      const data = getFilteredIncidenciaQRData();
+      
+      const ws_data = [
+        ['LIDER CONTROL - Reporte de Incidencias QR'],
+        [`Fecha Generación: ${new Date().toLocaleString('es-PE')}`],
+        [`Total de Registros: ${data.length}`],
+        [],
+        ['Fecha/Hora', 'Usuario', 'Cliente', 'Unidad', 'QR', 'Pregunta', 'Respuesta', 'Puesto', 'Estado']
+      ];
+      
+      data.forEach(d => {
+        // Parsear fecha
+        let fechaStr = '';
+        if (d.fecha instanceof Date) {
+          fechaStr = d.fecha.toLocaleString('es-PE');
+        } else if (typeof d.fechaHora === 'string') {
+          fechaStr = d.fechaHora;
+        }
+
+        // Obtener primera pregunta y respuesta
+        let pregunta = '';
+        let respuesta = '';
+        
+        if (d.preguntas && typeof d.preguntas === 'object') {
+          const preguntasKeys = Object.keys(d.preguntas);
+          if (preguntasKeys.length > 0) {
+            pregunta = d.preguntas[preguntasKeys[0]];
+          }
+        }
+        
+        if (d.respuestas && typeof d.respuestas === 'object') {
+          const respuestasKeys = Object.keys(d.respuestas);
+          if (respuestasKeys.length > 0) {
+            respuesta = d.respuestas[respuestasKeys[0]];
+          }
+        }
+
+        const codigoQR = d.codigoQRleido || d.qrId || '';
+        const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
+        const estado = tieneRespuestas ? 'Completada' : 'Pendiente';
+
+        ws_data.push([
+          fechaStr,
+          d.usuario || d.nombrePunto || '',
+          d.cliente || '',
+          d.unidad || '',
+          codigoQR,
+          pregunta.substring(0, 50),
+          respuesta.substring(0, 50),
+          d.puesto || '',
+          estado
+        ]);
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(ws_data);
+      
+      // Configurar estilos y ancho de columnas
+      ws['!cols'] = [
+        { wch: 18 }, // Fecha/Hora
+        { wch: 15 }, // Usuario
+        { wch: 15 }, // Cliente
+        { wch: 12 }, // Unidad
+        { wch: 12 }, // QR
+        { wch: 20 }, // Pregunta
+        { wch: 20 }, // Respuesta
+        { wch: 10 }, // Puesto
+        { wch: 12 }  // Estado
+      ];
+
+      // Configurar el ancho de la primera fila (título)
+      ws['A1'].alignment = { horizontal: 'center', vertical: 'center' };
+      ws['A1'].font = { bold: true, size: 14, color: { rgb: 'FF2c5aa0' } };
+      
+      // Configurar filas de información
+      if (ws['A2']) {
+        ws['A2'].font = { size: 10, color: { rgb: 'FF4a5568' } };
+      }
+      if (ws['A3']) {
+        ws['A3'].font = { size: 10, color: { rgb: 'FF4a5568' } };
+      }
+
+      // Configurar fila de encabezados (fila 5)
+      const headerRow = 5;
+      for (let col = 0; col < 9; col++) {
+        const cellRef = XLSX.utils.encode_col(col) + headerRow;
+        if (ws[cellRef]) {
+          ws[cellRef].fill = { fgColor: { rgb: 'FF2c5aa0' } };
+          ws[cellRef].font = { bold: true, color: { rgb: 'FFFFFFFF' }, size: 11 };
+          ws[cellRef].alignment = { horizontal: 'center', vertical: 'center', wrapText: true };
+        }
+      }
+
+      // Configurar filas de datos
+      for (let row = 6; row <= ws_data.length; row++) {
+        for (let col = 0; col < 9; col++) {
+          const cellRef = XLSX.utils.encode_col(col) + row;
+          if (ws[cellRef]) {
+            ws[cellRef].alignment = { horizontal: col === 8 ? 'center' : 'left', vertical: 'top', wrapText: true };
+            ws[cellRef].border = {
+              top: { style: 'thin', color: { rgb: 'FFe2e8f0' } },
+              bottom: { style: 'thin', color: { rgb: 'FFe2e8f0' } },
+              left: { style: 'thin', color: { rgb: 'FFe2e8f0' } },
+              right: { style: 'thin', color: { rgb: 'FFe2e8f0' } }
+            };
+            
+            // Colorear estado
+            if (col === 8) {
+              const estadoCell = ws[cellRef];
+              if (estadoCell.v === 'Completada') {
+                estadoCell.fill = { fgColor: { rgb: 'FFd1fae5' } };
+                estadoCell.font = { color: { rgb: 'FF10b981' }, bold: true };
+              } else if (estadoCell.v === 'Pendiente') {
+                estadoCell.fill = { fgColor: { rgb: 'FFfef3c7' } };
+                estadoCell.font = { color: { rgb: 'FFf59e0b' }, bold: true };
+              }
+            }
+          }
+        }
+      }
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Incidencia QR');
+      XLSX.writeFile(wb, `IncidenciaQR_${new Date().getTime()}.xlsx`);
+      
+      UI.hideOverlay();
+      UI.toast('✅ Excel exportado correctamente');
+    } catch (err) {
+      console.error('Error exporting Excel:', err);
+      UI.hideOverlay();
+      UI.toast('❌ Error al exportar Excel');
+    }
+  }
+
+  async function exportIncidenciaQRPDF() {
+    try {
+      UI.showOverlay('Exportando PDF…', 'Preparando documento...');
+      const data = getFilteredIncidenciaQRData();
+      
+      // Convertir logo a base64 para incluirlo en el PDF
+      const logoUrl = './logo_liberman.png';
+      let logoImage = null;
+      
+      try {
+        const response = await fetch(logoUrl);
+        if (response.ok) {
+          const blob = await response.blob();
+          logoImage = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              const result = reader.result;
+              // Asegurar que es un data URL válido
+              if (result && result.startsWith('data:')) {
+                resolve(result);
+              } else {
+                resolve(null);
+              }
+            };
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
+          });
+        }
+      } catch (e) {
+        console.warn('No se pudo cargar el logo:', e.message);
+        logoImage = null;
+      }
+
+      const tableBody = data.map(d => {
+        let fechaStr = '';
+        if (d.fecha instanceof Date) {
+          fechaStr = d.fecha.toLocaleString('es-PE');
+        } else if (typeof d.fechaHora === 'string') {
+          fechaStr = d.fechaHora;
+        }
+
+        let pregunta = '';
+        let respuesta = '';
+        
+        if (d.preguntas && typeof d.preguntas === 'object') {
+          const preguntasKeys = Object.keys(d.preguntas);
+          if (preguntasKeys.length > 0) {
+            pregunta = d.preguntas[preguntasKeys[0]];
+          }
+        }
+        
+        if (d.respuestas && typeof d.respuestas === 'object') {
+          const respuestasKeys = Object.keys(d.respuestas);
+          if (respuestasKeys.length > 0) {
+            respuesta = d.respuestas[respuestasKeys[0]];
+          }
+        }
+
+        const codigoQR = d.codigoQRleido || d.qrId || '';
+        const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
+        const estado = tieneRespuestas ? 'Completada' : 'Pendiente';
+
+        return [
+          fechaStr,
+          d.usuario || d.nombrePunto || '',
+          d.cliente || '',
+          d.unidad || '',
+          codigoQR,
+          pregunta.substring(0, 20),
+          respuesta.substring(0, 20),
+          d.puesto || '',
+          estado
+        ];
+      });
+
+      // Construir el contenido del PDF
+      const content = [];
+
+      // Encabezado con logo
+      if (logoImage) {
+        content.push({
+          columns: [
+            { image: logoImage, width: 60, height: 60 },
+            {
+              stack: [
+                { text: 'LIDER CONTROL', style: 'company', alignment: 'center' },
+                { text: 'Reporte de Incidencias QR', style: 'reportTitle', alignment: 'center' }
+              ],
+              alignment: 'center',
+              width: '*'
+            }
+          ],
+          columnGap: 20,
+          margin: [0, 0, 0, 20]
+        });
+      } else {
+        content.push({
+          text: 'LIDER CONTROL\nReporte de Incidencias QR',
+          style: 'reportTitle',
+          alignment: 'center',
+          margin: [0, 0, 0, 20]
+        });
+      }
+
+      // Información del reporte
+      content.push({
+        columns: [
+          { text: `Total de Registros: ${data.length}`, style: 'infoText', width: '33%' },
+          { text: `Fecha Generación: ${new Date().toLocaleString('es-PE')}`, style: 'infoText', width: '33%' },
+          { text: `Usuario: ${document.querySelector('.bienvenido-nombre')?.textContent || 'N/A'}`, style: 'infoText', width: '33%' }
+        ],
+        margin: [0, 0, 0, 20]
+      });
+
+      // Línea separadora
+      content.push({
+        canvas: [{ type: 'line', x1: 0, y1: 0, x2: 800, y2: 0, lineWidth: 2, lineColor: '#2c5aa0' }],
+        margin: [0, 0, 0, 15]
+      });
+
+      // Tabla de datos
+      if (data.length > 0) {
+        content.push({
+          table: {
+            headerRows: 1,
+            widths: ['11%', '9%', '11%', '9%', '8%', '9%', '9%', '8%', '9%'],
+            body: [
+              [
+                { text: 'Fecha/Hora', style: 'tableHeader' },
+                { text: 'Usuario', style: 'tableHeader' },
+                { text: 'Cliente', style: 'tableHeader' },
+                { text: 'Unidad', style: 'tableHeader' },
+                { text: 'QR', style: 'tableHeader' },
+                { text: 'Pregunta', style: 'tableHeader' },
+                { text: 'Respuesta', style: 'tableHeader' },
+                { text: 'Puesto', style: 'tableHeader' },
+                { text: 'Estado', style: 'tableHeader' }
+              ],
+              ...tableBody.map((row, idx) => [
+                { text: row[0], style: 'tableCell' },
+                { text: row[1], style: 'tableCell' },
+                { text: row[2], style: 'tableCell' },
+                { text: row[3], style: 'tableCell' },
+                { text: row[4], style: 'tableCell', alignment: 'center' },
+                { text: row[5], style: 'tableCell', fontSize: 7 },
+                { text: row[6], style: 'tableCell', fontSize: 7 },
+                { text: row[7], style: 'tableCell' },
+                { 
+                  text: row[8], 
+                  style: 'tableCell',
+                  color: row[8] === 'Completada' ? '#10b981' : '#f59e0b',
+                  bold: true,
+                  alignment: 'center'
+                }
+              ])
+            ]
+          },
+          margin: [0, 0, 0, 20]
+        });
+      } else {
+        content.push({
+          text: 'No hay datos para mostrar',
+          style: 'noData',
+          alignment: 'center',
+          margin: [0, 20, 0, 20]
+        });
+      }
+
+      // Pie de página
+      content.push({
+        canvas: [{ type: 'line', x1: 0, y1: 0, x2: 800, y2: 0, lineWidth: 1, lineColor: '#cbd5e0' }],
+        margin: [0, 20, 0, 10]
+      });
+
+      content.push({
+        text: '© 2025 LIDER CONTROL - Sistema de Control Integrado',
+        style: 'footer',
+        alignment: 'center'
+      });
+
+      const docDef = {
+        pageOrientation: 'landscape',
+        pageSize: 'A4',
+        pageMargins: [40, 40, 40, 40],
+        content: content,
+        styles: {
+          company: {
+            fontSize: 14,
+            bold: true,
+            color: '#1a3a52'
+          },
+          reportTitle: {
+            fontSize: 16,
+            bold: true,
+            color: '#2c5aa0'
+          },
+          infoText: {
+            fontSize: 9,
+            color: '#4a5568',
+            margin: [5, 0, 5, 0]
+          },
+          tableHeader: {
+            fontSize: 8,
+            bold: true,
+            color: '#ffffff',
+            backgroundColor: '#2c5aa0',
+            alignment: 'center',
+            margin: [4, 6, 4, 6],
+            padding: [6, 4]
+          },
+          tableCell: {
+            fontSize: 8,
+            alignment: 'left',
+            margin: [4, 4, 4, 4],
+            padding: [4, 4],
+            border: [false, true, false, true],
+            borderColor: '#e2e8f0'
+          },
+          noData: {
+            fontSize: 12,
+            color: '#718096'
+          },
+          footer: {
+            fontSize: 8,
+            color: '#a0aec0',
+            italics: true
+          }
+        }
+      };
+
+      UI.hideOverlay();
+      window.pdfMake.createPdf(docDef).download(`IncidenciaQR_${new Date().getTime()}.pdf`);
+      UI.toast('✅ PDF exportado correctamente');
+    } catch (err) {
+      console.error('Error exporting PDF:', err);
+      UI.hideOverlay();
+      UI.toast('❌ Error al exportar PDF: ' + err.message);
+    }
+  }
+
+  // Cuando se selecciona Incidencia QR, cargar datos
+  const iqrBtn = document.querySelector('[data-target="kpi-incidencia-qr"]');
+  if (iqrBtn) {
+    iqrBtn.addEventListener('click', initIncidenciaQR);
   }
 
   // Cuando se selecciona Control Vehicular, cargar datos

@@ -114,6 +114,7 @@
             <button class="kpi-subnav-btn" data-target="kpi-acceso-peatonal">Acceso Peatonal</button>
             <button class="kpi-subnav-btn" data-target="kpi-detalle-acceso">Detalle Acceso</button>
             <button class="kpi-subnav-btn" data-target="kpi-control-vehicular">🚗 Control Vehicular</button>
+            <button class="kpi-subnav-btn" data-target="kpi-incidencia-qr">🔲 Incidencia QR</button>
           </nav>
 
           <div class="kpi-subviews-container">
@@ -748,6 +749,105 @@
                 </div>
               </div>
             </div>
+
+            <!-- PESTAÑA 8: INCIDENCIA QR -->
+            <div id="kpi-incidencia-qr" class="kpi-subview" role="tabpanel">
+              <div style="background: white; padding: 20px; border-radius: 14px; border: 1px solid #e2e8f0; margin-bottom: 20px;">
+                <h3 style="margin: 0 0 16px 0; font-size: 14px; font-weight: 700; color: #2d3748; text-transform: uppercase;">🔍 Filtros</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+                  <div>
+                    <label style="display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: #4a5568; text-transform: uppercase;">Fecha Inicio</label>
+                    <input type="date" id="iqr-fecha-inicio" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 8px; font-size: 13px;">
+                  </div>
+                  <div>
+                    <label style="display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: #4a5568; text-transform: uppercase;">Fecha Fin</label>
+                    <input type="date" id="iqr-fecha-fin" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 8px; font-size: 13px;">
+                  </div>
+                  <div>
+                    <label style="display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: #4a5568; text-transform: uppercase;">Cliente</label>
+                    <select id="iqr-cliente" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 8px; font-size: 13px; background: white; cursor: pointer;">
+                      <option value="">Todos</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style="display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: #4a5568; text-transform: uppercase;">Unidad</label>
+                    <select id="iqr-unidad" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 8px; font-size: 13px; background: white; cursor: pointer;">
+                      <option value="">Todas</option>
+                    </select>
+                  </div>
+                  <div style="display: flex; gap: 8px; align-items: flex-end;">
+                    <button type="button" id="iqr-btn-aplicar" style="flex: 1; padding: 10px 14px; background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.3s ease;">Aplicar</button>
+                    <button type="button" id="iqr-btn-limpiar" style="flex: 1; padding: 10px 14px; background: #f7fafc; color: #4a5568; border: 1px solid #cbd5e0; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.3s ease;">Limpiar</button>
+                  </div>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 12px;">
+                  <button type="button" id="iqr-btn-excel" style="padding: 10px 14px; background: #10b981; color: white; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer;">📊 Exportar Excel</button>
+                  <button type="button" id="iqr-btn-pdf" style="padding: 10px 14px; background: #ef4444; color: white; border: none; border-radius: 8px; font-weight: 600; font-size: 13px; cursor: pointer;">📄 Exportar PDF</button>
+                </div>
+              </div>
+
+              <!-- CARDS RESUMEN -->
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px;">
+                <div style="background: white; padding: 20px; border-radius: 12px; border-left: 4px solid #3b82f6; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                  <div style="font-size: 28px; font-weight: 800; color: #3b82f6;" id="iqr-total">0</div>
+                  <div style="font-size: 12px; color: #718096; margin-top: 4px;">Cantidad de Registros</div>
+                </div>
+              </div>
+
+              <!-- GRÁFICOS -->
+              <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 20px;">
+                <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                  <h4 style="margin: 0 0 16px 0; color: #2d3748;">📈 Incidencias por Fecha</h4>
+                  <div style="position: relative; height: 300px;">
+                    <canvas id="iqr-chart-fecha"></canvas>
+                  </div>
+                </div>
+                <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                  <h4 style="margin: 0 0 16px 0; color: #2d3748;">🥧 Cantidad de Incidencias por Punto</h4>
+                  <div style="position: relative; height: 300px;">
+                    <canvas id="iqr-chart-estado"></canvas>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 20px;">
+                <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                  <h4 style="margin: 0 0 16px 0; color: #2d3748;">👤 Cantidad de Registros por Usuario</h4>
+                  <div style="position: relative; height: 300px;">
+                    <canvas id="iqr-chart-cliente"></canvas>
+                  </div>
+                </div>
+                <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                  <h4 style="margin: 0 0 16px 0; color: #2d3748;\">🏢 Incidencias por Unidad</h4>
+                  <div style="position: relative; height: 300px;">
+                    <canvas id="iqr-chart-unidad"></canvas>
+                  </div>
+                </div>
+              </div>
+
+              <!-- TABLA DETALLADA -->
+              <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow-x: auto;">
+                <h3 style="margin: 0 0 16px 0; color: #2d3748;">📋 Detalle de Rondas Manuales</h3>
+                <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                  <thead>
+                    <tr style="background-color: #2c5aa0; color: white;">
+                      <th style="padding: 12px; text-align: left; border-bottom: 2px solid #1e3a5f;">Fecha/Hora</th>
+                      <th style="padding: 12px; text-align: left; border-bottom: 2px solid #1e3a5f;">Usuario</th>
+                      <th style="padding: 12px; text-align: left; border-bottom: 2px solid #1e3a5f;">Cliente</th>
+                      <th style="padding: 12px; text-align: left; border-bottom: 2px solid #1e3a5f;">Unidad</th>
+                      <th style="padding: 12px; text-align: left; border-bottom: 2px solid #1e3a5f;">QR</th>
+                      <th style="padding: 12px; text-align: left; border-bottom: 2px solid #1e3a5f;">Pregunta</th>
+                      <th style="padding: 12px; text-align: left; border-bottom: 2px solid #1e3a5f;">Respuesta</th>
+                      <th style="padding: 12px; text-align: left; border-bottom: 2px solid #1e3a5f;">Puesto</th>
+                      <th style="padding: 12px; text-align: left; border-bottom: 2px solid #1e3a5f;">Estado</th>
+                      <th style="padding: 12px; text-align: left; border-bottom: 2px solid #1e3a5f;">Foto</th>
+                    </tr>
+                  </thead>
+                  <tbody id="iqr-tbody" style="background: white;">
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
         <div id="view-usuarios" class="view">
@@ -776,13 +876,18 @@
           <div class="page">
             <div class="page-head">
               <h2 id="cu-title">Gestión de Clientes y Unidades</h2>
+              <div style="margin-left: auto; display: flex; gap: 10px;">
+                <button id="cuAgregarClienteBtn" class="btn btn-primary" style="padding: 8px 16px; font-size: 14px;">+ Agregar CLIENTE</button>
+                <button id="cuAgregarUnidadBtn" class="btn btn-primary" style="padding: 8px 16px; font-size: 14px;">+ Agregar UNIDAD</button>
+                <button id="cuAgregarPuestoBtn" class="btn btn-primary" style="padding: 8px 16px; font-size: 14px;">+ Agregar PUESTO</button>
+              </div>
             </div>
             <div class="search-bar" style="margin-bottom: 16px;">
               <input type="text" id="clienteUnidadSearchInput" placeholder="Buscar por cliente o unidad..." />
             </div>
             <div class="table-wrap">
               <table class="data-table" aria-labelledby="cu-title">
-                <thead><tr><th>CLIENTE</th><th>UNIDAD</th><th style="width:140px">ACCIONES</th></tr></thead>
+                <thead><tr><th>CLIENTE</th><th>UNIDAD</th><th>PUESTO</th><th style="width:140px">ACCIONES</th></tr></thead>
                 <tbody id="clienteUnidadTbody"></tbody>
               </table>
             </div>
@@ -953,11 +1058,11 @@
                       <label>Tamaño del QR (píxeles)</label>
                       <div class="form-row">
                         <div>
-                          <small style="color: #718096; font-weight: 600;">Ancho</small>
+                          <label style="font-size: 12px; color: #718096; font-weight: 600; text-transform: none; letter-spacing: normal;">Ancho</label>
                           <input type="number" id="qr-width" value="200" min="50" max="500" />
                         </div>
                         <div>
-                          <small style="color: #718096; font-weight: 600;">Alto</small>
+                          <label style="font-size: 12px; color: #718096; font-weight: 600; text-transform: none; letter-spacing: normal;">Alto</label>
                           <input type="number" id="qr-height" value="200" min="50" max="500" />
                         </div>
                       </div>
@@ -1037,8 +1142,11 @@
                   <form id="crearRondaForm">
                     
                     <!-- Cliente y Unidad -->
-                    <div style="background: rgba(59, 130, 246, 0.05); padding: 16px; border-radius: 12px; margin-bottom: 16px; border-left: 4px solid #3b82f6;">
-                      <p style="margin: 0 0 12px 0; font-size: 12px; font-weight: 600; color: #3b82f6; text-transform: uppercase;">Paso 1 - Ubicación</p>
+                    <div class="form-step-header">
+                      <div class="form-step-badge">1</div>
+                      <p class="form-step-label">Paso 1 - Ubicación</p>
+                    </div>
+                    <div class="form-step-content">
                       <div class="form-row">
                         <div class="form-group">
                           <label>Cliente <span class="required">*</span></label>
@@ -1056,8 +1164,11 @@
                     </div>
 
                     <!-- Nombre de la Ronda -->
-                    <div style="background: rgba(59, 130, 246, 0.05); padding: 16px; border-radius: 12px; margin-bottom: 16px; border-left: 4px solid #3b82f6;">
-                      <p style="margin: 0 0 12px 0; font-size: 12px; font-weight: 600; color: #3b82f6; text-transform: uppercase;">Paso 2 - Información</p>
+                    <div class="form-step-header">
+                      <div class="form-step-badge">2</div>
+                      <p class="form-step-label">Paso 2 - Información</p>
+                    </div>
+                    <div class="form-step-content">
                       <div class="form-group">
                         <label>Nombre de la Ronda <span class="required">*</span></label>
                         <input type="text" id="ronda-nombre" placeholder="Ej: Ronda Matutina, Ronda Nocturna" required />
@@ -1065,8 +1176,11 @@
                     </div>
 
                     <!-- Horarios -->
-                    <div style="background: rgba(59, 130, 246, 0.05); padding: 16px; border-radius: 12px; margin-bottom: 16px; border-left: 4px solid #3b82f6;">
-                      <p style="margin: 0 0 12px 0; font-size: 12px; font-weight: 600; color: #3b82f6; text-transform: uppercase;">Paso 3 - Horarios</p>
+                    <div class="form-step-header">
+                      <div class="form-step-badge">3</div>
+                      <p class="form-step-label">Paso 3 - Horarios</p>
+                    </div>
+                    <div class="form-step-content">
                       <div class="form-row">
                         <div class="form-group">
                           <label>Hora de Inicio <span class="required">*</span></label>
@@ -1086,8 +1200,11 @@
                     </div>
 
                     <!-- Frecuencia -->
-                    <div style="background: rgba(59, 130, 246, 0.05); padding: 16px; border-radius: 12px; margin-bottom: 16px; border-left: 4px solid #3b82f6;">
-                      <p style="margin: 0 0 12px 0; font-size: 12px; font-weight: 600; color: #3b82f6; text-transform: uppercase;">Paso 4 - Frecuencia</p>
+                    <div class="form-step-header">
+                      <div class="form-step-badge">4</div>
+                      <p class="form-step-label">Paso 4 - Frecuencia</p>
+                    </div>
+                    <div class="form-step-content">
                       <div class="form-group">
                         <label>Tipo de Frecuencia <span class="required">*</span></label>
                         <select id="ronda-frecuencia" required>
@@ -1231,13 +1348,81 @@
       <form id="cuEditForm">
         <input type="hidden" id="cuEditClienteOriginal" />
         <input type="hidden" id="cuEditUnidadOriginal" />
+        <input type="hidden" id="cuEditPuestoOriginal" />
         <div class="grid-2">
           <label>Cliente <input type="text" id="cuEditCliente" required /></label>
-          <label>Unidad (Nuevo Nombre) <input type="text" id="cuEditUnidad" required /></label>
+          <label>Unidad <input type="text" id="cuEditUnidad" required /></label>
+        </div>
+        <div>
+          <label>Puesto <input type="text" id="cuEditPuesto" placeholder="Ej: CAT" required /></label>
         </div>
         <div class="modal-actions">
           <button type="button" class="btn secondary" id="cuEditCancel">Cancelar</button>
           <button type="submit" class="btn" id="cuEditSave">Guardar Cambios</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal para agregar nuevo CLIENTE -->
+  <div class="modal" id="cuAgregarClienteModal" aria-hidden="true" role="dialog" aria-labelledby="cuAgregarClienteTitle" aria-modal="true">
+    <div class="modal-box">
+      <h3 id="cuAgregarClienteTitle">Agregar Nuevo CLIENTE</h3>
+      <form id="cuAgregarClienteForm">
+        <div class="grid-2">
+          <label>Nombre del Cliente <input type="text" id="cuNuevoCliente" placeholder="Ej: LIDERMAN" required /></label>
+          <label>Primera Unidad <input type="text" id="cuNuevaUnidadCliente" placeholder="Ej: CHORRILLOS" required /></label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn secondary" id="cuAgregarClienteCancel">Cancelar</button>
+          <button type="submit" class="btn" id="cuAgregarClienteSave">Crear Cliente</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal para agregar UNIDAD a cliente existente -->
+  <div class="modal" id="cuAgregarUnidadModal" aria-hidden="true" role="dialog" aria-labelledby="cuAgregarUnidadTitle" aria-modal="true">
+    <div class="modal-box">
+      <h3 id="cuAgregarUnidadTitle">Agregar UNIDAD a Cliente</h3>
+      <form id="cuAgregarUnidadForm">
+        <div>
+          <label>Seleccionar Cliente
+            <select id="cuAgregarUnidadCliente" required>
+              <option value="">-- Seleccionar Cliente --</option>
+            </select>
+          </label>
+          <label>Nueva Unidad <input type="text" id="cuNuevaUnidad" placeholder="Ej: LINCE" required /></label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn secondary" id="cuAgregarUnidadCancel">Cancelar</button>
+          <button type="submit" class="btn" id="cuAgregarUnidadSave">Agregar Unidad</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal para agregar PUESTO a unidad -->
+  <div class="modal" id="cuAgregarPuestoModal" aria-hidden="true" role="dialog" aria-labelledby="cuAgregarPuestoTitle" aria-modal="true">
+    <div class="modal-box">
+      <h3 id="cuAgregarPuestoTitle">Agregar PUESTO a Unidad</h3>
+      <form id="cuAgregarPuestoForm">
+        <div>
+          <label>Seleccionar Cliente
+            <select id="cuAgregarPuestoCliente" required>
+              <option value="">-- Seleccionar Cliente --</option>
+            </select>
+          </label>
+          <label>Seleccionar Unidad
+            <select id="cuAgregarPuestoUnidad" required>
+              <option value="">-- Seleccionar Unidad --</option>
+            </select>
+          </label>
+          <label>Nuevo Puesto <input type="text" id="cuNuevoPuesto" placeholder="Ej: CAT" required /></label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn secondary" id="cuAgregarPuestoCancel">Cancelar</button>
+          <button type="submit" class="btn" id="cuAgregarPuestoSave">Agregar Puesto</button>
         </div>
       </form>
     </div>
@@ -1452,6 +1637,9 @@
 
   <!-- SheetJS (XLSX) para exportación a Excel -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  
+  <!-- Control de Acceso (Roles) -->
+  <script src="access-control.js"></script>
   
   <!-- Lógica principal -->
   <script src="menu.js"></script>
