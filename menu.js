@@ -254,7 +254,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }).join('');
 
       tiempoConexionFiltersLoaded = true;
-      console.log(`[TC] Filtros cargados - Usuarios: ${usuariosIds.length}`);
     } catch (e) {
       console.error('loadTiempoConexionFilters()', e);
     }
@@ -2185,15 +2184,7 @@ document.addEventListener('DOMContentLoaded', () => {
       sedes = [...new Set(rows.filter(r => r.CLIENTE === clienteDelUsuario).map(r=>r.UNIDAD).filter(Boolean))].sort();
     }
     
-    const tipos    = [...new Set(rows.map(r=>r.TIPO_ACCESO).filter(Boolean))].sort();
-
-    console.log(`[AP] Filtros extraídos - Clientes: ${clientes.length}, Sedes: ${sedes.length}, Tipos: ${tipos.length}`);
-    console.log(`[AP] Clientes:`, clientes);
-    console.log(`[AP] Sedes:`, sedes);
-    console.log(`[AP] Tipos:`, tipos);
-    console.log(`[AP] clienteDelUsuario: ${clienteDelUsuario}, unidadDelUsuario: ${unidadDelUsuario}, esCliente: ${esCliente}`);
-
-    const setChoices = (inst, values, selectedValue = null, disabled = false) => {
+      const tipos    = [...new Set(rows.map(r=>r.TIPO_ACCESO).filter(Boolean))].sort();    const setChoices = (inst, values, selectedValue = null, disabled = false) => {
       if (!inst) return;
       inst.clearChoices();
       let choices;
@@ -2618,7 +2609,6 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   function initKpiRondaGeneral() {
-    console.log('📊 Inicializando KPI Ronda General...');
     
     // Cargar opciones de Cliente y Unidad
     loadKpiRondaClientesUnidades();
@@ -2725,19 +2715,8 @@ document.addEventListener('DOMContentLoaded', () => {
       kpiRondaFilters.cliente = clienteSelect?.value || '';
       kpiRondaFilters.unidad = unidadSelect?.value || '';
       
-      console.log('🔍 Filtros actuales:', kpiRondaFilters);
-      
       // Obtener TODOS los documentos
       const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
-      let registros = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data
-        };
-      });
-      
-      console.log(`📊 Total de documentos en colección: ${registros.length}`);
       
       // Ordenar por horarioInicio (más recientes primero)
       registros.sort((a, b) => {
@@ -2749,19 +2728,15 @@ document.addEventListener('DOMContentLoaded', () => {
       // Filtro por cliente
       if (kpiRondaFilters.cliente) {
         registros = registros.filter(r => r.cliente === kpiRondaFilters.cliente);
-        console.log(`👥 Después de filtro cliente: ${registros.length}`);
       }
       
       // Filtro por unidad
       if (kpiRondaFilters.unidad) {
         registros = registros.filter(r => r.unidad === kpiRondaFilters.unidad);
-        console.log(`🏢 Después de filtro unidad: ${registros.length}`);
       }
       
       // Limitar a 30 últimos registros
       const ultimos30 = registros.slice(0, 30);
-      
-      console.log(`✅ Registros finales (máx 30): ${ultimos30.length}`, ultimos30);
       
       // Actualizar card de información
       updateKpiRondaInfoCard(ultimos30);
@@ -3218,7 +3193,6 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   function initDetalleRondas() {
-    console.log('📋 Inicializando Detalle de Rondas...');
     
     // Cargar opciones de Cliente y Unidad
     loadDetalleRondasClientesUnidades();
@@ -5219,13 +5193,11 @@ document.addEventListener('DOMContentLoaded', () => {
           // - Tienen TIPOACCESO pero NO es 'ADMIN'
           return !u.TIPOACCESO || u.TIPOACCESO !== 'ADMIN';
         });
-        console.log(`[USUARIOS] SUPERVISOR: Filtrados ${usuarios.length} usuarios (excluidos ADMIN)`);
       }
       
       cachedUsers = usuarios;
       renderUsers(cachedUsers);
     } catch (e) {
-      console.error('Usuarios', e);
       UI.confirm({ title: 'Error', message: 'No se pudo cargar la lista de usuarios.', kind: 'err' });
     } finally { UI.hideOverlay(); }
   }

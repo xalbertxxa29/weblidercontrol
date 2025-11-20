@@ -51,8 +51,6 @@ class AccessControl {
       const cliente = data?.CLIENTE;      // Campo para filtro de CLIENTE
       const unidad = data?.UNIDAD;        // Campo opcional para filtro de UNIDAD
       
-      console.log(`[AccessControl] Usuario: ${username}, TIPOACCESO: ${tipoAcceso}, CLIENTE: ${cliente}`);
-      
       return { tipoAcceso, cliente, unidad };
     } catch (error) {
       console.error('[AccessControl] Error al obtener datos del usuario:', error);
@@ -116,8 +114,6 @@ class AccessControl {
     }
 
     this.restrictedViews = this.getRestrictedViews(this.userType);
-    console.log(`[AccessControl] Vistas restringidas: ${this.restrictedViews.join(', ') || 'Ninguna'}`);
-    console.log(`[AccessControl] Filtro de cliente: ${this.clienteAsignado || 'Sin restricción'}`);
     
     return true;
   }
@@ -139,7 +135,6 @@ class AccessControl {
       const target = item.getAttribute('data-target');
       if (target && !this.canAccessView(target)) {
         item.style.display = 'none';
-        console.log(`[AccessControl] Ocultando nav-item: ${target}`);
       }
     });
 
@@ -149,7 +144,6 @@ class AccessControl {
       const viewId = view.getAttribute('id');
       if (viewId && !this.canAccessView(viewId)) {
         view.style.display = 'none';
-        console.log(`[AccessControl] Ocultando vista: ${viewId}`);
       }
     });
   }
