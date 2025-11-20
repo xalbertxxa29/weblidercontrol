@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', () => {
         cuadernoUnidadSelect.innerHTML = '<option value="">Todas</option>' +
           unidades.map(u => `<option value="${u}">${u}</option>`).join('');
       }
-    } catch (e) { console.error('loadCuadernoFilters()', e); }
+    } catch (e) { }
   }
 
   // --- Incidencias: cargar filtros únicos (Cliente/Unidad/Estado) ---
@@ -176,7 +176,6 @@ document.addEventListener('DOMContentLoaded', () => {
       fillSelect(incEstado, estados, null, false);
 
     } catch (e) {
-      console.error('loadIncidenciasFilters()', e);
     }
   }
 
@@ -255,7 +254,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
       tiempoConexionFiltersLoaded = true;
     } catch (e) {
-      console.error('loadTiempoConexionFilters()', e);
     }
   }
 
@@ -340,7 +338,6 @@ document.addEventListener('DOMContentLoaded', () => {
         };
       });
     } catch (e) {
-      console.error('Error cargando usuarios:', e);
     }
     
     // Array para guardar datos enriquecidos
@@ -627,7 +624,6 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // ===== VALIDAR CONTROL DE ACCESO (RESTRICCIÓN CRÍTICA) =====
       if (!accessControl) {
-        console.error('[SECURITY] AccessControl no inicializado');
         UI.showError('Error de Seguridad', 'Sistema de control de acceso no disponible');
         return;
       }
@@ -639,7 +635,6 @@ document.addEventListener('DOMContentLoaded', () => {
           '🔒 Acceso Denegado',
           `No tienes permisos para acceder a esta sección.\n\nTipo de acceso: ${summary.accessLevel} (${summary.userType})\n\nContacta al administrador si crees que esto es un error.`
         );
-        console.error(`[SECURITY] Intento de acceso no autorizado a ${target} por usuario ${summary.userType}`);
         return; // ← BLOQUEA AQUÍ
       }
       
@@ -650,11 +645,11 @@ document.addEventListener('DOMContentLoaded', () => {
       views.forEach(v => v.classList.toggle('shown', v.id === target));
 
       if (target === 'view-usuarios' && (!usersTbody || !usersTbody.dataset.initialized)) {
-        loadUsers().catch(console.error);
+        loadUsers().catch(() => {});
         if (usersTbody) usersTbody.dataset.initialized = 'true';
       }
       if (target === 'view-cliente-unidad' && (!clienteUnidadTbody || !clienteUnidadTbody.dataset.initialized)) {
-        loadClienteUnidad().catch(console.error);
+        loadClienteUnidad().catch(() => {});
         if (clienteUnidadTbody) clienteUnidadTbody.dataset.initialized = 'true';
       }
       if (target === 'view-cuaderno' && !cuadernoFiltersLoaded) {
@@ -754,7 +749,6 @@ document.addEventListener('DOMContentLoaded', () => {
         locale: { format: 'DD/MM/YYYY', applyLabel: 'Aplicar', cancelLabel: 'Cancelar' }
       });
     } else {
-      console.error('jQuery o daterangepicker no está disponible.');
     }
 
     document.getElementById('resumen-btn-refresh')?.addEventListener('click', renderResumen);
@@ -781,7 +775,6 @@ document.addEventListener('DOMContentLoaded', () => {
       populateResumenFilters(cachedIncidents);
       renderResumen();
     } catch (e) {
-      console.error('Error al cargar datos para el resumen:', e);
       UI.toast('Error al cargar datos del resumen.');
     } finally {
       UI.hideOverlay();
@@ -1712,12 +1705,6 @@ document.addEventListener('DOMContentLoaded', () => {
       };
 
       // DEBUG: Verificar datos capturados
-      console.log('✓ Datos capturados para exportación:', {
-        registros: detailedRecords.length,
-        primerRegistro: detailedRecords[0],
-        tipos: tiposOrder.length
-      });
-
       const colors = ['#7c3aed', '#2563eb', '#06b6d4', '#0ea5e9', '#f59e0b', '#ef4444', '#10b981', '#8b5cf6', '#6366f1', '#ec4899'];
       tiposOrder.forEach((tipo, idx) => {
         const total = sum(monthly[tipo]);
@@ -1762,7 +1749,6 @@ document.addEventListener('DOMContentLoaded', () => {
       applyKpiUnifiedHeights();
 
     } catch (e) {
-      console.error('Error al generar detalle de incidentes:', e);
       UI.toast('Error al cargar los detalles.');
     } finally {
       UI.hideOverlay();
@@ -2064,7 +2050,6 @@ document.addEventListener('DOMContentLoaded', () => {
       XLSX.writeFile(wb, filename);
       UI.toast('✓ Exportado a Excel con ' + detailedRecords.length + ' registros');
     } catch (e) {
-      console.error('Error en exportación Excel:', e);
       UI.toast('Error al exportar a Excel: ' + e.message);
     }
   }
@@ -2111,15 +2096,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     queryAccesoPeatonal()
       .then(() => {
-        console.log(`[AP] ÉXITO: Cargados ${apCache.length} registros`);
         if (apCache.length === 0) {
-          console.warn('[AP] ⚠️ ADVERTENCIA: apCache está vacío - es posible que no haya datos en ACCESO_PEATONAL');
         }
         populateAccesoPeatonalFilters(apCache);
         renderAccesoPeatonal();
       })
       .catch(e => {
-        console.error('[AP] ❌ ERROR:', e);
         UI.toast('No se pudo cargar Acceso Peatonal: ' + e.message);
       });
 
@@ -2664,7 +2646,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
     } catch (error) {
-      console.error('Error cargando clientes:', error);
     }
   }
 
@@ -2700,7 +2681,6 @@ document.addEventListener('DOMContentLoaded', () => {
         unidadSelect.appendChild(option);
       });
     } catch (error) {
-      console.error('Error cargando unidades:', error);
     }
   }
 
@@ -2743,7 +2723,6 @@ document.addEventListener('DOMContentLoaded', () => {
       
       UI.hideOverlay();
     } catch (error) {
-      console.error('Error cargando datos de rondas:', error);
       UI.toast('❌ Error al cargar datos: ' + error.message);
       UI.hideOverlay();
     }
@@ -2908,7 +2887,6 @@ document.addEventListener('DOMContentLoaded', () => {
           const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
           return new Date(ms);
         } catch(e) {
-          console.error('Error convertir Timestamp Firebase (_seconds):', e);
           return null;
         }
       }
@@ -2919,7 +2897,6 @@ document.addEventListener('DOMContentLoaded', () => {
           const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
           return new Date(ms);
         } catch(e) {
-          console.error('Error convertir Timestamp Firebase:', e);
           return null;
         }
       }
@@ -3042,7 +3019,6 @@ document.addEventListener('DOMContentLoaded', () => {
           const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
           return new Date(ms);
         } catch(e) {
-          console.error('Error convertir Timestamp Firebase (_seconds):', e);
         }
       }
       
@@ -3052,7 +3028,6 @@ document.addEventListener('DOMContentLoaded', () => {
           const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
           return new Date(ms);
         } catch(e) {
-          console.error('Error convertir Timestamp Firebase con segundos:', e);
         }
       }
       
@@ -3061,7 +3036,6 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           return value.toDate();
         } catch(e) {
-          console.error('Error convertir Timestamp toDate:', e);
         }
       }
       
@@ -3073,7 +3047,6 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           return new Date(value);
         } catch(e) {
-          console.error('Error convertir string:', e);
         }
       }
       
@@ -3083,19 +3056,12 @@ document.addEventListener('DOMContentLoaded', () => {
     registros.forEach((r, idx) => {
       // Debug en primer registro
       if (idx === 0) {
-        console.log('📋 Tabla - Primer registro:', r);
-        console.log('   horarioInicio:', r.horarioInicio);
-        console.log('   horarioInicio type:', typeof r.horarioInicio);
-        console.log('   horarioInicio constructor:', r.horarioInicio?.constructor?.name);
-        console.log('   Tiene toDate?', typeof r.horarioInicio?.toDate);
       }
       
       // Convertir a Date
       let dateObj = convertToDate(r.horarioInicio);
       
       if (idx === 0) {
-        console.log('   dateObj después de convertir:', dateObj);
-        console.log('   dateObj instanceof Date?', dateObj instanceof Date);
       }
       
       // Formatear fecha
@@ -3114,17 +3080,13 @@ document.addEventListener('DOMContentLoaded', () => {
             hour12: false
           });
         } catch(e) {
-          console.error('Error al formatear fecha:', e);
         }
       } else {
         if (idx === 0) {
-          console.log('   ⚠️ dateObj NO es válido para formatear. dateObj=', dateObj);
         }
       }
       
       if (idx === 0) {
-        console.log(`   Fecha final: '${fecha}', Hora final: '${hora}'`);
-        console.log('📊 Estructura puntosRegistrados:', r.puntosRegistrados);
       }
       
       // Contar QR desde el objeto puntosRegistrados (convertir a array si es necesario)
@@ -3139,7 +3101,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (puntosArray.length > 0) {
         // Iterar sobre cada punto
         puntosArray.forEach((punto, pIdx) => {
-          if (idx === 0) console.log(`   Punto ${pIdx}:`, punto);
+          if (idx === 0);
           
           // Contar el punto actual si tiene qrEscaneado
           if (punto.qrEscaneado === true) qrRegistrados++;
@@ -3147,7 +3109,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         
         if (idx === 0) {
-          console.log(`   ✅ Totales: QR Registrados=${qrRegistrados}, Sin Registrar=${qrSinRegistrar}`);
         }
       } else {
         // Fallback: usar puntosCompletados y puntosTotales si no hay datos
@@ -3179,8 +3140,6 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
       tbody.appendChild(row);
     });
-    
-    console.log(`✅ Tabla completada con ${registros.length} registros`);
   }
 
   // ============================================================================
@@ -3254,7 +3213,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
     } catch (error) {
-      console.error('Error cargando clientes en Detalle:', error);
     }
   }
 
@@ -3287,7 +3245,6 @@ document.addEventListener('DOMContentLoaded', () => {
         unidadSelect.appendChild(option);
       });
     } catch (error) {
-      console.error('Error cargando unidades en Detalle:', error);
     }
   }
 
@@ -3343,7 +3300,6 @@ document.addEventListener('DOMContentLoaded', () => {
       
       UI.hideOverlay();
     } catch (error) {
-      console.error('Error cargando datos de Detalle de Rondas:', error);
       UI.toast('❌ Error al cargar datos: ' + error.message);
       UI.hideOverlay();
     }
@@ -3511,7 +3467,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const tbody = document.getElementById('detalle-rondas-tabla-body');
       if (!tbody) {
         UI.toast('❌ No se encontró la tabla');
-        console.error('No se encontró tbody con id detalle-rondas-tabla-body');
         return;
       }
 
@@ -3562,9 +3517,6 @@ document.addEventListener('DOMContentLoaded', () => {
         UI.toast('⚠️ No hay registros válidos para exportar');
         return;
       }
-      
-      console.log(`Exportando ${rowsExportadas} registros`);
-      
       // Crear hoja de cálculo
       const worksheet = XLSX.utils.aoa_to_sheet(datos);
       
@@ -3582,7 +3534,6 @@ document.addEventListener('DOMContentLoaded', () => {
       
       UI.toast(`✅ ${rowsExportadas} registros exportados correctamente`);
     } catch (error) {
-      console.error('Error exportando Excel:', error);
       UI.toast('❌ Error al exportar: ' + error.message);
     }
   }
@@ -3609,7 +3560,6 @@ document.addEventListener('DOMContentLoaded', () => {
           reader.readAsDataURL(logoBlob);
         });
       } catch (e) {
-        console.warn('No se pudo cargar el logo');
       }
 
       // Obtener datos de la tabla
@@ -3875,7 +3825,6 @@ document.addEventListener('DOMContentLoaded', () => {
       UI.toast('✅ PDF generado correctamente con gráfico y logo');
 
     } catch (e) {
-      console.error('Error al generar PDF:', e);
       UI.hideOverlay();
       UI.toast('❌ Error al generar PDF: ' + e.message);
     }
@@ -3908,7 +3857,6 @@ document.addEventListener('DOMContentLoaded', () => {
           reader.readAsDataURL(logoBlob);
         });
       } catch (e) {
-        console.warn('No se pudo cargar el logo');
       }
 
       // Convertir fecha de Timestamp a formato legible
@@ -4240,7 +4188,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
     } catch (error) {
-      console.error('Error descargando PDF:', error);
       UI.hideOverlay();
       UI.toast('❌ Error al generar PDF: ' + error.message);
     }
@@ -4327,7 +4274,6 @@ document.addEventListener('DOMContentLoaded', () => {
       incidenciasTbody.dataset.rows = JSON.stringify(rows);
       UI.toast(`Resultados: ${rows.length}`);
     } catch (e) {
-      console.error(e);
       UI.confirm({ title: 'Error', message: 'No se pudo consultar incidencias.', kind: 'err' });
     } finally { UI.hideOverlay(); }
   }
@@ -4336,8 +4282,6 @@ document.addEventListener('DOMContentLoaded', () => {
     async function generarPDFIncidencia(inc) {
       UI.showOverlay('Generando PDF...', 'Construyendo el reporte');
       try {
-        console.log('=== INCIDENCIA DATA ===', inc);
-        
         // Convertir timestamp de Firebase correctamente
         let fechaSoloFecha = 'N/A';
         if (inc.timestampStr) {
@@ -4345,10 +4289,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const f = new Date(inc.timestampStr);
             if (f instanceof Date && !Number.isNaN(f.getTime())) {
               fechaSoloFecha = f.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' });
-              console.log('✓ Fecha convertida:', fechaSoloFecha);
             }
           } catch (e) {
-            console.warn('Error al convertir fecha:', e.message);
           }
         } else if (inc.timestamp) {
           // Fallback para casos donde timestamp venga en otro formato
@@ -4364,21 +4306,16 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (f instanceof Date && !Number.isNaN(f.getTime())) {
               fechaSoloFecha = f.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' });
-              console.log('✓ Fecha convertida (fallback):', fechaSoloFecha);
             }
           } catch (e) {
-            console.warn('Error fallback fecha:', e.message);
           }
         } else {
-          console.log('ℹ No hay timestamp en el registro');
         }
 
         // Cargar foto desde Firebase Storage (CORS ahora configurado)
         let fotoDataUrl = null;
         if (inc.fotoURL) {
           try {
-            console.log('Descargando foto desde Firebase Storage...');
-            
             let urlFinal = inc.fotoURL;
             
             // Asegurar que tiene alt=media
@@ -4389,25 +4326,19 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(urlFinal);
             if (response.ok) {
               const blob = await response.blob();
-              console.log('✓ Foto descargada, tamaño:', blob.size, 'bytes');
-              
               fotoDataUrl = await new Promise((resolve) => {
                 const reader = new FileReader();
                 reader.onload = () => {
-                  console.log('✓ Foto convertida a DataURL para PDF');
                   resolve(reader.result);
                 };
                 reader.onerror = () => {
-                  console.warn('❌ Error al convertir foto');
                   resolve(null);
                 };
                 reader.readAsDataURL(blob);
               });
             } else {
-              console.warn('❌ Error HTTP:', response.status);
             }
           } catch (e) {
-            console.warn('❌ Error al descargar foto:', e.message);
           }
         }
 
@@ -4625,7 +4556,6 @@ document.addEventListener('DOMContentLoaded', () => {
           UI.toast('Librería PDF no cargada');
         }
       } catch (err) {
-        console.error('generarPDFIncidencia', err);
         UI.toast('No se pudo generar el PDF');
       } finally {
         UI.hideOverlay();
@@ -4724,13 +4654,11 @@ document.addEventListener('DOMContentLoaded', () => {
           generarPDFCuadernoConLogo(rows, logoDataUrl, clienteSeleccionado, unidadSeleccionada);
         };
         reader.onerror = () => {
-          console.warn('No se pudo cargar logo, continuando sin imagen');
           generarPDFCuadernoConLogo(rows, null, clienteSeleccionado, unidadSeleccionada);
         };
         reader.readAsDataURL(blob);
       })
       .catch(e => {
-        console.warn('Error cargando logo:', e);
         generarPDFCuadernoConLogo(rows, null, clienteSeleccionado, unidadSeleccionada);
       });
   }
@@ -4892,13 +4820,11 @@ document.addEventListener('DOMContentLoaded', () => {
         pdfMake.createPdf(docDefinition).download(nombreArchivo);
         UI.toast('✓ PDF descargado exitosamente');
       } catch (e) {
-        console.error('Error al generar PDF:', e);
         UI.toast('Error al descargar PDF. Intenta nuevamente.');
       }
       UI.toast('PDF generado exitosamente');
       UI.hideOverlay();
     } catch (error) {
-      console.error('Error al generar PDF:', error);
       UI.toast('Error al generar PDF: ' + error.message);
       UI.hideOverlay();
     }
@@ -5045,7 +4971,6 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('incidencias-btn-buscar')?.click();
       } catch (error) {
         UI.hideOverlay();
-        console.error('Error al guardar:', error);
         UI.toast('Error al guardar: ' + error.message);
       }
     });
@@ -5162,7 +5087,6 @@ document.addEventListener('DOMContentLoaded', () => {
       XLSX.writeFile(wb, `incidencias_${new Date().toISOString().split('T')[0]}.xlsx`);
       UI.toast('Exportado a Excel correctamente');
     } catch (e) {
-      console.error('Error en exportación Excel:', e);
       UI.toast('Error al exportar a Excel');
     }
   }
@@ -5242,7 +5166,6 @@ document.addEventListener('DOMContentLoaded', () => {
         renderUsers(cachedUsers);
         UI.toast('Usuario eliminado');
       } catch (e) {
-        console.error(e);
         UI.confirm({ title: 'Error', message: 'No se pudo eliminar.', kind: 'err' });
       } finally { UI.hideOverlay(); }
     }
@@ -5319,7 +5242,6 @@ document.addEventListener('DOMContentLoaded', () => {
       UI.toast('Usuario actualizado');
       closeModal(editModal);
     } catch (e) {
-      console.error(e);
       UI.confirm({ title: 'Error', message: 'No se pudo actualizar.', kind: 'err' });
     } finally { UI.hideOverlay(); }
   });
@@ -5337,7 +5259,6 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       renderClienteUnidad(cachedClientesUnidades);
     } catch (e) {
-      console.error('Cliente/Unidad', e);
       UI.confirm({ title: 'Error', message: 'No se pudo cargar Cliente/Unidad.', kind: 'err' });
     } finally { UI.hideOverlay(); }
   }
@@ -5422,7 +5343,6 @@ document.addEventListener('DOMContentLoaded', () => {
         cuAgregarUnidadCliente.appendChild(option);
       });
     } catch (e) {
-      console.error('Error cargando clientes:', e);
     }
     
     openModal(cuAgregarUnidadModal);
@@ -5444,7 +5364,6 @@ document.addEventListener('DOMContentLoaded', () => {
         cuAgregarPuestoCliente.appendChild(option);
       });
     } catch (e) {
-      console.error('Error cargando clientes:', e);
     }
     
     openModal(cuAgregarPuestoModal);
@@ -5506,7 +5425,6 @@ document.addEventListener('DOMContentLoaded', () => {
       UI.toast('✅ Cliente y unidad agregados correctamente');
       closeModal(cuAgregarClienteModal);
     } catch (e) {
-      console.error('Error:', e);
       UI.toast('❌ Error al crear cliente');
     } finally {
       UI.hideOverlay();
@@ -5546,7 +5464,6 @@ document.addEventListener('DOMContentLoaded', () => {
       UI.toast('✅ Unidad agregada correctamente');
       closeModal(cuAgregarUnidadModal);
     } catch (e) {
-      console.error('Error:', e);
       UI.toast('❌ Error al agregar unidad');
     } finally {
       UI.hideOverlay();
@@ -5596,7 +5513,6 @@ document.addEventListener('DOMContentLoaded', () => {
       UI.toast('✅ Puesto agregado correctamente');
       closeModal(cuAgregarPuestoModal);
     } catch (e) {
-      console.error('Error:', e);
       UI.toast('❌ Error al agregar puesto');
     } finally {
       UI.hideOverlay();
@@ -5699,7 +5615,6 @@ document.addEventListener('DOMContentLoaded', () => {
       UI.toast('✅ Cambios guardados');
       closeModal(cuEditModal);
     } catch (e) {
-      console.error(e);
       UI.toast('❌ Error al guardar cambios');
     } finally { UI.hideOverlay(); }
   });
@@ -5775,7 +5690,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       });
     } catch (e) {
-      console.error(e);
       UI.confirm({ title: 'Error', message: 'No se pudo consultar el cuaderno.', kind: 'err' });
     } finally { UI.hideOverlay(); }
   });
@@ -5937,7 +5851,6 @@ document.addEventListener('DOMContentLoaded', () => {
       tiempoConexionTbody.dataset.rows = JSON.stringify(rows);
       UI.toast(`Resultados: ${rows.length}`);
     } catch (e) {
-      console.error('Error al buscar Tiempo de Conexión:', e);
       UI.confirm({ title: 'Error', message: 'No se pudieron cargar los datos de Tiempo de Conexión.', kind: 'err' });
     } finally {
       UI.hideOverlay();
@@ -6102,7 +6015,6 @@ document.addEventListener('DOMContentLoaded', () => {
       pdfMake.createPdf(docDef).download('tiempo_conexion.pdf');
       UI.toast('PDF generado correctamente');
     } catch (e) {
-      console.error('Error al generar PDF:', e);
       UI.toast('Error al generar PDF');
     }
   }
@@ -6116,7 +6028,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============================================================================
   logoutBtn?.addEventListener('click', async () => {
     try { await auth.signOut(); location.replace('index.html'); }
-    catch (e) { console.error(e); UI.toast('No se pudo cerrar sesión'); }
+    catch (e) {; UI.toast('No se pudo cerrar sesión'); }
   });
 
   // Cargar filtros de cuaderno una vez autenticado (y también por hook de navegación)
@@ -6141,13 +6053,11 @@ document.addEventListener('DOMContentLoaded', () => {
     let query = db.collection(collectionName);
     const clienteFiltro = window.accessControl?.getClienteFilter();
     if (clienteFiltro) {
-      console.log(`[FILTER] Aplicando filtro cliente: ${clienteFiltro}`);
       // Soportar ambos campos: 'cliente' (minúsculas) y 'CLIENTE' (mayúsculas)
       const isAccesoPeatonal = collectionName === 'ACCESO_PEATONAL';
       const fieldName = isAccesoPeatonal ? 'CLIENTE' : 'cliente';
       query = query.where(fieldName, '==', clienteFiltro);
     } else {
-      console.log('[FILTER] Sin filtro de cliente (ADMIN)');
     }
     return query;
   }
@@ -6160,7 +6070,6 @@ document.addEventListener('DOMContentLoaded', () => {
     window.accessControl.restrictedViews.forEach(restrictedView => {
       const view = document.getElementById(restrictedView);
       if (view && view.classList.contains('shown')) {
-        console.error(`[SECURITY VIOLATION] Vista bloqueada detectada: ${restrictedView}`);
         view.classList.remove('shown');
         UI.showError(
           '🔒 Violación de Seguridad',
@@ -6193,10 +6102,7 @@ document.addEventListener('DOMContentLoaded', () => {
         window.accessControl.applyDOMRestrictions();
         
         // Log de acceso para debug
-        console.log('[AUTH] Resumen de acceso:', window.accessControl.getSummary());
-        console.log('[SECURITY] Monitor de seguridad activado');
       } else {
-        console.warn('[AUTH] No se pudo inicializar el control de acceso');
         // Por seguridad, cerrar sesión si no se puede verificar permisos
         UI.showError('Error de Seguridad', 'No se pudo verificar tus permisos. Intenta de nuevo.');
         setTimeout(() => {
@@ -7004,7 +6910,6 @@ document.addEventListener('DOMContentLoaded', () => {
       rondaCliente.innerHTML = '<option value="">Seleccionar Cliente</option>' +
         clientes.map(c => `<option value="${c}">${c}</option>`).join('');
     } catch (e) {
-      console.error('loadRondaClientes error:', e);
     }
   }
 
@@ -7035,7 +6940,6 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
       } catch (e) {
-        console.error('Error loading ronda unidades:', e);
       }
     });
   }
@@ -7090,7 +6994,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
         rondaPuntosContainer.innerHTML = html;
       } catch (e) {
-        console.error('Error loading QRs:', e);
         rondaPuntosContainer.innerHTML = '<p style="color: red;">Error cargando QRs</p>';
       }
     });
@@ -7156,7 +7059,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
           }
         } catch (e) {
-          console.error('Error getting QR data:', e);
           puntosRonda.push({
             qrId: qrId,
             nombre: nombre,
@@ -7245,7 +7147,6 @@ document.addEventListener('DOMContentLoaded', () => {
         
         renderRondasList();
       } catch (error) {
-        console.error('Error guardando ronda:', error);
         if (UI && UI.toast) UI.toast('❌ Error: ' + error.message);
       } finally {
         UI.hideOverlay();
@@ -7478,7 +7379,6 @@ document.addEventListener('DOMContentLoaded', () => {
       renderRondasList();
       if (UI && UI.toast) UI.toast('✅ Ronda eliminada');
     } catch (error) {
-      console.error('Error eliminando ronda:', error);
       if (UI && UI.toast) UI.toast('❌ Error: ' + error.message);
     } finally {
       UI.hideOverlay();
@@ -7569,7 +7469,6 @@ document.addEventListener('DOMContentLoaded', () => {
       rondaList = snap.docs.map(doc => doc.data());
       renderRondasList();
     } catch (e) {
-      console.error('Error loading rondas:', e);
     }
   }
 
@@ -7647,7 +7546,6 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
       });
     } catch (e) {
-      console.warn('QRCode library no cargada, usando placeholder');
       qrPreviewContainer.innerHTML = `
         <div style="text-align: center; color: #a0aec0;">
           <div style="font-size: 32px; margin-bottom: 12px;">✅</div>
@@ -7768,7 +7666,6 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadQRClientes() {
     try {
       if (!qrCliente) {
-        console.warn('qrCliente no existe');
         return;
       }
       
@@ -7798,7 +7695,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       
       if (snap.empty) {
-        console.warn('No hay clientes en CLIENTE_UNIDAD');
         qrCliente.innerHTML = '<option value="">No hay clientes</option>';
         return;
       }
@@ -7808,7 +7704,6 @@ document.addEventListener('DOMContentLoaded', () => {
       qrCliente.innerHTML = '<option value="">Seleccionar Cliente</option>' +
         clientes.map(c => `<option value="${c}">${c}</option>`).join('');
     } catch (e) { 
-      console.error('loadQRClientes() error:', e);
       if (UI && UI.toast) UI.toast('❌ Error al cargar clientes: ' + e.message);
     }
   }
@@ -7817,8 +7712,6 @@ document.addEventListener('DOMContentLoaded', () => {
   if (qrCliente) {
     qrCliente.addEventListener('change', async () => {
       const selectedCliente = qrCliente.value;
-      console.log('📌 Cliente seleccionado:', selectedCliente);
-      
       if (!selectedCliente) {
         if (qrUnidad) qrUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>';
         return;
@@ -7827,17 +7720,10 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         // Usar firebase.firestore() directamente para evitar problemas de scope
         const firestore = firebase.firestore();
-        console.log('📌 Leyendo documento:', selectedCliente, 'de CLIENTE_UNIDAD');
-        
         const doc = await firestore.collection('CLIENTE_UNIDAD').doc(selectedCliente).get();
-        
-        console.log('📌 Documento existe:', doc.exists);
-        console.log('📌 Datos del documento:', doc.data());
         
         if (doc.exists) {
           const data = doc.data();
-          console.log('📌 Campo unidades:', data.unidades);
-          
           // Extract unit names (keys from the unidades object)
           let unidades = [];
           if (Array.isArray(data.unidades)) {
@@ -7847,25 +7733,17 @@ document.addEventListener('DOMContentLoaded', () => {
             unidades = Object.keys(data.unidades);
           }
           
-          console.log('📌 Es array:', Array.isArray(data.unidades));
-          console.log('📌 Unidades finales:', unidades);
-          
           if (qrUnidad) {
             const html = '<option value="">Seleccionar Unidad</option>' +
               unidades.map(u => `<option value="${u}">${u}</option>`).join('');
-            console.log('📌 HTML generado:', html);
             qrUnidad.innerHTML = html;
-            console.log('📌 innerHTML actualizado');
           } else {
-            console.warn('⚠️ qrUnidad no existe');
           }
         } else {
-          console.warn('⚠️ Documento no existe:', selectedCliente);
           if (qrUnidad) qrUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>';
           if (UI && UI.toast) UI.toast('⚠️ Cliente no encontrado');
         }
       } catch (e) { 
-        console.error('❌ Error loading unidades:', e);
         if (UI && UI.toast) UI.toast('❌ Error al cargar unidades: ' + e.message);
       }
     });
@@ -8113,7 +7991,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) {
           if (UI && UI.hideOverlay) UI.hideOverlay();
           if (UI && UI.toast) UI.toast('❌ Error en la búsqueda: ' + error.message);
-          console.error('Error en búsqueda:', error);
         }
       });
     }
@@ -8383,7 +8260,6 @@ document.addEventListener('DOMContentLoaded', () => {
           if (UI && UI.toast) UI.toast('❌ pdfMake no disponible');
         }
       } catch (error) {
-        console.error('Error descargando todos los QRs:', error);
         if (UI && UI.toast) UI.toast('❌ Error: ' + error.message);
       } finally {
         if (UI && UI.hideOverlay) UI.hideOverlay();
@@ -8478,7 +8354,6 @@ document.addEventListener('DOMContentLoaded', () => {
       
       if (UI && UI.toast) UI.toast('✅ QR creado y guardado en Firebase');
     } catch (error) {
-      console.error('Error saving QR:', error);
       if (UI && UI.toast) UI.toast('❌ Error al guardar QR: ' + error.message);
     }
     });
@@ -8560,7 +8435,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const snap = await firestore.collection('QR_CODES').get();
           qrList = snap.docs.map(d => d.data());
           renderQRList();
-        } catch (e) { console.error('Error loading QRs:', e); }
+        } catch (e) {; }
       })();
     }
   });
@@ -8597,7 +8472,6 @@ document.addEventListener('DOMContentLoaded', () => {
         deleteQRModal.style.display = 'none';
         if (UI && UI.toast) UI.toast('✅ QR eliminado correctamente');
       } catch (e) {
-        console.error('Error deleting QR:', e);
         if (UI && UI.toast) UI.toast('❌ Error al eliminar QR');
       }
     };
@@ -8721,7 +8595,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 pdfMake.createPdf(docDefinition).download(pdfName);
                 if (UI && UI.toast) UI.toast('✅ QR descargado en PDF');
               } catch (pdfError) {
-                console.error('Error en pdfMake:', pdfError);
                 if (UI && UI.toast) UI.toast('❌ Error al generar PDF');
               }
 
@@ -8731,7 +8604,6 @@ document.addEventListener('DOMContentLoaded', () => {
               }
             }
           } catch (innerError) {
-            console.error('Error procesando QR:', innerError);
             if (UI && UI.toast) UI.toast('❌ Error al procesar QR');
             if (document.body.contains(tempContainer)) document.body.removeChild(tempContainer);
           }
@@ -8741,7 +8613,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (UI && UI.toast) UI.toast('❌ Librería QR no disponible');
       }
     } catch (e) {
-      console.error('Error descargando QR:', e);
       if (UI && UI.toast) UI.toast('❌ Error: ' + e.message);
     }
   };
@@ -8757,7 +8628,6 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       // Validar que db esté disponible
       if (!window.db) {
-        console.warn('Firebase db no está inicializado');
         UI.toast('Esperando inicialización de Firebase...');
         return;
       }
@@ -8775,7 +8645,6 @@ document.addEventListener('DOMContentLoaded', () => {
           });
         });
       } catch (firebaseErr) {
-        console.warn('Error accediendo a ACCESO_VEHICULAR:', firebaseErr.message);
         UI.toast('Sin datos disponibles');
         cvData = [];
       }
@@ -8784,7 +8653,6 @@ document.addEventListener('DOMContentLoaded', () => {
       updateControlVehicularCharts();
       updateControlVehicularCards();
     } catch (err) {
-      console.error('Error loading Control Vehicular:', err.message);
       UI.toast('Error al cargar datos');
     }
   }
@@ -9057,7 +8925,6 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       // Validar que db esté disponible
       if (!window.db) {
-        console.warn('Firebase db no está inicializado');
         return;
       }
 
@@ -9072,7 +8939,6 @@ document.addEventListener('DOMContentLoaded', () => {
           if (data.unidad) unidadesSet.add(data.unidad);
         });
       } catch (firebaseErr) {
-        console.warn('ACCESO_VEHICULAR no existe o error de acceso:', firebaseErr.message);
       }
 
       const clienteSelect = document.getElementById('cv-cliente');
@@ -9104,7 +8970,6 @@ document.addEventListener('DOMContentLoaded', () => {
       unidadSelect.value = currentUnidadValue;
       
     } catch (err) {
-      console.error('Error loading CV filters:', err.message);
     }
   }
 
@@ -9161,7 +9026,6 @@ document.addEventListener('DOMContentLoaded', () => {
       XLSX.writeFile(wb, 'ControlVehicular.xlsx');
       UI.toast('Excel exportado exitosamente');
     } catch (err) {
-      console.error('Error exporting Excel:', err);
       UI.toast('Error al exportar Excel');
     }
   }
@@ -9172,7 +9036,6 @@ document.addEventListener('DOMContentLoaded', () => {
       // Validar que pdfMake esté disponible
       if (!window.pdfMake || !window.pdfMake.createPdf) {
         UI.toast('Las librerías de PDF se están cargando, intenta de nuevo en unos segundos');
-        console.warn('pdfMake no está cargado aún');
         return;
       }
 
@@ -9214,7 +9077,6 @@ document.addEventListener('DOMContentLoaded', () => {
           reader.readAsDataURL(blob);
         });
       } catch (e) {
-        console.warn('Logo not found:', e.message);
       }
 
       // Estadísticas
@@ -9567,7 +9429,6 @@ document.addEventListener('DOMContentLoaded', () => {
       UI.toast('✅ PDF exportado correctamente');
 
     } catch (err) {
-      console.error('Error exporting PDF:', err);
       UI.hideOverlay();
       UI.toast('❌ Error al exportar PDF');
     }
@@ -9589,7 +9450,6 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   async function initIncidenciaQR() {
-    console.log('[IQR INIT] Inicializando Incidencia QR');
     const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
     
     // Solo inicializar Choices si no están ya inicializados
@@ -9597,9 +9457,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         iqrChoices.cliente = new Choices('#iqr-cliente', cfg);
         iqrChoices.unidad = new Choices('#iqr-unidad', cfg);
-        console.log('[IQR INIT] Choices inicializadas');
       } catch (e) {
-        console.warn('Choices ya está inicializado:', e.message);
       }
     }
 
@@ -9633,9 +9491,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Cargar datos iniciales
-    console.log('[IQR INIT] Cargando datos iniciales...');
     await loadAndRenderIncidenciaQR();
-    console.log('[IQR INIT] Inicialización completada');
   }
 
   function limpiarFiltrosIQR() {
@@ -9672,7 +9528,6 @@ document.addEventListener('DOMContentLoaded', () => {
           .limit(10000)
           .get();
       } catch (e) {
-        console.warn('Error con filtro de cliente, cargando sin filtro:', e.message);
         // Si falla el filtro, cargar sin filtro (admin)
         snapshot = await db.collection('RONDA_MANUAL')
           .orderBy('__name__', 'desc')
@@ -9710,17 +9565,12 @@ document.addEventListener('DOMContentLoaded', () => {
           fecha: fecha,
         };
       });
-
-      console.log(`[IQR] Total registros cargados: ${iqrAllData.length}`);
-      console.log('[IQR] Primer registro:', iqrAllData[0]);
-      
       // Actualizar opciones de filtros
       populateIncidenciaQRFilters();
       
       // Renderizar todo
       renderIncidenciaQR();
     } catch (e) {
-      console.error('Error al cargar Incidencia QR:', e);
       UI.toast('Error al cargar datos de Incidencia QR: ' + e.message);
     } finally {
       UI.hideOverlay();
@@ -9728,13 +9578,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function populateIncidenciaQRFilters() {
-    console.log('[IQR POPULATE] Iniciando con', iqrAllData.length, 'registros');
     const clientes = [...new Set(iqrAllData.map(d => d.cliente).filter(Boolean))].sort();
     const unidades = [...new Set(iqrAllData.map(d => d.unidad).filter(Boolean))].sort();
-
-    console.log('[IQR POPULATE] Clientes únicos:', clientes);
-    console.log('[IQR POPULATE] Unidades únicas:', unidades);
-
     const clienteSelect = document.getElementById('iqr-cliente');
     const unidadSelect = document.getElementById('iqr-unidad');
 
@@ -9745,12 +9590,9 @@ document.addEventListener('DOMContentLoaded', () => {
           [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
           'value', 'label', false
         );
-        console.log('[IQR POPULATE] Cliente Choices actualizado');
       } catch (e) {
-        console.warn('Error al actualizar cliente Choices:', e.message);
       }
     } else {
-      console.warn('[IQR POPULATE] Cliente select o Choices no encontrado');
     }
 
     if (unidadSelect && iqrChoices.unidad) {
@@ -9760,19 +9602,14 @@ document.addEventListener('DOMContentLoaded', () => {
           [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
           'value', 'label', false
         );
-        console.log('[IQR POPULATE] Unidad Choices actualizado');
       } catch (e) {
-        console.warn('Error al actualizar unidad Choices:', e.message);
       }
     } else {
-      console.warn('[IQR POPULATE] Unidad select o Choices no encontrado');
     }
   }
 
   function renderIncidenciaQR() {
-    console.log('[IQR] renderIncidenciaQR iniciado');
     const filteredData = getFilteredIncidenciaQRData();
-    console.log(`[IQR] Datos filtrados: ${filteredData.length}`);
     updateIncidenciaQRStats(filteredData);
     renderIncidenciaQRCharts(filteredData);
     renderIncidenciaQRTable(filteredData);
@@ -9780,66 +9617,47 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function getFilteredIncidenciaQRData() {
     let data = [...iqrAllData];
-    console.log('[IQR FILTER] Inicio con:', data.length, 'registros');
-
     // Filtro de cliente - SOLO si se seleccionó algo diferente a "Todos"
     const clienteSelect = document.getElementById('iqr-cliente');
     const clienteVal = clienteSelect?.value;
-    console.log('[IQR FILTER] clienteVal:', clienteVal);
     if (clienteVal && clienteVal !== 'Todos' && clienteVal.trim() !== '') {
       const beforeCount = data.length;
       data = data.filter(d => d.cliente && d.cliente.trim() === clienteVal.trim());
-      console.log(`[IQR FILTER] Después cliente filter: ${beforeCount} → ${data.length}`);
     }
 
     // Filtro de unidad - SOLO si se seleccionó algo diferente a "Todas"
     const unidadSelect = document.getElementById('iqr-unidad');
     const unidadVal = unidadSelect?.value;
-    console.log('[IQR FILTER] unidadVal:', unidadVal);
     if (unidadVal && unidadVal !== 'Todas' && unidadVal.trim() !== '') {
       const beforeCount = data.length;
       data = data.filter(d => d.unidad && d.unidad.trim() === unidadVal.trim());
-      console.log(`[IQR FILTER] Después unidad filter: ${beforeCount} → ${data.length}`);
     }
 
     // Filtro de fechas
     const fechaInicio = document.getElementById('iqr-fecha-inicio')?.value;
     const fechaFin = document.getElementById('iqr-fecha-fin')?.value;
-    console.log('[IQR FILTER] fechaInicio:', fechaInicio, 'fechaFin:', fechaFin);
     if (fechaInicio) {
       const start = new Date(fechaInicio);
       start.setHours(0, 0, 0, 0);
       const beforeCount = data.length;
       data = data.filter(d => d.fecha >= start);
-      console.log(`[IQR FILTER] Después inicio filter: ${beforeCount} → ${data.length}`);
     }
     if (fechaFin) {
       const end = new Date(fechaFin);
       end.setHours(23, 59, 59, 999);
       const beforeCount = data.length;
       data = data.filter(d => d.fecha <= end);
-      console.log(`[IQR FILTER] Después fin filter: ${beforeCount} → ${data.length}`);
     }
-
-    console.log('[IQR FILTER] Total final después filtros:', data.length);
-    if (data.length > 0) console.log('[IQR FILTER] Primer registro filtrado:', data[0]);
+    if (data.length > 0);
     return data;
   }
 
   function updateIncidenciaQRStats(data) {
-    console.log('[IQR STATS] Calculando con', data.length, 'registros');
     const total = data.length;
-
-    console.log('[IQR STATS] Total: ' + total);
-
     document.getElementById('iqr-total').textContent = total;
-
-    console.log('[IQR STATS] Elementos actualizados en DOM');
   }
 
   function renderIncidenciaQRCharts(data) {
-    console.log('[IQR CHARTS] Renderizando gráficos con', data.length, 'registros');
-    
     // Gráfico de Incidencias por Fecha (usando timestamp)
     const byDate = {};
     data.forEach(d => {
@@ -9847,7 +9665,6 @@ document.addEventListener('DOMContentLoaded', () => {
       byDate[dateKey] = (byDate[dateKey] || 0) + 1;
     });
     const sortedDates = Object.keys(byDate).sort();
-    console.log('[IQR CHARTS] Fechas encontradas:', sortedDates.length);
     if (iqrCharts.fecha) iqrCharts.fecha.destroy();
     const ctxFecha = document.getElementById('iqr-chart-fecha')?.getContext('2d');
     if (ctxFecha) {
@@ -9870,7 +9687,6 @@ document.addEventListener('DOMContentLoaded', () => {
           plugins: { legend: { display: false } }
         }
       });
-      console.log('[IQR CHARTS] Gráfico de fecha creado');
     }
 
     // Gráfico de Cantidad de Incidencias por Punto (nombrePunto)
@@ -9879,7 +9695,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const punto = d.nombrePunto || 'Sin Punto';
       byPunto[punto] = (byPunto[punto] || 0) + 1;
     });
-    console.log('[IQR CHARTS] Puntos encontrados:', Object.keys(byPunto));
     if (iqrCharts.estado) iqrCharts.estado.destroy();
     const ctxEstado = document.getElementById('iqr-chart-estado')?.getContext('2d');
     if (ctxEstado) {
@@ -9894,7 +9709,6 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         options: { responsive: true, maintainAspectRatio: false }
       });
-      console.log('[IQR CHARTS] Gráfico de puntos creado');
     }
 
     // Gráfico de Cantidad de Registros por Usuario
@@ -9903,7 +9717,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const usuario = d.usuario || 'Sin usuario';
       byUsuario[usuario] = (byUsuario[usuario] || 0) + 1;
     });
-    console.log('[IQR CHARTS] Usuarios encontrados:', Object.keys(byUsuario));
     if (iqrCharts.cliente) iqrCharts.cliente.destroy();
     const ctxCliente = document.getElementById('iqr-chart-cliente')?.getContext('2d');
     if (ctxCliente) {
@@ -9919,7 +9732,6 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y' }
       });
-      console.log('[IQR CHARTS] Gráfico de usuario creado');
     }
 
     // Gráfico de Incidencias por Unidad
@@ -9928,7 +9740,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const unidad = d.unidad || 'Sin unidad';
       byUnidad[unidad] = (byUnidad[unidad] || 0) + 1;
     });
-    console.log('[IQR CHARTS] Unidades encontradas:', Object.keys(byUnidad));
     if (iqrCharts.unidad) iqrCharts.unidad.destroy();
     const ctxUnidad = document.getElementById('iqr-chart-unidad')?.getContext('2d');
     if (ctxUnidad) {
@@ -9944,9 +9755,7 @@ document.addEventListener('DOMContentLoaded', () => {
         },
         options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y' }
       });
-      console.log('[IQR CHARTS] Gráfico de unidad creado');
     }
-    console.log('[IQR CHARTS] Todos los gráficos renderizados');
   }
 
   function renderChart(existingChart, canvasId, config, setChart) {
@@ -9959,16 +9768,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderIncidenciaQRTable(data) {
-    console.log('[IQR TABLE] Renderizando tabla con', data.length, 'registros');
     const tbody = document.getElementById('iqr-tbody');
     if (!tbody) {
-      console.error('[IQR TABLE] No se encontró elemento iqr-tbody');
       return;
     }
 
     tbody.innerHTML = '';
     if (data.length === 0) {
-      console.log('[IQR TABLE] Sin datos, mostrando mensaje');
       tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 20px; color: #a0aec0;">No hay datos para mostrar</td></tr>';
       return;
     }
@@ -10030,10 +9836,8 @@ document.addEventListener('DOMContentLoaded', () => {
       tbody.appendChild(fila);
       
       if (index === 0) {
-        console.log('[IQR TABLE] Primera fila agregada:', {fecha: fechaStr, usuario: d.usuario, cliente: d.cliente, estado: estadoText});
       }
     });
-    console.log('[IQR TABLE] Tabla completada con', data.length, 'filas');
   }
 
   async function exportIncidenciaQRExcel() {
@@ -10166,7 +9970,6 @@ document.addEventListener('DOMContentLoaded', () => {
       UI.hideOverlay();
       UI.toast('✅ Excel exportado correctamente');
     } catch (err) {
-      console.error('Error exporting Excel:', err);
       UI.hideOverlay();
       UI.toast('❌ Error al exportar Excel');
     }
@@ -10201,7 +10004,6 @@ document.addEventListener('DOMContentLoaded', () => {
           });
         }
       } catch (e) {
-        console.warn('No se pudo cargar el logo:', e.message);
         logoImage = null;
       }
 
@@ -10406,7 +10208,6 @@ document.addEventListener('DOMContentLoaded', () => {
       window.pdfMake.createPdf(docDef).download(`IncidenciaQR_${new Date().getTime()}.pdf`);
       UI.toast('✅ PDF exportado correctamente');
     } catch (err) {
-      console.error('Error exporting PDF:', err);
       UI.hideOverlay();
       UI.toast('❌ Error al exportar PDF: ' + err.message);
     }
@@ -10551,3 +10352,4 @@ window.addEventListener('resize', () => {
     obs.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
   } catch (e) { /* noop */ }
 })();
+

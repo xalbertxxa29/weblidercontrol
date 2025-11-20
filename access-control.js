@@ -42,7 +42,6 @@ class AccessControl {
       const docSnap = await this.db.collection('USUARIOS').doc(username).get();
       
       if (!docSnap.exists) {
-        console.warn(`[AccessControl] Usuario ${username} no encontrado en USUARIOS`);
         return { tipoAcceso: null, cliente: null, unidad: null };
       }
 
@@ -53,7 +52,6 @@ class AccessControl {
       
       return { tipoAcceso, cliente, unidad };
     } catch (error) {
-      console.error('[AccessControl] Error al obtener datos del usuario:', error);
       return { tipoAcceso: null, cliente: null, unidad: null };
     }
   }
@@ -97,7 +95,6 @@ class AccessControl {
     const username = this.extractUsername(user.email);
     
     if (!username) {
-      console.error('[AccessControl] No se pudo extraer username del email');
       return false;
     }
 
@@ -109,7 +106,6 @@ class AccessControl {
     this.unidadAsignada = unidad;    // Guardar UNIDAD para filtros
     
     if (!this.userType) {
-      console.warn('[AccessControl] Usuario sin TIPOACCESO definido, restringiendo acceso');
       this.userType = 'CLIENTE';
     }
 
@@ -154,15 +150,12 @@ class AccessControl {
    */
   validateViewAccess(viewId) {
     if (!this.currentUser) {
-      console.error('[AccessControl] Usuario no autenticado');
       return false;
     }
     
     if (this.canAccessView(viewId)) {
       return true;
     }
-    
-    console.warn(`[ACCESS DENIED] Usuario ${this.userType} intentó acceder a ${viewId}`);
     return false;
   }
 
