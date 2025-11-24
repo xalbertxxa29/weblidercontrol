@@ -161,9 +161,18 @@ async function registrarRondasIncumplidas(rondasIncumplidas) {
         fecha: fecha
       };
 
-      // Generar ID único con fecha y hora: ronda_xyz_2025-11-22_1700
-      const fechaHoraFormato = formatearFechaConHora(ahora);
-      const docIdUnico = `${rondasId}_${fechaHoraFormato}`;
+      // Generar ID único con fecha y hora de la ronda: ronda_xyz_2025-11-22_1700
+      // HHMM es la hora del horario programado de la ronda (no la hora actual)
+      let horaRondaFormato = '0000'; // default
+      if (horaTermino) {
+        const horaPartes = horaTermino.split(':');
+        if (horaPartes.length >= 2) {
+          const horas = String(parseInt(horaPartes[0])).padStart(2, '0');
+          const minutos = String(parseInt(horaPartes[1])).padStart(2, '0');
+          horaRondaFormato = `${horas}${minutos}`;
+        }
+      }
+      const docIdUnico = `${rondasId}_${fecha}_${horaRondaFormato}`;
 
       // Guardar en RONDAS_COMPLETADAS con ID único que incluye fecha/hora
       await db.collection('RONDAS_COMPLETADAS').doc(docIdUnico).set(documentoIncumplida);
