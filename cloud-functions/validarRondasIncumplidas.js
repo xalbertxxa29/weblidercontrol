@@ -18,10 +18,10 @@ const ZONA_HORARIA_OFFSET = -5; // horas desde UTC
 
 function obtenerAhoraEnZonaLocal() {
   const ahora = new Date();
-  // Crear una fecha en la zona local sin perder precisión
-  // Convertir UTC a hora local restando las horas del offset
-  const offset = ZONA_HORARIA_OFFSET * 60; // en minutos
-  const ahoraLocal = new Date(ahora.getTime() - offset * 60 * 1000);
+  // Para convertir UTC a UTC-5, SUMAMOS 5 horas (no restamos)
+  // UTC-5 significa 5 horas ANTES que UTC, así que si UTC es 00:43, local es 19:43 del día anterior
+  const offset = Math.abs(ZONA_HORARIA_OFFSET) * 60 * 60 * 1000; // convertir a ms
+  const ahoraLocal = new Date(ahora.getTime() + offset);
   return ahoraLocal;
 }
 
