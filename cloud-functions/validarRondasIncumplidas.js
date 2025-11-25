@@ -13,7 +13,20 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
+// Zona horaria: Perú/Argentina UTC-5
+const ZONA_HORARIA_OFFSET = -5; // horas desde UTC
+
+function obtenerAhoraEnZonaLocal() {
+  const ahora = new Date();
+  // Crear una fecha en la zona local sin perder precisión
+  // Convertir UTC a hora local restando las horas del offset
+  const offset = ZONA_HORARIA_OFFSET * 60; // en minutos
+  const ahoraLocal = new Date(ahora.getTime() - offset * 60 * 1000);
+  return ahoraLocal;
+}
+
 function formatearFecha(fecha) {
+  // Usar toLocaleDateString para obtener la fecha en la zona correcta
   const año = fecha.getFullYear();
   const mes = String(fecha.getMonth() + 1).padStart(2, '0');
   const dia = String(fecha.getDate()).padStart(2, '0');
@@ -202,11 +215,15 @@ exports.validarRondasIncumplidas = functions
   .schedule('every 5 minutes')
   .onRun(async (context) => {
     console.log('=== INICIO: Validar Rondas Incumplidas ===');
-    console.log(`Hora actual: ${new Date().toISOString()}`);
+    
+    const ahoraUTC = new Date();
+    const ahora = obtenerAhoraEnZonaLocal();
+    
+    console.log(`Hora UTC: ${ahoraUTC.toISOString()}`);
+    console.log(`Hora local (zona: UTC${ZONA_HORARIA_OFFSET}): ${ahora.toISOString()}`);
     
     try {
-      const hoy = formatearFecha(new Date());
-      const ahora = new Date();
+      const hoy = formatearFecha(ahora);
       const rondasSnapshot = await db.collection('Rondas_QR').get();
       
       if (rondasSnapshot.empty) {
