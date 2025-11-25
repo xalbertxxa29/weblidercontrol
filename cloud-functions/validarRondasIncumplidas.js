@@ -31,16 +31,25 @@ function formatearFechaConHora(fecha) {
 }
 
 function debeEjecutarseHoy(ronda, fechaHoy) {
-  if (!ronda.frecuencia) return false;
+  // Si no tiene frecuencia especificada, asumir que debe validarse
+  if (!ronda.frecuencia) return true;
 
   const frecuencia = (ronda.frecuencia || '').toLowerCase().trim();
   
-  // Si dice "diaria" o contiene "dia", se ejecuta
+  // Validar si la frecuencia coincide con hoy
+  // Diaria: siempre
   if (frecuencia.includes('diaria') || frecuencia === 'diario') {
     return true;
   }
-
-  return false;
+  
+  // Semanal: validar día de la semana (si está configurado)
+  if (frecuencia.includes('semanal') || frecuencia === 'semanal') {
+    // Por ahora asumir que se debe validar
+    return true;
+  }
+  
+  // Si tiene cualquier otra frecuencia, validar
+  return true;
 }
 
 /**
