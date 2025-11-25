@@ -83,8 +83,12 @@ function esRondaDeHoy(ronda, ahora = new Date()) {
     return true;
   }
   
+  // Convertir fechaCreacion a zona local (UTC-5)
+  const offset = ZONA_HORARIA_OFFSET * 60 * 60 * 1000;
+  const fechaCreacionLocal = new Date(fechaCreacion.getTime() + offset);
+  
   const fechaHoyFormato = formatearFecha(ahora);
-  const fechaCreacionFormato = formatearFecha(fechaCreacion);
+  const fechaCreacionFormato = formatearFecha(fechaCreacionLocal);
   
   const esHoy = fechaHoyFormato === fechaCreacionFormato;
   console.log(`    Validación de fecha: Hoy=${fechaHoyFormato}, Creación=${fechaCreacionFormato}, EsHoy=${esHoy}`);
