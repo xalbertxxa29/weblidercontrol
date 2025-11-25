@@ -14,19 +14,19 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 // Zona horaria: Perú/Argentina UTC-5
+// UTC-5 significa 5 horas ANTES que UTC
+// Si en UTC es 01:01, en UTC-5 es 20:01 del día anterior
 const ZONA_HORARIA_OFFSET = -5; // horas desde UTC
 
 function obtenerAhoraEnZonaLocal() {
   const ahora = new Date();
-  // Para convertir UTC a UTC-5, SUMAMOS 5 horas (no restamos)
-  // UTC-5 significa 5 horas ANTES que UTC, así que si UTC es 00:43, local es 19:43 del día anterior
-  const offset = Math.abs(ZONA_HORARIA_OFFSET) * 60 * 60 * 1000; // convertir a ms
-  const ahoraLocal = new Date(ahora.getTime() + offset);
+  // RESTAR 5 horas para convertir de UTC a UTC-5
+  const offset = ZONA_HORARIA_OFFSET * 60 * 60 * 1000; // -5 horas en ms
+  const ahoraLocal = new Date(ahora.getTime() + offset); // offset ya es negativo
   return ahoraLocal;
 }
 
 function formatearFecha(fecha) {
-  // Usar toLocaleDateString para obtener la fecha en la zona correcta
   const año = fecha.getFullYear();
   const mes = String(fecha.getMonth() + 1).padStart(2, '0');
   const dia = String(fecha.getDate()).padStart(2, '0');
