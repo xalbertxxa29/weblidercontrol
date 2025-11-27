@@ -2587,7 +2587,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============================================================================
   let kpiRondaFilters = {
     cliente: '',
-    unidad: ''
+    unidad: '',
+    fechaInicio: '',
+    fechaFin: ''
   };
 
   function initKpiRondaGeneral() {
@@ -2604,10 +2606,14 @@ document.addEventListener('DOMContentLoaded', () => {
       // Limpiar filtros
       kpiRondaFilters = {
         cliente: '',
-        unidad: ''
+        unidad: '',
+        fechaInicio: '',
+        fechaFin: ''
       };
       document.getElementById('kpi-ronda-cliente').value = '';
       document.getElementById('kpi-ronda-unidad').value = '';
+      document.getElementById('ronda-general-fecha-inicio').value = '';
+      document.getElementById('ronda-general-fecha-fin').value = '';
       
       // Recargar con filtros vacíos
       loadKpiRondaData();
@@ -2616,6 +2622,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // Event listener para cambio de Cliente (actualiza Unidades)
     document.getElementById('kpi-ronda-cliente')?.addEventListener('change', () => {
       loadKpiRondaUnidadesPorCliente();
+    });
+    
+    // Event listeners para filtros de fecha
+    document.getElementById('ronda-general-fecha-inicio')?.addEventListener('change', () => {
+      kpiRondaFilters.fechaInicio = document.getElementById('ronda-general-fecha-inicio').value;
+    });
+    
+    document.getElementById('ronda-general-fecha-fin')?.addEventListener('change', () => {
+      kpiRondaFilters.fechaFin = document.getElementById('ronda-general-fecha-fin').value;
     });
     
     // Cargar datos iniciales con pequeño delay para asegurar que TODO está inicializado
@@ -2722,6 +2737,26 @@ document.addEventListener('DOMContentLoaded', () => {
         registros = registros.filter(r => r.unidad === kpiRondaFilters.unidad);
       }
       
+      // Filtro por fecha inicio
+      if (kpiRondaFilters.fechaInicio) {
+        const fechaInicio = new Date(kpiRondaFilters.fechaInicio);
+        fechaInicio.setHours(0, 0, 0, 0);
+        registros = registros.filter(r => {
+          const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
+          return fechaRegistro >= fechaInicio;
+        });
+      }
+      
+      // Filtro por fecha fin
+      if (kpiRondaFilters.fechaFin) {
+        const fechaFin = new Date(kpiRondaFilters.fechaFin);
+        fechaFin.setHours(23, 59, 59, 999);
+        registros = registros.filter(r => {
+          const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
+          return fechaRegistro <= fechaFin;
+        });
+      }
+      
       // Limitar a 30 últimos registros
       const ultimos30 = registros.slice(0, 30);
       
@@ -2745,7 +2780,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Actualizar texto de información
     const infoTextEl = document.getElementById('kpi-ronda-info-text');
     if (infoTextEl) {
-      if (kpiRondaFilters.cliente || kpiRondaFilters.unidad) {
+      if (kpiRondaFilters.cliente || kpiRondaFilters.unidad || kpiRondaFilters.fechaInicio || kpiRondaFilters.fechaFin) {
         infoTextEl.textContent = 'Registros filtrados';
       } else {
         infoTextEl.textContent = 'Últimos 30 registros';
@@ -2758,6 +2793,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const filters = [];
       if (kpiRondaFilters.cliente) filters.push(`Cliente: ${kpiRondaFilters.cliente}`);
       if (kpiRondaFilters.unidad) filters.push(`Unidad: ${kpiRondaFilters.unidad}`);
+      if (kpiRondaFilters.fechaInicio) filters.push(`Desde: ${kpiRondaFilters.fechaInicio}`);
+      if (kpiRondaFilters.fechaFin) filters.push(`Hasta: ${kpiRondaFilters.fechaFin}`);
       
       if (filters.length > 0) {
         filterInfoEl.textContent = `🔍 Filtros: ${filters.join(' • ')}`;
@@ -3155,7 +3192,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let detalleRondasFilters = {
     cliente: '',
     unidad: '',
-    estado: ''
+    estado: '',
+    fechaInicio: '',
+    fechaFin: ''
   };
 
   function initDetalleRondas() {
@@ -3172,11 +3211,15 @@ document.addEventListener('DOMContentLoaded', () => {
       detalleRondasFilters = {
         cliente: '',
         unidad: '',
-        estado: ''
+        estado: '',
+        fechaInicio: '',
+        fechaFin: ''
       };
       document.getElementById('detalle-rondas-cliente').value = '';
       document.getElementById('detalle-rondas-unidad').value = '';
       document.getElementById('detalle-rondas-estado').value = '';
+      document.getElementById('detalle-rondas-fecha-inicio').value = '';
+      document.getElementById('detalle-rondas-fecha-fin').value = '';
       
       loadDetalleRondasData();
     });
@@ -3192,6 +3235,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // Event listener para cambio de Cliente
     document.getElementById('detalle-rondas-cliente')?.addEventListener('change', () => {
       loadDetalleRondasUnidadesPorCliente();
+    });
+    
+    // Event listeners para filtros de fecha
+    document.getElementById('detalle-rondas-fecha-inicio')?.addEventListener('change', () => {
+      detalleRondasFilters.fechaInicio = document.getElementById('detalle-rondas-fecha-inicio').value;
+    });
+    
+    document.getElementById('detalle-rondas-fecha-fin')?.addEventListener('change', () => {
+      detalleRondasFilters.fechaFin = document.getElementById('detalle-rondas-fecha-fin').value;
     });
     
     // Cargar datos iniciales
@@ -3296,6 +3348,26 @@ document.addEventListener('DOMContentLoaded', () => {
         registros = registros.filter(r => r.estado === detalleRondasFilters.estado);
       }
       
+      // Filtro por fecha inicio
+      if (detalleRondasFilters.fechaInicio) {
+        const fechaInicio = new Date(detalleRondasFilters.fechaInicio);
+        fechaInicio.setHours(0, 0, 0, 0);
+        registros = registros.filter(r => {
+          const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
+          return fechaRegistro >= fechaInicio;
+        });
+      }
+      
+      // Filtro por fecha fin
+      if (detalleRondasFilters.fechaFin) {
+        const fechaFin = new Date(detalleRondasFilters.fechaFin);
+        fechaFin.setHours(23, 59, 59, 999);
+        registros = registros.filter(r => {
+          const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
+          return fechaRegistro <= fechaFin;
+        });
+      }
+      
       // Limitar a 30 registros
       const ultimos30 = registros.slice(0, 30);
       
@@ -3320,7 +3392,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const infoTextEl = document.getElementById('detalle-rondas-info-text');
     if (infoTextEl) {
-      if (detalleRondasFilters.cliente || detalleRondasFilters.unidad || detalleRondasFilters.estado) {
+      if (detalleRondasFilters.cliente || detalleRondasFilters.unidad || detalleRondasFilters.estado || detalleRondasFilters.fechaInicio || detalleRondasFilters.fechaFin) {
         infoTextEl.textContent = 'Registros filtrados (últimos 30)';
       } else {
         infoTextEl.textContent = 'Últimos 30 registros';
@@ -7084,6 +7156,15 @@ document.addEventListener('DOMContentLoaded', () => {
           });
         }
       }
+      
+      console.log('DEBUG - puntosRonda después de construcción:', puntosRonda);
+      console.log('DEBUG - Es array?', Array.isArray(puntosRonda));
+      
+      // GARANTIZAR que puntosRonda es un array válido
+      if (!Array.isArray(puntosRonda) || puntosRonda.length === 0) {
+        console.warn('⚠️ ADVERTENCIA - puntosRonda no es array válido, convirtiendo a array vacío');
+        puntosRonda = [];
+      }
 
       // Validar días según frecuencia
       let diasConfig = null;
@@ -7119,28 +7200,37 @@ document.addEventListener('DOMContentLoaded', () => {
         toleranciaTipo,
         frecuencia,
         diasConfig,
-        puntosRonda,
+        puntosRonda: Array.isArray(puntosRonda) ? puntosRonda : [],
         activa: true
       };
+      
+      console.log('DEBUG - rondaData.puntosRonda:', rondaData.puntosRonda);
+      console.log('DEBUG - rondaData.puntosRonda es array?', Array.isArray(rondaData.puntosRonda));
 
       try {
         UI.showOverlay('Guardando...', editingId ? 'Actualizando ronda' : 'Creando ronda');
         
         if (editingId) {
-          // Actualizar ronda existente
+          // Actualizar ronda existente (sin tocar createdAt)
           await db.collection('Rondas_QR').doc(editingId).update(rondaData);
           const index = rondaList.findIndex(r => r.id === editingId);
           if (index !== -1) {
-            rondaList[index] = { id: editingId, ...rondaData };
+            rondaList[index] = { id: editingId, ...rondaList[index], ...rondaData };
           }
           if (UI && UI.toast) UI.toast('✅ Ronda actualizada exitosamente');
         } else {
-          // Crear ronda nueva
+          // Crear ronda nueva - Usar serverTimestamp para garantizar timestamp correcto en Firestore
           const newRonda = {
             id: `ronda_${Date.now()}`,
             ...rondaData,
-            createdAt: new Date().toISOString()
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
           };
+          
+          // DEBUG: Verificar tipo de createdAt antes de guardar
+          console.log('DEBUG - Tipo de createdAt antes de guardar:', typeof newRonda.createdAt);
+          console.log('DEBUG - createdAt value:', newRonda.createdAt);
+          
           await db.collection('Rondas_QR').doc(newRonda.id).set(newRonda);
           rondaList.push(newRonda);
           if (UI && UI.toast) UI.toast('✅ Ronda creada exitosamente');
@@ -7242,35 +7332,39 @@ document.addEventListener('DOMContentLoaded', () => {
       <div style="display: grid; gap: 16px;">
     `;
     rondasFiltradas.forEach((ronda, index) => {
-      const gradients = ['#e0f7fa', '#f3e5f5', '#e8f5e9', '#fff3e0', '#fce4ec'];
-      const gradient = gradients[index % gradients.length];
-      const borderColor = ['#00bcd4', '#9c27b0', '#4caf50', '#ff9800', '#e91e63'][index % 5];
-      
-      html += `
-        <div style="background: ${gradient}; border-left: 5px solid ${borderColor}; 
-                    border-radius: 12px; padding: 16px; 
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: all 0.3s ease;
-                    position: relative; overflow: hidden;">
-          
-          <!-- Background decorativo -->
-          <div style="position: absolute; top: -30px; right: -30px; width: 80px; height: 80px; 
-                      background: ${borderColor}; opacity: 0.05; border-radius: 50%;"></div>
-          
-          <div style="position: relative; z-index: 1;">
-            <!-- Header con nombre y estado -->
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
-              <div>
-                <h4 style="margin: 0; color: ${borderColor}; font-size: 18px; font-weight: 600;">
-                  📍 ${ronda.nombre}
-                </h4>
-                <p style="margin: 4px 0 0; color: #666; font-size: 13px;">
-                  <span style="background: ${borderColor}; color: white; padding: 2px 8px; border-radius: 12px; 
-                               font-size: 11px; font-weight: 500;">
-                    ${ronda.cliente} • ${ronda.unidad}
-                  </span>
-                </p>
-              </div>
-              <div style="background: ${borderColor}; color: white; padding: 6px 12px; 
+      try {
+        console.log('DEBUG - Renderizando ronda:', ronda.nombre);
+        console.log('DEBUG - ronda.puntosRonda:', ronda.puntosRonda);
+        console.log('DEBUG - Es array?', Array.isArray(ronda.puntosRonda));
+        const gradients = ['#e0f7fa', '#f3e5f5', '#e8f5e9', '#fff3e0', '#fce4ec'];
+        const gradient = gradients[index % gradients.length];
+        const borderColor = ['#00bcd4', '#9c27b0', '#4caf50', '#ff9800', '#e91e63'][index % 5];
+        
+        html += `
+          <div style="background: ${gradient}; border-left: 5px solid ${borderColor}; 
+                      border-radius: 12px; padding: 16px; 
+                      box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: all 0.3s ease;
+                      position: relative; overflow: hidden;">
+            
+            <!-- Background decorativo -->
+            <div style="position: absolute; top: -30px; right: -30px; width: 80px; height: 80px; 
+                        background: ${borderColor}; opacity: 0.05; border-radius: 50%;"></div>
+            
+            <div style="position: relative; z-index: 1;">
+              <!-- Header con nombre y estado -->
+              <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+                <div>
+                  <h4 style="margin: 0; color: ${borderColor}; font-size: 18px; font-weight: 600;">
+                    📍 ${ronda.nombre}
+                  </h4>
+                  <p style="margin: 4px 0 0; color: #666; font-size: 13px;">
+                    <span style="background: ${borderColor}; color: white; padding: 2px 8px; border-radius: 12px; 
+                                 font-size: 11px; font-weight: 500;">
+                      ${ronda.cliente} • ${ronda.unidad}
+                    </span>
+                  </p>
+                </div>
+                <div style="background: ${borderColor}; color: white; padding: 6px 12px; 
                          border-radius: 20px; font-size: 12px; font-weight: 600;">
                 ${ronda.activa ? '🟢 ACTIVA' : '🔴 INACTIVA'}
               </div>
@@ -7330,7 +7424,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 Puntos de Ronda:
               </p>
               <div style="display: flex; flex-direction: column; gap: 8px;">
-                ${ronda.puntosRonda.map(p => {
+                ${Array.isArray(ronda.puntosRonda) ? ronda.puntosRonda.map(p => {
                   const tienePreguntas = p.requireQuestion === 'si' && p.questions && p.questions.length > 0;
                   return `
                     <div style="padding: 8px; background: white; border-radius: 6px; border-left: 3px solid ${borderColor};">
@@ -7351,7 +7445,7 @@ document.addEventListener('DOMContentLoaded', () => {
                       ` : ''}
                     </div>
                   `;
-                }).join('')}
+                }).join('') : '<div style="color: #999; font-size: 11px;">Sin puntos asignados</div>'}
               </div>
             </div>
 
@@ -7375,9 +7469,19 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
         </div>
       `;
+      } catch (e) {
+        console.error('ERROR - Error renderizando ronda:', ronda.nombre);
+        console.error('ERROR - Detalles del error:', e);
+        console.error('ERROR - Stack:', e.stack);
+      }
     });
     html += '</div>';
-    rondasListContainer.innerHTML = html;
+    try {
+      rondasListContainer.innerHTML = html;
+    } catch (e) {
+      console.error('ERROR - Error al renderizar HTML de rondas:', e);
+      console.error('ERROR - HTML que causó error:', html.substring(0, 500));
+    }
   }
 
   // Actualizar opciones de filtros en Rondas Creadas
@@ -7558,14 +7662,29 @@ document.addEventListener('DOMContentLoaded', () => {
       const snap = await getQueryWithClienteFilter('Rondas_QR').get();
       rondaList = snap.docs.map(doc => {
         const data = doc.data();
+        console.log('DEBUG - Ronda desde Firestore:', data.id || data.nombre);
+        console.log('DEBUG - puntosRonda desde Firestore:', data.puntosRonda);
+        console.log('DEBUG - puntosRonda es array?', Array.isArray(data.puntosRonda));
+        console.log('DEBUG - Tipo de puntosRonda:', typeof data.puntosRonda);
+        
+        // GARANTIZAR que puntosRonda es siempre un array
+        const puntosRondaNormalizado = Array.isArray(data.puntosRonda) 
+          ? data.puntosRonda 
+          : (data.puntosRonda && typeof data.puntosRonda === 'object' 
+              ? Object.values(data.puntosRonda) 
+              : []);
+        
         return {
           id: doc.id,
-          ...data
+          ...data,
+          puntosRonda: puntosRondaNormalizado
         };
       });
+      console.log('DEBUG - Total rondas cargadas:', rondaList.length);
       updateRondasFilterOptions();
       renderRondasList();
     } catch (e) {
+      console.error('ERROR - Error al cargar rondas:', e);
     }
   }
 

@@ -304,7 +304,7 @@
                 <div style="background: white; padding: 20px; border-radius: 14px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
                   <h3 style="margin: 0 0 16px 0; font-size: 14px; font-weight: 700; color: #2d3748; text-transform: uppercase; letter-spacing: 0.5px;">🔍 Filtros</h3>
                   
-                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px;">
                     <!-- Cliente -->
                     <div>
                       <label style="display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: #4a5568; text-transform: uppercase;">👥 Cliente</label>
@@ -325,6 +325,26 @@
                       >
                         <option value="">Todas</option>
                       </select>
+                    </div>
+
+                    <!-- Fecha Inicio -->
+                    <div>
+                      <label style="display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: #4a5568; text-transform: uppercase;">📅 Fecha Inicio</label>
+                      <input 
+                        id="ronda-general-fecha-inicio"
+                        type="date"
+                        style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 8px; font-size: 13px; background: white; cursor: pointer;"
+                      >
+                    </div>
+
+                    <!-- Fecha Fin -->
+                    <div>
+                      <label style="display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: #4a5568; text-transform: uppercase;">📅 Fecha Fin</label>
+                      <input 
+                        id="ronda-general-fecha-fin"
+                        type="date"
+                        style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 8px; font-size: 13px; background: white; cursor: pointer;"
+                      >
                     </div>
 
                     <!-- Botones -->
@@ -429,6 +449,26 @@
                       >
                         <option value="">Todas</option>
                       </select>
+                    </div>
+
+                    <!-- Fecha Inicio -->
+                    <div>
+                      <label style="display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: #4a5568; text-transform: uppercase;">📅 Fecha Inicio</label>
+                      <input 
+                        id="detalle-rondas-fecha-inicio"
+                        type="date"
+                        style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 8px; font-size: 13px; background: white; cursor: pointer;"
+                      >
+                    </div>
+
+                    <!-- Fecha Fin -->
+                    <div>
+                      <label style="display: block; margin-bottom: 8px; font-size: 12px; font-weight: 600; color: #4a5568; text-transform: uppercase;">📅 Fecha Fin</label>
+                      <input 
+                        id="detalle-rondas-fecha-fin"
+                        type="date"
+                        style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e0; border-radius: 8px; font-size: 13px; background: white; cursor: pointer;"
+                      >
                     </div>
 
                     <!-- Estado -->
@@ -818,7 +858,7 @@
                   </div>
                 </div>
                 <div style="background: white; padding: 20px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                  <h4 style="margin: 0 0 16px 0; color: #2d3748;\">🏢 Incidencias por Unidad</h4>
+                  <h4 style="margin: 0 0 16px 0; color: #2d3748;">🏢 Incidencias por Unidad</h4>
                   <div style="position: relative; height: 300px;">
                     <canvas id="iqr-chart-unidad"></canvas>
                   </div>
@@ -1452,13 +1492,13 @@
   <div id="toast" class="toast" aria-live="polite" aria-atomic="true"></div>
 
   <!-- ===== Scripts (sin duplicados) ===== -->
-  <!-- Firebase config propio -->
-  <script src="firebase-config.js"></script>
-
-  <!-- Firebase compat (v10) -->
+  <!-- Firebase compat (v10) - DEBE cargarse primero -->
   <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore-compat.js"></script>
+
+  <!-- Firebase config propio - DESPUÉS de los scripts de Firebase -->
+  <script src="firebase-config.js"></script>
 
   <!-- jQuery + Moment + DateRangePicker -->
   <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
