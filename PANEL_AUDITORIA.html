@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Auditoría - WebLiderControl</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .filters {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .filter-group label {
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .filter-group select,
+        .filter-group input {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .filter-group input:focus,
+        .filter-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 5px rgba(102, 126, 234, 0.3);
+        }
+
+        .buttons {
+            display: flex;
+            gap: 10px;
+            grid-column: 1 / -1;
+            justify-content: flex-end;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            border-left: 4px solid #667eea;
+        }
+
+        .stat-card h3 {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #333;
+        }
+
+        .stat-card.info {
+            border-left-color: #667eea;
+        }
+
+        .stat-card.success {
+            border-left-color: #52c41a;
+        }
+
+        .stat-card.warning {
+            border-left-color: #faad14;
+        }
+
+        .stat-card.error {
+            border-left-color: #f5222d;
+        }
+
+        .logs-table-container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .logs-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .logs-table thead {
+            background: #f5f5f5;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .logs-table th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .logs-table td {
+            padding: 15px;
+            border-bottom: 1px solid #f0f0f0;
+            font-size: 14px;
+        }
+
+        .logs-table tbody tr:hover {
+            background: #f9f9f9;
+        }
+
+        .action-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .action-badge.crear {
+            background: #e6f7ff;
+            color: #1890ff;
+        }
+
+        .action-badge.actualizar {
+            background: #f6ffed;
+            color: #52c41a;
+        }
+
+        .action-badge.eliminar {
+            background: #fff1f0;
+            color: #f5222d;
+        }
+
+        .action-badge.estado_cambio {
+            background: #fff7e6;
+            color: #faad14;
+        }
+
+        .action-badge.escaneo_qr {
+            background: #f9f0ff;
+            color: #722ed1;
+        }
+
+        .action-badge.validacion_automatica {
+            background: #f0f5ff;
+            color: #0050b3;
+        }
+
+        .timestamp {
+            color: #999;
+            font-size: 13px;
+        }
+
+        .usuario {
+            font-weight: 500;
+            color: #333;
+        }
+
+        .descripcion {
+            color: #666;
+            font-size: 13px;
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 50px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #f0f0f0;
+            padding-bottom: 15px;
+        }
+
+        .modal-header h2 {
+            color: #333;
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            font-size: 28px;
+            color: #999;
+            cursor: pointer;
+        }
+
+        .close-btn:hover {
+            color: #333;
+        }
+
+        .detalles {
+            display: grid;
+            gap: 15px;
+        }
+
+        .detalle-item {
+            border-bottom: 1px solid #f0f0f0;
+            padding-bottom: 15px;
+        }
+
+        .detalle-item:last-child {
+            border-bottom: none;
+        }
+
+        .detalle-label {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .detalle-value {
+            color: #666;
+            font-size: 14px;
+            word-break: break-all;
+        }
+
+        .code-block {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 20px;
+            padding: 20px;
+        }
+
+        .pagination button {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .pagination button:hover {
+            background: #f5f5f5;
+        }
+
+        .pagination button.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>📋 Panel de Auditoría</h1>
+            <p>Historial completo de cambios, acciones y eventos en la plataforma WebLiderControl</p>
+        </div>
+
+        <!-- Filtros -->
+        <div class="filters">
+            <div class="filter-group">
+                <label for="filterUsuario">Filtrar por Usuario</label>
+                <input type="text" id="filterUsuario" placeholder="usuario@ejemplo.com">
+            </div>
+
+            <div class="filter-group">
+                <label for="filterAccion">Filtrar por Tipo de Acción</label>
+                <select id="filterAccion">
+                    <option value="">Todas las acciones</option>
+                    <option value="CREAR">Crear</option>
+                    <option value="ACTUALIZAR">Actualizar</option>
+                    <option value="ELIMINAR">Eliminar</option>
+                    <option value="ESTADO_CAMBIO">Cambio de Estado</option>
+                    <option value="ESCANEO_QR">Escaneo QR</option>
+                    <option value="VALIDACION_AUTOMATICA">Validación Automática</option>
+                    <option value="LOGIN">Login</option>
+                </select>
+            </div>
+
+            <div class="filter-group">
+                <label for="filterColeccion">Filtrar por Colección</label>
+                <input type="text" id="filterColeccion" placeholder="RONDAS_COMPLETADAS">
+            </div>
+
+            <div class="filter-group">
+                <label for="filterDocumento">Filtrar por Documento</label>
+                <input type="text" id="filterDocumento" placeholder="ID del documento">
+            </div>
+
+            <div class="filter-group">
+                <label for="filterFecha">Desde Fecha</label>
+                <input type="date" id="filterFecha">
+            </div>
+
+            <div class="filter-group">
+                <label for="filterLimite">Cantidad de Registros</label>
+                <select id="filterLimite">
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                    <option value="500">500</option>
+                </select>
+            </div>
+
+            <div class="buttons">
+                <button class="btn-secondary" onclick="limpiarFiltros()">Limpiar Filtros</button>
+                <button class="btn-primary" onclick="aplicarFiltros()">Buscar</button>
+            </div>
+        </div>
+
+        <!-- Estadísticas -->
+        <div class="stats" id="stats">
+            <div class="stat-card info">
+                <h3>Total de Acciones</h3>
+                <div class="value">-</div>
+            </div>
+            <div class="stat-card success">
+                <h3>Cambios Realizados</h3>
+                <div class="value">-</div>
+            </div>
+            <div class="stat-card warning">
+                <h3>Validaciones Automáticas</h3>
+                <div class="value">-</div>
+            </div>
+            <div class="stat-card error">
+                <h3>Eliminaciones</h3>
+                <div class="value">-</div>
+            </div>
+        </div>
+
+        <!-- Tabla de Logs -->
+        <div class="logs-table-container">
+            <table class="logs-table">
+                <thead>
+                    <tr>
+                        <th>Fecha/Hora</th>
+                        <th>Usuario</th>
+                        <th>Acción</th>
+                        <th>Documento</th>
+                        <th>Descripción</th>
+                        <th>Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="logsTableBody">
+                    <tr>
+                        <td colspan="6" class="empty-state">
+                            <div class="empty-state-icon">📊</div>
+                            <p>No hay registros. Selecciona filtros y haz clic en "Buscar"</p>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Paginación -->
+        <div class="pagination" id="pagination"></div>
+    </div>
+
+    <!-- Modal de Detalles -->
+    <div class="modal" id="detallesModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Detalles del Registro</h2>
+                <button class="close-btn" onclick="cerrarModal()">&times;</button>
+            </div>
+            <div class="detalles" id="detallesContenido"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'https://southamerica-east1-incidencias-85d73.cloudfunctions.net';
+        let logsActuales = [];
+        let paginaActual = 1;
+        const registrosPorPagina = 10;
+
+        // Cargar logs al iniciar
+        document.addEventListener('DOMContentLoaded', () => {
+            aplicarFiltros();
+        });
+
+        async function aplicarFiltros() {
+            const usuario = document.getElementById('filterUsuario').value;
+            const accion = document.getElementById('filterAccion').value;
+            const coleccion = document.getElementById('filterColeccion').value;
+            const documento = document.getElementById('filterDocumento').value;
+            const limite = document.getElementById('filterLimite').value;
+
+            mostrarCargando();
+
+            try {
+                let url = `${API_BASE}/obtenerHistorial?limite=${limite}`;
+
+                if (usuario) {
+                    url = `${API_BASE}/obtenerLogsPorUsuario?usuario=${usuario}&limite=${limite}`;
+                } else if (accion) {
+                    url = `${API_BASE}/obtenerLogsPorTipoAccion?tipoAccion=${accion}&limite=${limite}`;
+                } else if (coleccion) {
+                    url = `${API_BASE}/obtenerLogsPorColeccion?coleccion=${coleccion}&limite=${limite}`;
+                }
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (data.success) {
+                    logsActuales = data.historial || data.logs || [];
+
+                    // Aplicar filtros adicionales
+                    if (documento) {
+                        logsActuales = logsActuales.filter(log => 
+                            log.documentoId.includes(documento)
+                        );
+                    }
+
+                    paginaActual = 1;
+                    mostrarLogs();
+                    actualizarEstadisticas();
+                } else {
+                    mostrarError('No se pudieron obtener los logs');
+                }
+
+            } catch (error) {
+                console.error('Error:', error);
+                mostrarError('Error al cargar los logs');
+            }
+        }
+
+        function mostrarLogs() {
+            const tbody = document.getElementById('logsTableBody');
+
+            if (logsActuales.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="empty-state">
+                            <div class="empty-state-icon">🔍</div>
+                            <p>No se encontraron registros con los criterios seleccionados</p>
+                        </td>
+                    </tr>
+                `;
+                document.getElementById('pagination').innerHTML = '';
+                return;
+            }
+
+            const inicio = (paginaActual - 1) * registrosPorPagina;
+            const fin = inicio + registrosPorPagina;
+            const registrosPagina = logsActuales.slice(inicio, fin);
+
+            tbody.innerHTML = registrosPagina.map(log => `
+                <tr>
+                    <td class="timestamp">${log.fecha} ${log.hora}</td>
+                    <td class="usuario">${log.usuario}</td>
+                    <td><span class="action-badge ${log.tipoAccion.toLowerCase()}">${log.tipoAccion}</span></td>
+                    <td><small>${log.documentoId}</small></td>
+                    <td class="descripcion" title="${log.descripcion}">${log.descripcion}</td>
+                    <td>
+                        <button class="btn-secondary" onclick="mostrarDetalles('${log.id}')" style="padding: 5px 10px;">Ver</button>
+                    </td>
+                </tr>
+            `).join('');
+
+            // Paginación
+            const totalPaginas = Math.ceil(logsActuales.length / registrosPorPagina);
+            const paginationDiv = document.getElementById('pagination');
+
+            if (totalPaginas > 1) {
+                let html = '';
+                
+                if (paginaActual > 1) {
+                    html += `<button onclick="cambiarPagina(1)">« Primera</button>`;
+                    html += `<button onclick="cambiarPagina(${paginaActual - 1})">< Anterior</button>`;
+                }
+
+                for (let i = 1; i <= totalPaginas; i++) {
+                    if (i === paginaActual) {
+                        html += `<button class="active">${i}</button>`;
+                    } else if (i <= 5 || i > totalPaginas - 2 || Math.abs(i - paginaActual) <= 1) {
+                        html += `<button onclick="cambiarPagina(${i})">${i}</button>`;
+                    } else if (i === 6) {
+                        html += `<button disabled>...</button>`;
+                    }
+                }
+
+                if (paginaActual < totalPaginas) {
+                    html += `<button onclick="cambiarPagina(${paginaActual + 1})">Siguiente ></button>`;
+                    html += `<button onclick="cambiarPagina(${totalPaginas})">Última »</button>`;
+                }
+
+                paginationDiv.innerHTML = html;
+            } else {
+                paginationDiv.innerHTML = '';
+            }
+        }
+
+        function cambiarPagina(numero) {
+            paginaActual = numero;
+            mostrarLogs();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function mostrarDetalles(logId) {
+            const log = logsActuales.find(l => l.id === logId);
+
+            if (!log) return;
+
+            const html = `
+                <div class="detalle-item">
+                    <div class="detalle-label">Tipo de Acción</div>
+                    <div class="detalle-value">${log.tipoAccion}</div>
+                </div>
+                <div class="detalle-item">
+                    <div class="detalle-label">Usuario</div>
+                    <div class="detalle-value">${log.usuario}</div>
+                </div>
+                <div class="detalle-item">
+                    <div class="detalle-label">Fecha y Hora</div>
+                    <div class="detalle-value">${log.fecha} ${log.hora}</div>
+                </div>
+                <div class="detalle-item">
+                    <div class="detalle-label">Colección</div>
+                    <div class="detalle-value">${log.coleccion}</div>
+                </div>
+                <div class="detalle-item">
+                    <div class="detalle-label">Documento ID</div>
+                    <div class="detalle-value">${log.documentoId}</div>
+                </div>
+                <div class="detalle-item">
+                    <div class="detalle-label">Descripción</div>
+                    <div class="detalle-value">${log.descripcion}</div>
+                </div>
+                ${log.metadatos ? `
+                <div class="detalle-item">
+                    <div class="detalle-label">Metadatos</div>
+                    <div class="code-block">${JSON.stringify(log.metadatos, null, 2)}</div>
+                </div>
+                ` : ''}
+                ${log.cambios ? `
+                <div class="detalle-item">
+                    <div class="detalle-label">Cambios</div>
+                    <div class="code-block">${JSON.stringify(log.cambios, null, 2)}</div>
+                </div>
+                ` : ''}
+                ${log.datos ? `
+                <div class="detalle-item">
+                    <div class="detalle-label">Datos</div>
+                    <div class="code-block">${JSON.stringify(log.datos, null, 2)}</div>
+                </div>
+                ` : ''}
+            `;
+
+            document.getElementById('detallesContenido').innerHTML = html;
+            document.getElementById('detallesModal').classList.add('active');
+        }
+
+        function cerrarModal() {
+            document.getElementById('detallesModal').classList.remove('active');
+        }
+
+        function limpiarFiltros() {
+            document.getElementById('filterUsuario').value = '';
+            document.getElementById('filterAccion').value = '';
+            document.getElementById('filterColeccion').value = '';
+            document.getElementById('filterDocumento').value = '';
+            document.getElementById('filterFecha').value = '';
+            document.getElementById('filterLimite').value = '100';
+            logsActuales = [];
+            document.getElementById('logsTableBody').innerHTML = `
+                <tr>
+                    <td colspan="6" class="empty-state">
+                        <div class="empty-state-icon">📊</div>
+                        <p>No hay registros. Selecciona filtros y haz clic en "Buscar"</p>
+                    </td>
+                </tr>
+            `;
+        }
+
+        function mostrarCargando() {
+            document.getElementById('logsTableBody').innerHTML = `
+                <tr>
+                    <td colspan="6" class="loading">
+                        <div class="spinner"></div>
+                        <p>Cargando registros...</p>
+                    </td>
+                </tr>
+            `;
+        }
+
+        function mostrarError(mensaje) {
+            document.getElementById('logsTableBody').innerHTML = `
+                <tr>
+                    <td colspan="6" class="empty-state">
+                        <div class="empty-state-icon">❌</div>
+                        <p>${mensaje}</p>
+                    </td>
+                </tr>
+            `;
+        }
+
+        function actualizarEstadisticas() {
+            const stats = {
+                total: logsActuales.length,
+                cambios: logsActuales.filter(l => l.tipoAccion === 'ACTUALIZAR').length,
+                validaciones: logsActuales.filter(l => l.tipoAccion === 'VALIDACION_AUTOMATICA').length,
+                eliminaciones: logsActuales.filter(l => l.tipoAccion === 'ELIMINAR').length
+            };
+
+            const estatDiv = document.getElementById('stats');
+            estatDiv.children[0].querySelector('.value').textContent = stats.total;
+            estatDiv.children[1].querySelector('.value').textContent = stats.cambios;
+            estatDiv.children[2].querySelector('.value').textContent = stats.validaciones;
+            estatDiv.children[3].querySelector('.value').textContent = stats.eliminaciones;
+        }
+
+        // Cerrar modal al hacer clic fuera
+        window.onclick = function (event) {
+            const modal = document.getElementById('detallesModal');
+            if (event.target === modal) {
+                cerrarModal();
+            }
+        }
+    </script>
+</body>
+</html>

@@ -6,6 +6,7 @@
 
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
+const logger = require('./logger');
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -31,6 +32,17 @@ function formatearFecha(fecha) {
   const mes = String(fecha.getMonth() + 1).padStart(2, '0');
   const dia = String(fecha.getDate()).padStart(2, '0');
   return `${año}-${mes}-${dia}`;
+}
+
+function formatearFechaConGuionesBajos(fecha) {
+  /**
+   * Formato para IDs de documentos: YYYY_MM_DD
+   * Ejemplo: 2025_11_30
+   */
+  const año = fecha.getFullYear();
+  const mes = String(fecha.getMonth() + 1).padStart(2, '0');
+  const dia = String(fecha.getDate()).padStart(2, '0');
+  return `${año}_${mes}_${dia}`;
 }
 
 function formatearFechaConHora(fecha) {
@@ -127,21 +139,42 @@ async function registrarRondasIncumplidas(rondasIncumplidas) {
       // Obtener hora de inicio (de la ronda)
       let horaInicio = ronda.horarioInicio || ronda.hora_inicio || '';
       let horaTermino = ronda.horario || ronda.hora_fin || ronda.horarioTermino || '';
+      let horaRondaProgramada = ronda.horario || ''; // Horario programado de la ronda (para horarioRonda)
       let tolerancia = ronda.tolerancia || ronda.tolerancia_minutos || 0;
 
       // Crear timestamps para horarioInicio y horarioTermino
-      const ahora = new Date();
+      // SOLUCIÓN CORRECTA: Usar Date.UTC para evitar problemas de zona horaria
+      const ahora_utc = new Date();
       
-      // horarioInicio: cuando debió comenzar la ronda (hoy a la hora indicada)
-      const inicioPartes = horaInicio.split(':');
-      const timestampInicio = new Date(ahora);
+      // horarioInicio: cuando debió comenzar la ronda (hoy a la hora indicada en Perú, convertida a UTC)
+      const inicioPartes = horaTermino.split(':');  // Usar horaTermino (horario programado) no horaInicio
+      let timestampInicio = new Date(ahora_utc);
+      
       if (inicioPartes.length >= 2) {
-        timestampInicio.setHours(parseInt(inicioPartes[0]), parseInt(inicioPartes[1]), 0, 0);
+        const horasInt = parseInt(inicioPartes[0]);
+        const minutosInt = parseInt(inicioPartes[1]);
+        
+        // CORRECCIÓN: Usar Date.UTC para crear fecha correcta
+        // Si en Perú (UTC-5) son las 18:10, en UTC son las 23:10
+        timestampInicio = new Date(Date.UTC(
+          ahora_utc.getUTCFullYear(),
+          ahora_utc.getUTCMonth(),
+          ahora_utc.getUTCDate(),
+          horasInt + 5,  // Sumar 5 horas para convertir hora local Perú a UTC
+          minutosInt,
+          0,
+          0
+        ));
+        
+        // Log para verificar que se está guardando correctamente
+        console.log(`   📍 horarioRonda (valor string): ${horaRondaProgramada}`);
+        console.log(`   📍 Hora en Perú (hora local): ${horasInt}:${String(minutosInt).padStart(2, '0')}`);
+        console.log(`   📍 timestampInicio en UTC: ${timestampInicio.toUTCString()}`);
       }
       
       // horarioTermino: cuando debió terminar (timestampInicio + tolerancia)
       const timestampTermino = new Date(timestampInicio);
-      timestampTermino.setMinutes(timestampTermino.getMinutes() + tolerancia);
+      timestampTermino.setUTCMinutes(timestampTermino.getUTCMinutes() + tolerancia);
 
       // Crear estructura de documento incumplido
       let puntosRegistrados = {};
@@ -179,6 +212,7 @@ async function registrarRondasIncumplidas(rondasIncumplidas) {
         estado: 'NO REALIZADA',
         horarioInicio: admin.firestore.Timestamp.fromDate(timestampInicio),
         horarioTermino: admin.firestore.Timestamp.fromDate(timestampTermino),
+        horarioRonda: horaRondaProgramada,
         rondasId: rondasId,
         nombre: ronda.nombre || '',
         puntosRegistrados,
@@ -187,8 +221,8 @@ async function registrarRondasIncumplidas(rondasIncumplidas) {
         fecha: fecha
       };
 
-      // Generar ID único con fecha y hora de la ronda: ronda_xyz_2025-11-22_1700
-      // HHMM es la hora del horario programado de la ronda (no la hora actual)
+      // Generar ID único con fecha y hora de la ronda
+      // FORMATO: rondaId_YYYY_MM_DD_HHMM (con guiones bajos, no guiones)
       let horaRondaFormato = '0000'; // default
       if (horaTermino) {
         const horaPartes = horaTermino.split(':');
@@ -198,12 +232,61 @@ async function registrarRondasIncumplidas(rondasIncumplidas) {
           horaRondaFormato = `${horas}${minutos}`;
         }
       }
-      const docIdUnico = `${rondasId}_${fecha}_${horaRondaFormato}`;
+      
+      // Usar el nuevo formato con guiones bajos para consistencia
+      const fechaFormato = formatearFechaConGuionesBajos(ahora);
+      const docIdUnico = `${rondasId}_${fechaFormato}_${horaRondaFormato}`;
+
+      // ✅ VERIFICACIÓN CRÍTICA: Verificar si el documento ya existe
+      const docExistente = await db.collection('RONDAS_COMPLETADAS').doc(docIdUnico).get();
+      
+      if (docExistente.exists) {
+        const estadoExistente = docExistente.data().estado;
+        
+        // ✅ PROTECCIÓN: Si ya existe y está TERMINADA, NO sobrescribir
+        if (estadoExistente === 'TERMINADA' || estadoExistente === 'COMPLETADA') {
+          console.log(`⚠️  PROTECCIÓN: Documento ${docIdUnico} ya está ${estadoExistente}. No se sobrescribe.`);
+          registradas++;
+          continue;
+        }
+        
+        // Si existe pero está NO REALIZADA, actualizar (no es problema)
+        if (estadoExistente === 'NO REALIZADA') {
+          console.log(`ℹ️  Documento ${docIdUnico} ya existe como NO REALIZADA. Se mantiene.`);
+          registradas++;
+          continue;
+        }
+      }
 
       // Guardar en RONDAS_COMPLETADAS con ID único que incluye fecha/hora
-      await db.collection('RONDAS_COMPLETADAS').doc(docIdUnico).set(documentoIncumplida);
+      // Solo si NO existe o si no está TERMINADA
+      await db.collection('RONDAS_COMPLETADAS').doc(docIdUnico).set(documentoIncumplida, { merge: false });
       
       console.log(`✓ Ronda incumplida registrada: ${docIdUnico}`);
+      
+      // ✅ REGISTRAR LOG DE AUDITORÍA
+      try {
+        await logger.registrarValidacionAutomatica(
+          'RONDAS_COMPLETADAS',
+          docIdUnico,
+          'NO_REALIZADA',
+          {
+            razon: 'Ronda incumplida - validación automática cada 5 minutos',
+            rondasId: rondasId,
+            rondaNombre: ronda.nombre,
+            horarioProgramado: horaTermino,
+            tolerancia: tolerancia,
+            cliente: ronda.cliente,
+            unidad: ronda.unidad,
+            usuario: ronda.usuario || ronda.agente,
+            fecha: fecha
+          }
+        );
+      } catch (logError) {
+        console.error(`   ⚠️ Error registrando log de auditoría:`, logError.message);
+        // Continuar aunque falle el log
+      }
+      
       registradas++;
     } catch (error) {
       console.error(`✗ Error registrando ronda ${rondasId}:`, error.message);

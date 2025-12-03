@@ -13,6 +13,8 @@ const db = admin.firestore();
 
 // Exportar funciones de validación
 exports.validarRondasIncumplidas = require('./validarRondasIncumplidas').validarRondasIncumplidas;
+exports.validarRondasDiarias = require('./validarRondasDiarias').validarRondasDiarias;
+exports.validarRondasDiariasHTTP = require('./validarRondasDiarias').validarRondasDiariasHTTP;
 exports.validarRondasManual = require('./validarManual').validarRondasManual;
 exports.crearRondaPrueba = require('./crearRondaPrueba').crearRondaPrueba;
 exports.crearRondaEn2Min = require('./crearRondaEn2Min').crearRondaEn2Min;

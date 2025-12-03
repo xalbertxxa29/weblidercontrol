@@ -3466,20 +3466,55 @@ document.addEventListener('DOMContentLoaded', () => {
           month: '2-digit', 
           day: '2-digit'
         });
-        horaInicio = dateInicio.toLocaleTimeString('es-PE', { 
-          hour: '2-digit', 
-          minute: '2-digit',
-          hour12: false
-        });
+      }
+      
+      // Usar horarioRonda directamente (es la hora programada correcta en formato "HH:MM")
+      // horarioInicio puede tener desajustes de zona horaria por cómo se construye en Cloud Functions
+      if (r.horarioRonda && typeof r.horarioRonda === 'string' && r.horarioRonda.includes(':')) {
+        horaInicio = r.horarioRonda;
+      } else if (r.horarioInicio) {
+        // Fallback: Si no hay horarioRonda, convertir correctamente el Timestamp a hora Perú (UTC-5)
+        const dateInicio2 = convertToDate(r.horarioInicio);
+        if (dateInicio2 && dateInicio2 instanceof Date && !isNaN(dateInicio2)) {
+          // El Timestamp está en UTC (después de corrección en Cloud Functions)
+          // Convertir a hora Perú (UTC-5): restar 5 horas
+          // Ej: Si UTC es 23:10, Perú es 18:10
+          const utcHoras = dateInicio2.getUTCHours();
+          const utcMinutos = dateInicio2.getUTCMinutes();
+          
+          // Restar 5 horas para obtener la hora de Perú
+          let peruHoras = utcHoras - 5;
+          let peruMinutos = utcMinutos;
+          
+          // Ajustar si resulta negativo (día anterior)
+          if (peruHoras < 0) {
+            peruHoras += 24;
+          }
+          
+          const hh = String(peruHoras).padStart(2, '0');
+          const mm = String(peruMinutos).padStart(2, '0');
+          horaInicio = `${hh}:${mm}`;
+        }
       }
       
       const dateTermino = convertToDate(r.horarioTermino);
       if (dateTermino && dateTermino instanceof Date && !isNaN(dateTermino)) {
-        horaTermino = dateTermino.toLocaleTimeString('es-PE', { 
-          hour: '2-digit', 
-          minute: '2-digit',
-          hour12: false
-        });
+        // Convertir correctamente a hora Perú (UTC-5)
+        const utcHoras = dateTermino.getUTCHours();
+        const utcMinutos = dateTermino.getUTCMinutes();
+        
+        // Restar 5 horas para obtener la hora de Perú
+        let peruHoras = utcHoras - 5;
+        let peruMinutos = utcMinutos;
+        
+        // Ajustar si resulta negativo (día anterior)
+        if (peruHoras < 0) {
+          peruHoras += 24;
+        }
+        
+        const hh = String(peruHoras).padStart(2, '0');
+        const mm = String(peruMinutos).padStart(2, '0');
+        horaTermino = `${hh}:${mm}`;
       }
       
       const estado = r.estado || 'N/A';
