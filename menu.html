@@ -896,6 +896,17 @@
               <h2>Usuarios <small class="muted" id="usersCount"></small></h2>
               <h2 id="users-title">Usuarios <small class="muted" id="usersCount"></small></h2>
             </div>
+            <!-- Filtros de búsqueda predictivos -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; padding: 12px; background: #f5f7fa; border-radius: 8px;">
+              <input type="text" id="filter-id" placeholder="🔍 ID..." style="padding: 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px;" />
+              <input type="text" id="filter-nombres" placeholder="🔍 Nombres..." style="padding: 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px;" />
+              <input type="text" id="filter-apellidos" placeholder="🔍 Apellidos..." style="padding: 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px;" />
+              <input type="text" id="filter-cliente" placeholder="🔍 Cliente..." style="padding: 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px;" />
+              <input type="text" id="filter-unidad" placeholder="🔍 Unidad..." style="padding: 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px;" />
+              <input type="text" id="filter-tipo" placeholder="🔍 Tipo..." style="padding: 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px;" />
+              <input type="text" id="filter-estado" placeholder="🔍 Estado..." style="padding: 8px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 13px;" />
+              <button type="button" id="clear-filters" class="btn secondary" style="padding: 8px; font-size: 13px;">🔄 Limpiar</button>
+            </div>
             <div class="table-wrap">
               <table class="data-table" id="usersTable" aria-label="Usuarios">
               <table class="data-table" id="usersTable" aria-labelledby="users-title">

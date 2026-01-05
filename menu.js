@@ -5264,6 +5264,63 @@ document.addEventListener('DOMContentLoaded', () => {
     usersTbody.appendChild(frag);
   }
 
+  // ===== FILTROS PREDICTIVOS PARA USUARIOS =====
+  const filterInputs = {
+    id: document.getElementById('filter-id'),
+    nombres: document.getElementById('filter-nombres'),
+    apellidos: document.getElementById('filter-apellidos'),
+    cliente: document.getElementById('filter-cliente'),
+    unidad: document.getElementById('filter-unidad'),
+    tipo: document.getElementById('filter-tipo'),
+    estado: document.getElementById('filter-estado')
+  };
+  
+  const clearFiltersBtn = document.getElementById('clear-filters');
+
+  function applyFilters() {
+    const filters = {
+      id: filterInputs.id?.value.toLowerCase().trim() || '',
+      nombres: filterInputs.nombres?.value.toLowerCase().trim() || '',
+      apellidos: filterInputs.apellidos?.value.toLowerCase().trim() || '',
+      cliente: filterInputs.cliente?.value.toLowerCase().trim() || '',
+      unidad: filterInputs.unidad?.value.toLowerCase().trim() || '',
+      tipo: filterInputs.tipo?.value.toLowerCase().trim() || '',
+      estado: filterInputs.estado?.value.toLowerCase().trim() || ''
+    };
+
+    const filtered = cachedUsers.filter(u => {
+      return (
+        (u.id || '').toLowerCase().includes(filters.id) &&
+        (u.NOMBRES || '').toLowerCase().includes(filters.nombres) &&
+        (u.APELLIDOS || '').toLowerCase().includes(filters.apellidos) &&
+        (u.CLIENTE || '').toLowerCase().includes(filters.cliente) &&
+        (u.UNIDAD || '').toLowerCase().includes(filters.unidad) &&
+        (u.TIPO || '').toLowerCase().includes(filters.tipo) &&
+        (u.ESTADO || '').toLowerCase().includes(filters.estado)
+      );
+    });
+
+    renderUsers(filtered);
+  }
+
+  // Event listeners para cada filtro
+  Object.values(filterInputs).forEach(input => {
+    if (input) {
+      input.addEventListener('input', applyFilters);
+      input.addEventListener('keyup', applyFilters);
+    }
+  });
+
+  // Botón para limpiar filtros
+  if (clearFiltersBtn) {
+    clearFiltersBtn.addEventListener('click', () => {
+      Object.values(filterInputs).forEach(input => {
+        if (input) input.value = '';
+      });
+      renderUsers(cachedUsers);
+    });
+  }
+
   usersTbody?.addEventListener('click', async (ev) => {
     const btn = ev.target.closest('button[data-act]');
     if (!btn) return;
