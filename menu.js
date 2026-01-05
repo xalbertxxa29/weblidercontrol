@@ -7971,31 +7971,36 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         // Usar firebase.firestore() directamente para evitar problemas de scope
         const firestore = firebase.firestore();
-        const doc = await firestore.collection('CLIENTE_UNIDAD').doc(selectedCliente).get();
         
-        if (doc.exists) {
-          const data = doc.data();
-          // Extract unit names (keys from the unidades object)
-          let unidades = [];
-          if (Array.isArray(data.unidades)) {
-            unidades = data.unidades;
-          } else if (data.unidades && typeof data.unidades === 'object') {
-            // Extract the keys (CHORRILLOS, LINCE, etc.) from the object
-            unidades = Object.keys(data.unidades);
-          }
-          
-          if (qrUnidad) {
-            const html = '<option value="">Seleccionar Unidad</option>' +
-              unidades.map(u => `<option value="${u}">${u}</option>`).join('');
-            qrUnidad.innerHTML = html;
-          } else {
-          }
-        } else {
-          if (qrUnidad) qrUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>';
-          if (UI && UI.toast) UI.toast('⚠️ Cliente no encontrado');
+        // Obtener unidades desde la SUBCOLECCIÓN UNIDADES del cliente
+        const unidadesSnapshot = await firestore
+          .collection('CLIENTE_UNIDAD')
+          .doc(selectedCliente)
+          .collection('UNIDADES')
+          .get();
+        
+        let unidades = [];
+        
+        // Extraer los IDs de los documentos (que son los nombres de las unidades)
+        unidadesSnapshot.forEach(doc => {
+          unidades.push(doc.id);
+        });
+        
+        // Ordenar alfabéticamente
+        unidades.sort((a, b) => a.localeCompare(b, 'es'));
+        
+        if (qrUnidad) {
+          const html = '<option value="">Seleccionar Unidad</option>' +
+            unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+          qrUnidad.innerHTML = html;
+        }
+        
+        if (unidades.length === 0) {
+          if (UI && UI.toast) UI.toast('⚠️ No hay unidades disponibles para este cliente');
         }
       } catch (e) { 
         if (UI && UI.toast) UI.toast('❌ Error al cargar unidades: ' + e.message);
+        console.error('Error detallado:', e);
       }
     });
   }
