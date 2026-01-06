@@ -7105,22 +7105,29 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       try {
-        const doc = await db.collection('CLIENTE_UNIDAD').doc(selectedCliente).get();
-        if (doc.exists) {
-          const data = doc.data();
-          let unidades = [];
-          if (Array.isArray(data.unidades)) {
-            unidades = data.unidades;
-          } else if (data.unidades && typeof data.unidades === 'object') {
-            unidades = Object.keys(data.unidades);
-          }
-          
-          if (rondaUnidad) {
-            rondaUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>' +
-              unidades.map(u => `<option value="${u}">${u}</option>`).join('');
-          }
+        // Obtener unidades desde la SUBCOLECCIÓN UNIDADES del cliente
+        const unidadesSnapshot = await db
+          .collection('CLIENTE_UNIDAD')
+          .doc(selectedCliente)
+          .collection('UNIDADES')
+          .get();
+        
+        let unidades = [];
+        
+        // Extraer los IDs de los documentos (que son los nombres de las unidades)
+        unidadesSnapshot.forEach(doc => {
+          unidades.push(doc.id);
+        });
+        
+        // Ordenar alfabéticamente
+        unidades.sort((a, b) => a.localeCompare(b, 'es'));
+        
+        if (rondaUnidad) {
+          rondaUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>' +
+            unidades.map(u => `<option value="${u}">${u}</option>`).join('');
         }
       } catch (e) {
+        if (rondaUnidad) rondaUnidad.innerHTML = '<option value="">Error al cargar unidades</option>';
       }
     });
   }
