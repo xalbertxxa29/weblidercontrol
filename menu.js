@@ -10206,13 +10206,18 @@ document.addEventListener('DOMContentLoaded', () => {
       byDate[dateKey] = (byDate[dateKey] || 0) + 1;
     });
     const sortedDates = Object.keys(byDate).sort();
+    // Convertir fechas a formato dd/mm/yyyy para mostrar en el gráfico
+    const formattedDates = sortedDates.map(d => {
+      const [year, month, day] = d.split('-');
+      return `${day}/${month}/${year}`;
+    });
     if (iqrCharts.fecha) iqrCharts.fecha.destroy();
     const ctxFecha = document.getElementById('iqr-chart-fecha')?.getContext('2d');
     if (ctxFecha) {
       iqrCharts.fecha = new Chart(ctxFecha, {
         type: 'line',
         data: {
-          labels: sortedDates,
+          labels: formattedDates,
           datasets: [{
             label: 'Incidencias por Fecha',
             data: sortedDates.map(d => byDate[d]),
