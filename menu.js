@@ -652,6 +652,10 @@ document.addEventListener('DOMContentLoaded', () => {
         loadClienteUnidad().catch(() => {});
         if (clienteUnidadTbody) clienteUnidadTbody.dataset.initialized = 'true';
       }
+      if (target === 'view-tipo-incidencias' && (!tipoIncidenciasTbody || !tipoIncidenciasTbody.dataset.initialized)) {
+        loadTipoIncidencias().catch(() => {});
+        if (tipoIncidenciasTbody) tipoIncidenciasTbody.dataset.initialized = 'true';
+      }
       if (target === 'view-cuaderno' && !cuadernoFiltersLoaded) {
         cuadernoFiltersLoaded = true;
         loadCuadernoFilters();
@@ -724,6 +728,121 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============================================================================
   // 5A) LÓGICA DEL PANEL "RESUMEN"
   // ============================================================================
+  // ======================================================
+  // 🔄 Sincronizar filtros Cliente/Unidad (GENÉRICO)
+  // ======================================================
+  async function loadClienteUnidadFiltersGenerico(clienteSelectId, unidadSelectId, usarChoices = false, choicesObj = null) {
+    try {
+      const clienteSelect = document.getElementById(clienteSelectId);
+      const unidadSelect = document.getElementById(unidadSelectId);
+      if (!clienteSelect || !unidadSelect) return;
+
+      // Obtener todos los clientes desde CLIENTE_UNIDAD
+      const clientesSnapshot = await db.collection('CLIENTE_UNIDAD').get();
+      const clientes = [];
+      
+      clientesSnapshot.docs.forEach(doc => {
+        clientes.push(doc.id);
+      });
+      clientes.sort((a, b) => a.localeCompare(b, 'es'));
+
+      // Si el usuario tiene restricción de CLIENTE
+      const clienteAsignado = window.accessControl?.getClienteFilter?.();
+      const esCliente = !!clienteAsignado;
+
+      // Función para rellenar el select de cliente
+      const rellenarClientes = () => {
+        if (usarChoices && choicesObj) {
+          // Usando Choices.js con el objeto pasado como parámetro
+          if (esCliente) {
+            choicesObj.cliente.setChoices(
+              [{ value: clienteAsignado, label: clienteAsignado, selected: true }],
+              'value', 'label', true
+            );
+            clienteSelect.disabled = true;
+          } else {
+            choicesObj.cliente.setChoices(
+              [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
+              'value', 'label', true
+            );
+          }
+        } else {
+          // Usando HTML plano
+          clienteSelect.innerHTML = '';
+          if (esCliente) {
+            clienteSelect.innerHTML = `<option value="${clienteAsignado}" selected>${clienteAsignado}</option>`;
+            clienteSelect.disabled = true;
+          } else {
+            clienteSelect.innerHTML = '<option value="">Todos</option>' +
+              clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+          }
+        }
+      };
+
+      // Función para filtrar y rellenar unidades según el cliente seleccionado
+      const actualizarUnidades = async (clienteElegido) => {
+        let unidades = [];
+
+        if (clienteElegido && clienteElegido !== 'Todos') {
+          // Obtener unidades desde la SUBCOLECCIÓN del cliente
+          const unidadesSnapshot = await db
+            .collection('CLIENTE_UNIDAD')
+            .doc(clienteElegido)
+            .collection('UNIDADES')
+            .get();
+
+          unidadesSnapshot.forEach(doc => {
+            unidades.push(doc.id);
+          });
+        } else {
+          // Obtener todas las unidades de todos los clientes
+          for (const cliente of clientes) {
+            const unidadesSnapshot = await db
+              .collection('CLIENTE_UNIDAD')
+              .doc(cliente)
+              .collection('UNIDADES')
+              .get();
+
+            unidadesSnapshot.forEach(doc => {
+              unidades.push(doc.id);
+            });
+          }
+          unidades = [...new Set(unidades)]; // Eliminar duplicados
+        }
+
+        unidades.sort((a, b) => a.localeCompare(b, 'es'));
+
+        if (usarChoices && choicesObj) {
+          // Usando Choices.js con el objeto pasado como parámetro
+          choicesObj.unidad.setChoices(
+            [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
+            'value', 'label', true
+          );
+        } else {
+          // Usando HTML plano
+          unidadSelect.innerHTML = '<option value="">Todas</option>' +
+            unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+        }
+      };
+
+      // Rellenar clientes
+      rellenarClientes();
+
+      // Llenar unidades iniciales
+      await actualizarUnidades(esCliente ? clienteAsignado : '');
+
+      // Escuchar cambios de cliente (solo si no está bloqueado)
+      if (!esCliente) {
+        clienteSelect.addEventListener('change', async (e) => {
+          await actualizarUnidades(e.target.value);
+        });
+      }
+
+    } catch (error) {
+      console.error('Error al cargar filtros Cliente/Unidad:', error);
+    }
+  }
+
   function initResumenDashboard() {
     // Defaults de fecha: últimos 30 días (si no hubiera valor)
     if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
@@ -750,6 +869,9 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     } else {
     }
+
+    // Cargar filtros genéricos de Cliente/Unidad
+    loadClienteUnidadFiltersGenerico('resumen-filtro-cliente', 'resumen-filtro-unidad', true, resumenChoices);
 
     document.getElementById('resumen-btn-refresh')?.addEventListener('click', renderResumen);
     queryAndRenderResumen();
@@ -781,22 +903,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // Función simplificada para cargar solo categorías y riesgos
   function populateResumenFilters(data) {
-    if (!resumenChoices.cliente || !resumenChoices.unidad || !resumenChoices.categoria || !resumenChoices.riesgo) return;
+    if (!resumenChoices.categoria || !resumenChoices.riesgo) return;
 
-    const clientes = [...new Set(data.map(d => d.cliente).filter(Boolean))].sort();
-    const unidades = [...new Set(data.map(d => d.unidad).filter(Boolean))].sort();
+    // Cargar categorías y riesgos del data
     const categorias = [...new Set(data.map(d => bucketOf(d.tipoIncidente)).filter(Boolean))];
     const riesgos = [...new Set(data.map(d => d.Nivelderiesgo).filter(Boolean))];
 
-    resumenChoices.cliente.setChoices(
-      [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
-      'value', 'label', false
-    );
-    resumenChoices.unidad.setChoices(
-      [{ value: 'Todos', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
-      'value', 'label', false
-    );
     resumenChoices.categoria.setChoices(
       [{ value: 'Todos', label: 'Todas', selected: true }, ...categorias.map(c => ({ value: c, label: c }))],
       'value', 'label', false
@@ -1554,7 +1668,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }, 100);
     }
   }
-  function initDetalleIncidentesDashboard() {
+  async function initDetalleIncidentesDashboard() {
     const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', shouldSort: false };
     detalleChoices.cliente = new Choices('#detalle-filtro-cliente', cfg);
     detalleChoices.unidad = new Choices('#detalle-filtro-unidad', cfg);
@@ -1564,27 +1678,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const years = Array.from({ length: 6 }, (_, i) => ({ value: currentYear - i, label: String(currentYear - i) }));
     detalleChoices.year.setChoices(years, 'value', 'label', true);
 
-    // Cargar clientes y unidades desde Firebase (límite 2000 para mejor rendimiento)
-    getQueryWithClienteFilter(COLLECTIONS.INCIDENTS)
-      .orderBy('__name__', 'desc')
-      .limit(2000)
-      .get()
-      .then(snap => {
-      const clienteSet = new Set();
-      const unitSet = new Set();
-      
-      snap.forEach(d => {
-        const data = d.data();
-        if (data?.cliente) clienteSet.add(data.cliente);
-        if (data?.unidad) unitSet.add(data.unidad);
-      });
-
-      const clientes = [{ value: '__ALL__', label: 'Todos', selected: true }, ...[...clienteSet].sort().map(c => ({ value: c, label: c }))];
-      const unidades = [{ value: '__ALL__', label: 'Todas', selected: true }, ...[...unitSet].sort().map(u => ({ value: u, label: u }))];
-      
-      detalleChoices.cliente.setChoices(clientes, 'value', 'label', false);
-      detalleChoices.unidad.setChoices(unidades, 'value', 'label', false);
-    });
+    // Usar la función genérica para cargar Cliente/Unidad desde CLIENTE_UNIDAD
+    await loadClienteUnidadFiltersGenerico('detalle-filtro-cliente', 'detalle-filtro-unidad', true, detalleChoices);
 
     // Configurar date pickers
     const hoy = new Date();
@@ -1602,8 +1697,8 @@ document.addEventListener('DOMContentLoaded', () => {
   async function queryAndRenderDetalle() {
     UI.showOverlay('Generando detalles…', 'Consultando incidencias');
     try {
-      const cliente = detalleChoices.cliente.getValue(true) || '__ALL__';
-      const unit = detalleChoices.unidad.getValue(true) || '__ALL__';
+      const cliente = detalleChoices.cliente.getValue(true) || 'Todos';
+      const unit = detalleChoices.unidad.getValue(true) || 'Todas';
       const year = detalleChoices.year.getValue(true) || new Date().getFullYear();
       
       // Obtener fechas de los inputs
@@ -1617,10 +1712,10 @@ document.addEventListener('DOMContentLoaded', () => {
         .where('timestamp', '>=', startDate)
         .where('timestamp', '<', endDate);
 
-      if (cliente !== '__ALL__') {
+      if (cliente !== 'Todos') {
         query = query.where('cliente', '==', cliente);
       }
-      if (unit !== '__ALL__') {
+      if (unit !== 'Todas') {
         query = query.where('unidad', '==', unit);
       }
 
@@ -2641,18 +2736,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadKpiRondaClientesUnidades() {
     try {
-      // Obtener clientes únicos de RONDAS_COMPLETADAS
-      const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
-      const clientes = new Set();
+      // Obtener clientes de CLIENTE_UNIDAD
+      const snapshot = await db.collection('CLIENTE_UNIDAD').get();
+      const clientes = [];
       
       snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        if (data.cliente) clientes.add(data.cliente);
+        clientes.push(doc.id);
       });
+      
+      // Ordenar alfabéticamente
+      clientes.sort((a, b) => a.localeCompare(b, 'es'));
       
       // Cargar en select
       const clienteSelect = document.getElementById('kpi-ronda-cliente');
       if (clienteSelect) {
+        clienteSelect.innerHTML = '<option value="">Todos</option>';
         clientes.forEach(cliente => {
           const option = document.createElement('option');
           option.value = cliente;
@@ -2661,6 +2759,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
     } catch (error) {
+      console.error('Error al cargar clientes KPI:', error);
     }
   }
 
@@ -2671,22 +2770,24 @@ document.addEventListener('DOMContentLoaded', () => {
       const unidadSelect = document.getElementById('kpi-ronda-unidad');
       
       // Limpiar unidades anteriores (excepto "Todas")
-      while (unidadSelect.options.length > 1) {
-        unidadSelect.remove(1);
-      }
+      unidadSelect.innerHTML = '<option value="">Todas</option>';
       
       if (!cliente) return;
       
-      // Obtener unidades del cliente seleccionado
-      const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS')
-        .where('cliente', '==', cliente)
+      // Obtener unidades desde la SUBCOLECCIÓN UNIDADES del cliente
+      const unidadesSnapshot = await db
+        .collection('CLIENTE_UNIDAD')
+        .doc(cliente)
+        .collection('UNIDADES')
         .get();
       
-      const unidades = new Set();
-      snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        if (data.unidad) unidades.add(data.unidad);
+      const unidades = [];
+      unidadesSnapshot.forEach(doc => {
+        unidades.push(doc.id);
       });
+      
+      // Ordenar alfabéticamente
+      unidades.sort((a, b) => a.localeCompare(b, 'es'));
       
       // Agregar unidades al select
       unidades.forEach(unidad => {
@@ -2696,6 +2797,7 @@ document.addEventListener('DOMContentLoaded', () => {
         unidadSelect.appendChild(option);
       });
     } catch (error) {
+      console.error('Error al cargar unidades KPI:', error);
     }
   }
 
@@ -5350,42 +5452,28 @@ document.addEventListener('DOMContentLoaded', () => {
       editTipo.value = u.TIPO ?? 'AGENTE';
       editEstado.value = u.ESTADO ?? 'ACTIVO';
 
-      const ensureCU = async () => {
-        if (!cachedClientesUnidades.length) {
-          // Límite de 500 para mejor rendimiento
-          const snap = await db.collection(COLLECTIONS.CLIENT_UNITS).limit(500).get();
-          cachedClientesUnidades = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        }
-      };
-
       (async () => {
-        await ensureCU();
+        UI.showOverlay('Cargando…', 'Obteniendo datos del usuario');
+        try {
+          // Usar la función genérica para cargar Cliente/Unidad
+          await loadClienteUnidadFiltersGenerico('editCliente', 'editUnidad', false);
 
-        editCliente.innerHTML = '';
-        const cliSet = new Set(cachedClientesUnidades.map(c => c.id));
-        for (const c of [...cliSet].sort()) {
-          const opt = document.createElement('option');
-          opt.value = opt.textContent = c;
-          opt.selected = (c === (u.CLIENTE || ''));
-          editCliente.appendChild(opt);
+          // Establecer los valores del usuario
+          editCliente.value = u.CLIENTE || '';
+          
+          // Actualizar unidades cuando se cargaron
+          setTimeout(() => {
+            editUnidad.value = u.UNIDAD || '';
+          }, 100);
+
+          editingUserId = id;
+          openModal(editModal);
+        } catch (e) {
+          console.error('Error al cargar usuario:', e);
+          UI.toast('❌ Error al cargar los datos del usuario');
+        } finally {
+          UI.hideOverlay();
         }
-
-        const fillUnidades = (clienteSel) => {
-          editUnidad.innerHTML = '';
-          const row = cachedClientesUnidades.find(r => r.id === clienteSel);
-          const unidades = row?.unidades ? Object.keys(row.unidades) : [];
-          for (const un of unidades.sort()) {
-            const opt = document.createElement('option');
-            opt.value = opt.textContent = un;
-            opt.selected = (un === (u.UNIDAD || ''));
-            editUnidad.appendChild(opt);
-          }
-        };
-        fillUnidades(editCliente.value);
-        editCliente.onchange = () => fillUnidades(editCliente.value);
-
-        editingUserId = id;
-        openModal(editModal);
       })();
     }
   });
@@ -5422,14 +5510,79 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!clienteUnidadTbody) return;
     UI.showOverlay('Cargando cliente/unidad…', 'Consultando base de datos');
     try {
-      // Límite de 500 para mejor rendimiento
-      const snap = await db.collection(COLLECTIONS.CLIENT_UNITS).limit(500).get();
-      cachedClientesUnidades = snap.docs.map(d => {
-        const data = d.data();
-        return { id: d.id, ...data };
-      });
+      // Obtener todos los CLIENTES desde CLIENTE_UNIDAD (límite 500)
+      const clientesSnap = await db.collection(COLLECTIONS.CLIENT_UNITS).limit(500).get();
+      cachedClientesUnidades = [];
+
+      // Para cada CLIENTE, obtener sus UNIDADES y PUESTOS
+      for (const clienteDoc of clientesSnap.docs) {
+        const clienteId = clienteDoc.id;
+        const clienteData = clienteDoc.data();
+
+        // Obtener UNIDADES desde la SUBCOLECCIÓN
+        const unidadesSnap = await db
+          .collection(COLLECTIONS.CLIENT_UNITS)
+          .doc(clienteId)
+          .collection('UNIDADES')
+          .get();
+
+        // Para cada UNIDAD, obtener sus PUESTOS
+        for (const unidadDoc of unidadesSnap.docs) {
+          const unidadId = unidadDoc.id;
+          const unidadData = unidadDoc.data();
+
+          // Obtener PUESTOS desde la SUBCOLECCIÓN de UNIDAD
+          const puestosSnap = await db
+            .collection(COLLECTIONS.CLIENT_UNITS)
+            .doc(clienteId)
+            .collection('UNIDADES')
+            .doc(unidadId)
+            .collection('PUESTOS')
+            .get();
+
+          // Si hay puestos, agregar una entrada por cada puesto
+          if (puestosSnap.size > 0) {
+            puestosSnap.docs.forEach(puestoDoc => {
+              const puestoId = puestoDoc.id;
+              const puestoData = puestoDoc.data();
+              cachedClientesUnidades.push({
+                clienteId,
+                clienteData,
+                unidadId,
+                unidadData,
+                puestoId,
+                puestoData
+              });
+            });
+          } else {
+            // Si no hay puestos, agregar una entrada sin puesto
+            cachedClientesUnidades.push({
+              clienteId,
+              clienteData,
+              unidadId,
+              unidadData,
+              puestoId: null,
+              puestoData: null
+            });
+          }
+        }
+
+        // Si no hay unidades, agregar una entrada sin unidad
+        if (unidadesSnap.size === 0) {
+          cachedClientesUnidades.push({
+            clienteId,
+            clienteData,
+            unidadId: null,
+            unidadData: null,
+            puestoId: null,
+            puestoData: null
+          });
+        }
+      }
+
       renderClienteUnidad(cachedClientesUnidades);
     } catch (e) {
+      console.error('Error cargando Cliente/Unidad:', e);
       UI.confirm({ title: 'Error', message: 'No se pudo cargar Cliente/Unidad.', kind: 'err' });
     } finally { UI.hideOverlay(); }
   }
@@ -5438,53 +5591,31 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!clienteUnidadTbody) return;
     const term = norm(clienteUnidadSearchInput?.value || '');
     const filtered = term
-      ? list.filter(x => norm(x.id || '').includes(term) ||
-        Object.keys(x.unidades || {}).some(u => norm(u).includes(term)))
+      ? list.filter(x => 
+        norm(x.clienteId || '').includes(term) ||
+        norm(x.unidadId || '').includes(term) ||
+        norm(x.puestoId || '').includes(term)
+      )
       : list;
 
     clienteUnidadTbody.innerHTML = '';
     const frag = document.createDocumentFragment();
+    
     filtered.forEach(row => {
-      const unidades = row.unidades ? Object.keys(row.unidades) : [];
-      unidades.forEach(u => {
-        const puestosArray = Array.isArray(row.unidades[u]) ? row.unidades[u] : [];
-        
-        if (puestosArray.length > 0) {
-          // Mostrar una fila por cada puesto
-          puestosArray.forEach((puesto, index) => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-              <td>${row.id || ''}</td>
-              <td>${u}</td>
-              <td>${puesto || ''}</td>
-              <td class="row-actions">
-                <button class="btn small secondary" data-act="edit-cu" data-id="${row.id}" data-unidad="${u}" data-puesto="${puesto}">Editar</button>
-              </td>`;
-            frag.appendChild(tr);
-          });
-        } else {
-          // Sin puestos, mostrar una fila con puesto vacío
-          const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td>${row.id || ''}</td>
-            <td>${u}</td>
-            <td><i class="muted">Sin puestos</i></td>
-            <td class="row-actions">
-              <button class="btn small secondary" data-act="edit-cu" data-id="${row.id}" data-unidad="${u}" data-puesto="">Editar</button>
-            </td>`;
-          frag.appendChild(tr);
-        }
-      });
-      if (unidades.length === 0) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${row.id || ''}</td>
-          <td><i class="muted">Sin unidades</i></td>
-          <td></td>
-          <td></td>`;
-        frag.appendChild(tr);
-      }
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${row.clienteId || ''}</td>
+        <td>${row.unidadId || '<i class="muted">Sin unidades</i>'}</td>
+        <td>${row.puestoId || '<i class="muted">Sin puestos</i>'}</td>
+        <td class="row-actions">
+          <button class="btn small secondary" data-act="edit-cu" 
+            data-id="${row.clienteId}" 
+            data-unidad="${row.unidadId || ''}" 
+            data-puesto="${row.puestoId || ''}">Editar</button>
+        </td>`;
+      frag.appendChild(tr);
     });
+    
     clienteUnidadTbody.appendChild(frag);
   }
   clienteUnidadSearchInput?.addEventListener('input', () => renderClienteUnidad(cachedClientesUnidades));
@@ -5506,14 +5637,16 @@ document.addEventListener('DOMContentLoaded', () => {
     cuNuevaUnidad.value = '';
     
     try {
-      const clientes = cachedClientesUnidades.map(c => c.id).sort();
-      clientes.forEach(cliente => {
+      // Obtener clientes únicos desde cachedClientesUnidades
+      const clientesUnicos = [...new Set(cachedClientesUnidades.map(c => c.clienteId))].sort();
+      clientesUnicos.forEach(cliente => {
         const option = document.createElement('option');
         option.value = cliente;
         option.textContent = cliente;
         cuAgregarUnidadCliente.appendChild(option);
       });
     } catch (e) {
+      console.error('Error cargando clientes:', e);
     }
     
     openModal(cuAgregarUnidadModal);
@@ -5527,35 +5660,44 @@ document.addEventListener('DOMContentLoaded', () => {
     cuNuevoPuesto.value = '';
     
     try {
-      const clientes = cachedClientesUnidades.map(c => c.id).sort();
-      clientes.forEach(cliente => {
+      // Obtener clientes únicos desde cachedClientesUnidades
+      const clientesUnicos = [...new Set(cachedClientesUnidades.map(c => c.clienteId))].sort();
+      clientesUnicos.forEach(cliente => {
         const option = document.createElement('option');
         option.value = cliente;
         option.textContent = cliente;
         cuAgregarPuestoCliente.appendChild(option);
       });
     } catch (e) {
+      console.error('Error cargando clientes:', e);
     }
     
     openModal(cuAgregarPuestoModal);
   });
 
   // Evento para cargar unidades cuando cambia cliente en agregar puesto
-  cuAgregarPuestoCliente?.addEventListener('change', (ev) => {
+  cuAgregarPuestoCliente?.addEventListener('change', async (ev) => {
     const clienteSeleccionado = ev.target.value;
     cuAgregarPuestoUnidad.innerHTML = '<option value="">-- Seleccionar Unidad --</option>';
     
     if (!clienteSeleccionado) return;
-    
-    const cliente = cachedClientesUnidades.find(c => c.id === clienteSeleccionado);
-    if (cliente && cliente.unidades) {
-      const unidades = Object.keys(cliente.unidades).sort();
-      unidades.forEach(unidad => {
+
+    try {
+      // Obtener unidades desde la SUBCOLECCIÓN del cliente
+      const unidadesSnap = await db
+        .collection(COLLECTIONS.CLIENT_UNITS)
+        .doc(clienteSeleccionado)
+        .collection('UNIDADES')
+        .get();
+
+      unidadesSnap.docs.forEach(doc => {
         const option = document.createElement('option');
-        option.value = unidad;
-        option.textContent = unidad;
+        option.value = doc.id;
+        option.textContent = doc.id;
         cuAgregarPuestoUnidad.appendChild(option);
       });
+    } catch (e) {
+      console.error('Error cargando unidades:', e);
     }
   });
 
@@ -5580,22 +5722,37 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Validar que el cliente no exista
-    if (cachedClientesUnidades.some(c => c.id === nuevoCliente)) {
+    if (cachedClientesUnidades.some(c => c.clienteId === nuevoCliente)) {
       UI.toast('❌ Este cliente ya existe');
       return;
     }
 
     UI.showOverlay('Creando…', 'Agregando nuevo cliente');
     try {
+      // Crear documento del cliente en CLIENTE_UNIDAD
       await db.collection(COLLECTIONS.CLIENT_UNITS).doc(nuevoCliente).set({
-        unidades: { [nuevaUnidad]: [] }
+        creado: new Date(),
+        descripcion: nuevoCliente
       });
 
+      // Crear la primera UNIDAD en la SUBCOLECCIÓN
+      await db
+        .collection(COLLECTIONS.CLIENT_UNITS)
+        .doc(nuevoCliente)
+        .collection('UNIDADES')
+        .doc(nuevaUnidad)
+        .set({
+          nombre: nuevaUnidad,
+          creado: new Date()
+        });
+
       // Recargar datos
+      clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver nuevo registro
       await loadClienteUnidad();
       UI.toast('✅ Cliente y unidad agregados correctamente');
       closeModal(cuAgregarClienteModal);
     } catch (e) {
+      console.error('Error:', e);
       UI.toast('❌ Error al crear cliente');
     } finally {
       UI.hideOverlay();
@@ -5614,27 +5771,31 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Validar que la unidad no exista para este cliente
-    const clienteRow = cachedClientesUnidades.find(c => c.id === cliente);
-    if (clienteRow && clienteRow.unidades && clienteRow.unidades[nuevaUnidad]) {
+    if (cachedClientesUnidades.some(c => c.clienteId === cliente && c.unidadId === nuevaUnidad)) {
       UI.toast('❌ Esta unidad ya existe para este cliente');
       return;
     }
 
     UI.showOverlay('Creando…', 'Agregando unidad');
     try {
-      const ref = db.collection(COLLECTIONS.CLIENT_UNITS).doc(cliente);
-      const snap = await ref.get();
-      const data = snap.data() || {};
-      const unidades = data.unidades || {};
-      unidades[nuevaUnidad] = [];
-      
-      await ref.set({ unidades }, { merge: true });
+      // Crear UNIDAD en la SUBCOLECCIÓN del cliente
+      await db
+        .collection(COLLECTIONS.CLIENT_UNITS)
+        .doc(cliente)
+        .collection('UNIDADES')
+        .doc(nuevaUnidad)
+        .set({
+          nombre: nuevaUnidad,
+          creado: new Date()
+        });
 
       // Recargar datos
+      clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver nueva unidad
       await loadClienteUnidad();
       UI.toast('✅ Unidad agregada correctamente');
       closeModal(cuAgregarUnidadModal);
     } catch (e) {
+      console.error('Error:', e);
       UI.toast('❌ Error al agregar unidad');
     } finally {
       UI.hideOverlay();
@@ -5654,32 +5815,32 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Validar que el puesto no exista para esta unidad
-    const clienteRow = cachedClientesUnidades.find(c => c.id === cliente);
-    if (clienteRow && clienteRow.unidades && clienteRow.unidades[unidad]) {
-      const puestosArray = Array.isArray(clienteRow.unidades[unidad]) ? clienteRow.unidades[unidad] : [];
-      if (puestosArray.includes(nuevoPuesto)) {
-        UI.toast('❌ Este puesto ya existe para esta unidad');
-        return;
-      }
+    if (cachedClientesUnidades.some(c => 
+      c.clienteId === cliente && 
+      c.unidadId === unidad && 
+      c.puestoId === nuevoPuesto
+    )) {
+      UI.toast('❌ Este puesto ya existe para esta unidad');
+      return;
     }
 
     UI.showOverlay('Creando…', 'Agregando puesto');
     try {
-      const ref = db.collection(COLLECTIONS.CLIENT_UNITS).doc(cliente);
-      const snap = await ref.get();
-      const data = snap.data() || {};
-      const unidades = data.unidades || {};
-      
-      // Obtener array de puestos o crear uno nuevo
-      let puestosArray = Array.isArray(unidades[unidad]) ? unidades[unidad] : [];
-      
-      // Agregar el nuevo puesto
-      puestosArray.push(nuevoPuesto);
-      unidades[unidad] = puestosArray;
-      
-      await ref.set({ unidades }, { merge: true });
+      // Crear PUESTO en la SUBCOLECCIÓN de UNIDADES
+      await db
+        .collection(COLLECTIONS.CLIENT_UNITS)
+        .doc(cliente)
+        .collection('UNIDADES')
+        .doc(unidad)
+        .collection('PUESTOS')
+        .doc(nuevoPuesto)
+        .set({
+          nombre: nuevoPuesto,
+          creado: new Date()
+        });
 
       // Recargar datos
+      clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver nuevo puesto
       await loadClienteUnidad();
       UI.toast('✅ Puesto agregado correctamente');
       closeModal(cuAgregarPuestoModal);
@@ -5701,7 +5862,7 @@ document.addEventListener('DOMContentLoaded', () => {
     cuEditUnidadOriginal.value = oldU;
     cuEditPuestoOriginal.value = oldPuesto;
     cuEditCliente.value = docId;
-    cuEditCliente.disabled = true;
+    cuEditCliente.disabled = false;
     cuEditUnidad.value = oldU;
     cuEditPuesto.value = oldPuesto;
 
@@ -5728,66 +5889,278 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // Obtener datos actuales
-    const clienteRow = cachedClientesUnidades.find(c => c.id === docId);
-    if (!clienteRow) {
-      UI.toast('❌ Cliente no encontrado');
-      return;
-    }
-
-    const unidades = clienteRow.unidades || {};
-    
-    // Si cambió el nombre de la unidad
+    // Validar que la nueva unidad no exista (si cambió el nombre)
     if (newUnidad !== oldU) {
-      if (unidades[newUnidad]) {
+      if (cachedClientesUnidades.some(c => c.clienteId === docId && c.unidadId === newUnidad)) {
         UI.toast('❌ Esta unidad ya existe para este cliente');
         return;
       }
     }
 
     // Validar que el nuevo puesto no exista en la unidad (si cambió)
-    const targetUnit = newUnidad !== oldU ? unidades[newUnidad] : unidades[oldU];
-    const puestosArray = Array.isArray(targetUnit) ? targetUnit : [];
-    
-    if (newPuesto !== oldPuesto && puestosArray.includes(newPuesto)) {
-      UI.toast('❌ Este puesto ya existe en esta unidad');
-      return;
+    if (newPuesto !== oldPuesto) {
+      if (cachedClientesUnidades.some(c => 
+        c.clienteId === docId && 
+        c.unidadId === newUnidad && 
+        c.puestoId === newPuesto
+      )) {
+        UI.toast('❌ Este puesto ya existe en esta unidad');
+        return;
+      }
     }
 
-    UI.showOverlay('Actualizando…', 'Guardando cambios');
+    UI.showOverlay('Guardando…', 'Actualizando datos');
     try {
-      const ref = db.collection(COLLECTIONS.CLIENT_UNITS).doc(docId);
-      const snap = await ref.get();
-      const data = snap.data() || {};
-      const updatedUnidades = data.unidades || {};
-
-      // Si cambió el nombre de la unidad
+      // Si cambió el nombre de unidad, renombrar documento UNIDAD
       if (newUnidad !== oldU) {
-        updatedUnidades[newUnidad] = updatedUnidades[oldU] ?? [];
-        delete updatedUnidades[oldU];
+        // Copiar datos de UNIDAD antigua a nueva
+        const unidadAntiguaSnap = await db
+          .collection(COLLECTIONS.CLIENT_UNITS)
+          .doc(docId)
+          .collection('UNIDADES')
+          .doc(oldU)
+          .get();
+
+        const unidadData = unidadAntiguaSnap.data() || {};
+        
+        // Crear nueva unidad
+        await db
+          .collection(COLLECTIONS.CLIENT_UNITS)
+          .doc(docId)
+          .collection('UNIDADES')
+          .doc(newUnidad)
+          .set(unidadData);
+
+        // Copiar todos los PUESTOS a la nueva unidad
+        const puestosSnap = await db
+          .collection(COLLECTIONS.CLIENT_UNITS)
+          .doc(docId)
+          .collection('UNIDADES')
+          .doc(oldU)
+          .collection('PUESTOS')
+          .get();
+
+        for (const puestoDoc of puestosSnap.docs) {
+          const puestoData = puestoDoc.data();
+          await db
+            .collection(COLLECTIONS.CLIENT_UNITS)
+            .doc(docId)
+            .collection('UNIDADES')
+            .doc(newUnidad)
+            .collection('PUESTOS')
+            .doc(puestoDoc.id)
+            .set(puestoData);
+        }
+
+        // Eliminar unidad antigua
+        await db
+          .collection(COLLECTIONS.CLIENT_UNITS)
+          .doc(docId)
+          .collection('UNIDADES')
+          .doc(oldU)
+          .delete();
       }
 
-      // Actualizar el puesto en la unidad
-      const unitPuestosArray = Array.isArray(updatedUnidades[newUnidad]) ? updatedUnidades[newUnidad] : [];
-      const puestoIndex = unitPuestosArray.indexOf(oldPuesto);
-      
-      if (puestoIndex !== -1) {
-        unitPuestosArray[puestoIndex] = newPuesto;
-      }
-      
-      updatedUnidades[newUnidad] = unitPuestosArray;
-      await ref.set({ unidades: updatedUnidades }, { merge: true });
+      // Si cambió el nombre de puesto, renombrar documento PUESTO
+      if (newPuesto !== oldPuesto && oldPuesto) {
+        // Copiar datos del PUESTO antiguo
+        const puestoAntiguoSnap = await db
+          .collection(COLLECTIONS.CLIENT_UNITS)
+          .doc(docId)
+          .collection('UNIDADES')
+          .doc(newUnidad)
+          .collection('PUESTOS')
+          .doc(oldPuesto)
+          .get();
 
-      // Actualizar cache
-      const updatedRow = cachedClientesUnidades.find(r => r.id === docId);
-      if (updatedRow) { updatedRow.unidades = updatedUnidades; }
-      
-      renderClienteUnidad(cachedClientesUnidades);
-      UI.toast('✅ Cambios guardados');
+        const puestoData = puestoAntiguoSnap.data() || {};
+
+        // Crear nuevo puesto
+        await db
+          .collection(COLLECTIONS.CLIENT_UNITS)
+          .doc(docId)
+          .collection('UNIDADES')
+          .doc(newUnidad)
+          .collection('PUESTOS')
+          .doc(newPuesto)
+          .set(puestoData);
+
+        // Eliminar puesto antiguo
+        await db
+          .collection(COLLECTIONS.CLIENT_UNITS)
+          .doc(docId)
+          .collection('UNIDADES')
+          .doc(newUnidad)
+          .collection('PUESTOS')
+          .doc(oldPuesto)
+          .delete();
+      }
+
+      // Recargar datos
+      clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver cambios
+      await loadClienteUnidad();
+      UI.toast('✅ Cambios guardados correctamente');
       closeModal(cuEditModal);
     } catch (e) {
-      UI.toast('❌ Error al guardar cambios');
-    } finally { UI.hideOverlay(); }
+      console.error('Error al actualizar:', e);
+      UI.toast('❌ Error al guardar los cambios');
+    } finally {
+      UI.hideOverlay();
+    }
+  });
+
+  // --- TIPO DE INCIDENCIAS ---
+  let cachedTipoIncidencias = [];
+  const tipoIncidenciasTbody = document.getElementById('tipoIncidenciasTbody');
+  const tipoIncidenciasSearchInput = document.getElementById('tipoIncidenciasSearchInput');
+  const tiAgregarBtn = document.getElementById('tiAgregarBtn');
+
+  async function loadTipoIncidencias() {
+    const tbody = document.getElementById('tipoIncidenciasTbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    UI.showOverlay('Cargando tipos de incidencia…', 'Consultando base de datos');
+    try {
+      console.log('🔍 Iniciando carga de TIPO_INCIDENCIAS...');
+      // Aumentar límite a 1000 para asegurar que carga todos los clientes
+      const clientesSnap = await db.collection('TIPO_INCIDENCIAS').limit(1000).get();
+      console.log('📊 Clientes encontrados:', clientesSnap.size);
+      console.log('📋 IDs de clientes:', clientesSnap.docs.map(d => d.id).join(', '));
+
+      let totalRegistros = 0;
+
+      for (const clienteDoc of clientesSnap.docs) {
+        const cliente = clienteDoc.id;
+        console.log(`\n🏢 Cliente: ${cliente}`);
+
+        const unidadesSnap = await clienteDoc.ref
+          .collection('UNIDADES')
+          .limit(500)
+          .get();
+        console.log(`   📁 Unidades: ${unidadesSnap.size}`);
+
+        for (const unidadDoc of unidadesSnap.docs) {
+          const unidad = unidadDoc.id;
+          console.log(`     ├─ Unidad: ${unidad}`);
+
+          const tiposSnap = await unidadDoc.ref
+            .collection('TIPO')
+            .limit(500)
+            .get();
+          console.log(`        Tipos encontrados: ${tiposSnap.size}`);
+
+          for (const tipoDoc of tiposSnap.docs) {
+            const data = tipoDoc.data();
+            console.log(`        📝 Tipo ID: ${tipoDoc.id}`, data);
+
+            // Extraer categoría (nombre principal del tipo)
+            const categoria = data.nombre || data.tipo || tipoDoc.id;
+
+            // Extraer subcategorías desde el campo DETALLES
+            const detalles = data.DETALLES || {};
+            const subCategoriasArray = Array.isArray(detalles) ? detalles : Object.keys(detalles);
+            
+            console.log(`           Subcategorías encontradas:`, subCategoriasArray);
+            
+            if (subCategoriasArray && subCategoriasArray.length > 0) {
+              // Si hay detalles (subcategorías), crear una fila por cada una
+              subCategoriasArray.forEach(subCategoria => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                  <td>${cliente}</td>
+                  <td>${unidad}</td>
+                  <td>${categoria}</td>
+                  <td>${subCategoria}</td>
+                  <td class="row-actions">
+                    <button class="btn small secondary" data-act="edit-ti" 
+                      data-cliente="${cliente}" 
+                      data-unidad="${unidad}" 
+                      data-categoria="${tipoDoc.id}"
+                      data-subcategoria="${subCategoria}">Editar</button>
+                  </td>
+                `;
+                tbody.appendChild(tr);
+                totalRegistros++;
+              });
+            } else {
+              // Si no hay detalles, mostrar una fila con categoría vacía de subcategoría
+              const tr = document.createElement('tr');
+              tr.innerHTML = `
+                <td>${cliente}</td>
+                <td>${unidad}</td>
+                <td>${categoria}</td>
+                <td><i class="muted">Sin subcategorías</i></td>
+                <td class="row-actions">
+                  <button class="btn small secondary" data-act="edit-ti" 
+                    data-cliente="${cliente}" 
+                    data-unidad="${unidad}" 
+                    data-categoria="${tipoDoc.id}"
+                    data-subcategoria="">Editar</button>
+                </td>
+              `;
+              tbody.appendChild(tr);
+              totalRegistros++;
+            }
+          }
+        }
+      }
+
+      console.log(`\n✅ Total de registros cargados: ${totalRegistros}`);
+
+      // Cache para búsqueda
+      cachedTipoIncidencias = Array.from(tbody.querySelectorAll('tr')).map(tr => ({
+        clienteId: tr.cells[0].textContent,
+        unidadId: tr.cells[1].textContent,
+        categoria: tr.cells[2].textContent,
+        subCategoria: tr.cells[3].textContent
+      }));
+
+    } catch (error) {
+      console.error('❌ Error cargando tipos de incidencia:', error);
+      console.error('Stack:', error.stack);
+      UI.confirm({ title: 'Error', message: 'No se pudo cargar Tipo de Incidencias.', kind: 'err' });
+    } finally {
+      UI.hideOverlay();
+    }
+  }
+
+  function renderTipoIncidencias(list) {
+    if (!tipoIncidenciasTbody) return;
+    const term = norm(tipoIncidenciasSearchInput?.value || '');
+    
+    // Mostrar/ocultar filas según búsqueda
+    tipoIncidenciasTbody.querySelectorAll('tr').forEach(tr => {
+      const cliente = norm(tr.cells[0].textContent);
+      const unidad = norm(tr.cells[1].textContent);
+      const categoria = norm(tr.cells[2].textContent);
+      const subCategoria = norm(tr.cells[3].textContent);
+      
+      const coincide = cliente.includes(term) || unidad.includes(term) || categoria.includes(term) || subCategoria.includes(term);
+      tr.style.display = coincide ? '' : 'none';
+    });
+  }
+
+  tipoIncidenciasSearchInput?.addEventListener('input', () => renderTipoIncidencias(cachedTipoIncidencias));
+
+  // Función para editar Tipo Incidencia
+  function editarTipoIncidencia(cliente, unidad, tipoId) {
+    console.log('Editar:', cliente, unidad, tipoId);
+    const ref = db
+      .collection('TIPO_INCIDENCIAS')
+      .doc(cliente)
+      .collection('UNIDADES')
+      .doc(unidad)
+      .collection('TIPOS')
+      .doc(tipoId);
+
+    // Aquí abre el modal y carga datos
+    UI.toast('Edición de tipo aún en desarrollo');
+  }
+
+  // Botón para agregar TIPO
+  tiAgregarBtn?.addEventListener('click', () => {
+    UI.toast('Funcionalidad de agregar tipos en desarrollo');
   });
 
   // --- CUADERNO ---
