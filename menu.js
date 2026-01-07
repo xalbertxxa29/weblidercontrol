@@ -652,10 +652,6 @@ document.addEventListener('DOMContentLoaded', () => {
         loadClienteUnidad().catch(() => {});
         if (clienteUnidadTbody) clienteUnidadTbody.dataset.initialized = 'true';
       }
-      if (target === 'view-tipo-incidencias' && (!tipoIncidenciasTbody || !tipoIncidenciasTbody.dataset.initialized)) {
-        loadTipoIncidencias().catch(() => {});
-        if (tipoIncidenciasTbody) tipoIncidenciasTbody.dataset.initialized = 'true';
-      }
       if (target === 'view-cuaderno' && !cuadernoFiltersLoaded) {
         cuadernoFiltersLoaded = true;
         loadCuadernoFilters();
@@ -2859,8 +2855,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
       
-      // Limitar a 30 últimos registros
-      const ultimos30 = registros.slice(0, 30);
+      // Limitar a 100 últimos registros
+      const ultimos30 = registros.slice(0, 100);
       
       // Actualizar card de información
       updateKpiRondaInfoCard(ultimos30);
@@ -2885,7 +2881,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (kpiRondaFilters.cliente || kpiRondaFilters.unidad || kpiRondaFilters.fechaInicio || kpiRondaFilters.fechaFin) {
         infoTextEl.textContent = 'Registros filtrados';
       } else {
-        infoTextEl.textContent = 'Últimos 30 registros';
+        infoTextEl.textContent = 'Últimos 100 registros';
       }
     }
     
@@ -3470,8 +3466,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
       
-      // Limitar a 30 registros
-      const ultimos30 = registros.slice(0, 30);
+      // Limitar a 100 registros
+      const ultimos30 = registros.slice(0, 100);
       
       // Actualizar información
       updateDetalleRondasInfo(ultimos30);
@@ -3495,9 +3491,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const infoTextEl = document.getElementById('detalle-rondas-info-text');
     if (infoTextEl) {
       if (detalleRondasFilters.cliente || detalleRondasFilters.unidad || detalleRondasFilters.estado || detalleRondasFilters.fechaInicio || detalleRondasFilters.fechaFin) {
-        infoTextEl.textContent = 'Registros filtrados (últimos 30)';
+        infoTextEl.textContent = 'Registros filtrados (últimos 100)';
       } else {
-        infoTextEl.textContent = 'Últimos 30 registros';
+        infoTextEl.textContent = 'Últimos 100 registros';
       }
     }
   }
@@ -5862,7 +5858,7 @@ document.addEventListener('DOMContentLoaded', () => {
     cuEditUnidadOriginal.value = oldU;
     cuEditPuestoOriginal.value = oldPuesto;
     cuEditCliente.value = docId;
-    cuEditCliente.disabled = false;
+    cuEditCliente.disabled = true;
     cuEditUnidad.value = oldU;
     cuEditPuesto.value = oldPuesto;
 
@@ -6007,160 +6003,6 @@ document.addEventListener('DOMContentLoaded', () => {
     } finally {
       UI.hideOverlay();
     }
-  });
-
-  // --- TIPO DE INCIDENCIAS ---
-  let cachedTipoIncidencias = [];
-  const tipoIncidenciasTbody = document.getElementById('tipoIncidenciasTbody');
-  const tipoIncidenciasSearchInput = document.getElementById('tipoIncidenciasSearchInput');
-  const tiAgregarBtn = document.getElementById('tiAgregarBtn');
-
-  async function loadTipoIncidencias() {
-    const tbody = document.getElementById('tipoIncidenciasTbody');
-    if (!tbody) return;
-    tbody.innerHTML = '';
-
-    UI.showOverlay('Cargando tipos de incidencia…', 'Consultando base de datos');
-    try {
-      console.log('🔍 Iniciando carga de TIPO_INCIDENCIAS...');
-      // Aumentar límite a 1000 para asegurar que carga todos los clientes
-      const clientesSnap = await db.collection('TIPO_INCIDENCIAS').limit(1000).get();
-      console.log('📊 Clientes encontrados:', clientesSnap.size);
-      console.log('📋 IDs de clientes:', clientesSnap.docs.map(d => d.id).join(', '));
-
-      let totalRegistros = 0;
-
-      for (const clienteDoc of clientesSnap.docs) {
-        const cliente = clienteDoc.id;
-        console.log(`\n🏢 Cliente: ${cliente}`);
-
-        const unidadesSnap = await clienteDoc.ref
-          .collection('UNIDADES')
-          .limit(500)
-          .get();
-        console.log(`   📁 Unidades: ${unidadesSnap.size}`);
-
-        for (const unidadDoc of unidadesSnap.docs) {
-          const unidad = unidadDoc.id;
-          console.log(`     ├─ Unidad: ${unidad}`);
-
-          const tiposSnap = await unidadDoc.ref
-            .collection('TIPO')
-            .limit(500)
-            .get();
-          console.log(`        Tipos encontrados: ${tiposSnap.size}`);
-
-          for (const tipoDoc of tiposSnap.docs) {
-            const data = tipoDoc.data();
-            console.log(`        📝 Tipo ID: ${tipoDoc.id}`, data);
-
-            // Extraer categoría (nombre principal del tipo)
-            const categoria = data.nombre || data.tipo || tipoDoc.id;
-
-            // Extraer subcategorías desde el campo DETALLES
-            const detalles = data.DETALLES || {};
-            const subCategoriasArray = Array.isArray(detalles) ? detalles : Object.keys(detalles);
-            
-            console.log(`           Subcategorías encontradas:`, subCategoriasArray);
-            
-            if (subCategoriasArray && subCategoriasArray.length > 0) {
-              // Si hay detalles (subcategorías), crear una fila por cada una
-              subCategoriasArray.forEach(subCategoria => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                  <td>${cliente}</td>
-                  <td>${unidad}</td>
-                  <td>${categoria}</td>
-                  <td>${subCategoria}</td>
-                  <td class="row-actions">
-                    <button class="btn small secondary" data-act="edit-ti" 
-                      data-cliente="${cliente}" 
-                      data-unidad="${unidad}" 
-                      data-categoria="${tipoDoc.id}"
-                      data-subcategoria="${subCategoria}">Editar</button>
-                  </td>
-                `;
-                tbody.appendChild(tr);
-                totalRegistros++;
-              });
-            } else {
-              // Si no hay detalles, mostrar una fila con categoría vacía de subcategoría
-              const tr = document.createElement('tr');
-              tr.innerHTML = `
-                <td>${cliente}</td>
-                <td>${unidad}</td>
-                <td>${categoria}</td>
-                <td><i class="muted">Sin subcategorías</i></td>
-                <td class="row-actions">
-                  <button class="btn small secondary" data-act="edit-ti" 
-                    data-cliente="${cliente}" 
-                    data-unidad="${unidad}" 
-                    data-categoria="${tipoDoc.id}"
-                    data-subcategoria="">Editar</button>
-                </td>
-              `;
-              tbody.appendChild(tr);
-              totalRegistros++;
-            }
-          }
-        }
-      }
-
-      console.log(`\n✅ Total de registros cargados: ${totalRegistros}`);
-
-      // Cache para búsqueda
-      cachedTipoIncidencias = Array.from(tbody.querySelectorAll('tr')).map(tr => ({
-        clienteId: tr.cells[0].textContent,
-        unidadId: tr.cells[1].textContent,
-        categoria: tr.cells[2].textContent,
-        subCategoria: tr.cells[3].textContent
-      }));
-
-    } catch (error) {
-      console.error('❌ Error cargando tipos de incidencia:', error);
-      console.error('Stack:', error.stack);
-      UI.confirm({ title: 'Error', message: 'No se pudo cargar Tipo de Incidencias.', kind: 'err' });
-    } finally {
-      UI.hideOverlay();
-    }
-  }
-
-  function renderTipoIncidencias(list) {
-    if (!tipoIncidenciasTbody) return;
-    const term = norm(tipoIncidenciasSearchInput?.value || '');
-    
-    // Mostrar/ocultar filas según búsqueda
-    tipoIncidenciasTbody.querySelectorAll('tr').forEach(tr => {
-      const cliente = norm(tr.cells[0].textContent);
-      const unidad = norm(tr.cells[1].textContent);
-      const categoria = norm(tr.cells[2].textContent);
-      const subCategoria = norm(tr.cells[3].textContent);
-      
-      const coincide = cliente.includes(term) || unidad.includes(term) || categoria.includes(term) || subCategoria.includes(term);
-      tr.style.display = coincide ? '' : 'none';
-    });
-  }
-
-  tipoIncidenciasSearchInput?.addEventListener('input', () => renderTipoIncidencias(cachedTipoIncidencias));
-
-  // Función para editar Tipo Incidencia
-  function editarTipoIncidencia(cliente, unidad, tipoId) {
-    console.log('Editar:', cliente, unidad, tipoId);
-    const ref = db
-      .collection('TIPO_INCIDENCIAS')
-      .doc(cliente)
-      .collection('UNIDADES')
-      .doc(unidad)
-      .collection('TIPOS')
-      .doc(tipoId);
-
-    // Aquí abre el modal y carga datos
-    UI.toast('Edición de tipo aún en desarrollo');
-  }
-
-  // Botón para agregar TIPO
-  tiAgregarBtn?.addEventListener('click', () => {
-    UI.toast('Funcionalidad de agregar tipos en desarrollo');
   });
 
   // --- CUADERNO ---
