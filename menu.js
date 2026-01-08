@@ -744,19 +744,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Si el usuario tiene restricción de CLIENTE
       const clienteAsignado = window.accessControl?.getClienteFilter?.();
+      const unidadAsignada = window.accessControl?.getUnidadFilter?.();
       const esCliente = !!clienteAsignado;
+      const tieneUnidadAsignada = !!unidadAsignada;
+
+      console.log('=== RESTRICCIONES DE USUARIO ===');
+      console.log('Cliente Asignado:', clienteAsignado);
+      console.log('Unidad Asignada:', unidadAsignada);
+      console.log('Es Cliente:', esCliente);
+      console.log('Tiene Unidad Asignada:', tieneUnidadAsignada);
 
       // Función para rellenar el select de cliente
       const rellenarClientes = () => {
         if (usarChoices && choicesObj) {
           // Usando Choices.js con el objeto pasado como parámetro
           if (esCliente) {
+            console.log(`Cliente restringido a: ${clienteAsignado}`);
             choicesObj.cliente.setChoices(
               [{ value: clienteAsignado, label: clienteAsignado, selected: true }],
               'value', 'label', true
             );
+            // Deshabilitar el select de cliente en Choices.js
             clienteSelect.disabled = true;
+            // Intentar deshabilitar el contenedor de Choices
+            const choicesContainer = clienteSelect.closest('.choices');
+            if (choicesContainer) {
+              choicesContainer.style.opacity = '0.6';
+              choicesContainer.style.pointerEvents = 'none';
+              choicesContainer.title = `Restringido a ${clienteAsignado}`;
+            }
           } else {
+            console.log('Sin restricción de cliente - mostrando todos');
             choicesObj.cliente.setChoices(
               [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
               'value', 'label', true
@@ -810,14 +828,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (usarChoices && choicesObj) {
           // Usando Choices.js con el objeto pasado como parámetro
-          choicesObj.unidad.setChoices(
-            [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
-            'value', 'label', true
-          );
+          if (tieneUnidadAsignada) {
+            // Usuario restringido a una unidad específica
+            console.log(`Unidad restringida a: ${unidadAsignada}`);
+            choicesObj.unidad.setChoices(
+              [{ value: unidadAsignada, label: unidadAsignada, selected: true }],
+              'value', 'label', true
+            );
+            // Deshabilitar el select de unidad
+            unidadSelect.disabled = true;
+            const choicesContainer = unidadSelect.closest('.choices');
+            if (choicesContainer) {
+              choicesContainer.style.opacity = '0.6';
+              choicesContainer.style.pointerEvents = 'none';
+              choicesContainer.title = `Restringido a ${unidadAsignada}`;
+            }
+          } else {
+            // Usuario sin restricción de unidad
+            choicesObj.unidad.setChoices(
+              [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
+              'value', 'label', true
+            );
+            // Resetear la selección de unidad a "Todas"
+            choicesObj.unidad.clearStore();
+            choicesObj.unidad.setChoiceByValue('Todas');
+          }
         } else {
           // Usando HTML plano
-          unidadSelect.innerHTML = '<option value="">Todas</option>' +
-            unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+          if (tieneUnidadAsignada) {
+            unidadSelect.innerHTML = `<option value="${unidadAsignada}" selected>${unidadAsignada}</option>`;
+            unidadSelect.disabled = true;
+          } else {
+            unidadSelect.innerHTML = '<option value="">Todas</option>' +
+              unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+          }
         }
       };
 
@@ -825,17 +869,85 @@ document.addEventListener('DOMContentLoaded', () => {
       rellenarClientes();
 
       // Llenar unidades iniciales
-      await actualizarUnidades(esCliente ? clienteAsignado : '');
+      await actualizarUnidades(esCliente ? clienteAsignado : 'Todos');
 
       // Escuchar cambios de cliente (solo si no está bloqueado)
       if (!esCliente) {
+        // Para Choices.js, usar el evento 'change' en el select
         clienteSelect.addEventListener('change', async (e) => {
+          console.log('Cliente cambió a:', e.target.value);
           await actualizarUnidades(e.target.value);
+          // Disparar renderResumen si está disponible (para resumen específicamente)
+          if (typeof renderResumen === 'function' && clienteSelectId.includes('resumen')) {
+            // Esperar a que las unidades se actualicen antes de renderizar
+            setTimeout(() => {
+              renderResumen();
+            }, 100);
+          }
         });
       }
 
     } catch (error) {
       console.error('Error al cargar filtros Cliente/Unidad:', error);
+    }
+  }
+
+  // ============= FUNCIÓN CORRECTA: OBTENER UNIDADES DIRECTAMENTE DE BD (NO DE INCIDENTES) =============
+  async function getUnidadesFromClienteUnidad(cliente) {
+    try {
+      const snap = await db
+        .collection('CLIENTE_UNIDAD')
+        .doc(cliente)
+        .collection('UNIDADES')
+        .get();
+
+      return snap.docs
+        .map(d => d.id)
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b, 'es'));
+    } catch (e) {
+      console.error(`[KPI] Error obteniendo unidades de CLIENTE_UNIDAD:`, e);
+      return [];
+    }
+  }
+
+  // ============= PASO 1: FUNCIÓN PARA CARGAR UNIDADES POR CLIENTE (ESPECÍFICA PARA KPI) =============
+  async function loadResumenUnidadesByCliente(cliente) {
+    if (!resumenChoices.unidad) return;
+    
+    console.log(`Cargando unidades para cliente: ${cliente}`);
+
+    // OBTENER UNIDADES DIRECTAMENTE DE CLIENTE_UNIDAD (no de incidentes)
+    const unidades = await getUnidadesFromClienteUnidad(cliente);
+    console.log(`Unidades encontradas para ${cliente}:`, unidades);
+
+    const unidadSelect = document.getElementById('resumen-filtro-unidad');
+    if (!unidadSelect) return;
+
+    // Destruir la instancia anterior de Choices
+    if (resumenChoices.unidad) {
+      resumenChoices.unidad.destroy();
+    }
+
+    if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
+      // Usuario CLIENTE con UNIDAD específica - bloquear
+      const unidadNombre = accessControl.unidadAsignada;
+      
+      unidadSelect.innerHTML = `<option value="${unidadNombre}" selected>${unidadNombre}</option>`;
+      
+      const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
+      resumenChoices.unidad = new Choices('#resumen-filtro-unidad', cfg);
+      
+      unidadSelect.disabled = true;
+      unidadSelect.style.opacity = '0.6';
+      unidadSelect.title = `Acceso restringido a: ${unidadNombre}`;
+    } else {
+      // Usuario ADMIN/SUPERVISOR o CLIENTE sin unidad específica - mostrar todas las disponibles
+      unidadSelect.innerHTML = '<option value="Todas" selected>Todas</option>' +
+        unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+      
+      const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
+      resumenChoices.unidad = new Choices('#resumen-filtro-unidad', cfg);
     }
   }
 
@@ -852,10 +964,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
     if (window.Choices) {
-      resumenChoices.cliente = new Choices('#resumen-filtro-cliente', cfg);
-      resumenChoices.unidad = new Choices('#resumen-filtro-unidad', cfg);
-      resumenChoices.categoria = new Choices('#resumen-filtro-categoria', cfg);
-      resumenChoices.riesgo = new Choices('#resumen-filtro-riesgo', cfg);
+      // Inicializar SOLO UNA VEZ si no existen
+      if (!resumenChoices.cliente) {
+        resumenChoices.cliente = new Choices('#resumen-filtro-cliente', cfg);
+      }
+      if (!resumenChoices.unidad) {
+        resumenChoices.unidad = new Choices('#resumen-filtro-unidad', cfg);
+      }
+      if (!resumenChoices.categoria) {
+        resumenChoices.categoria = new Choices('#resumen-filtro-categoria', cfg);
+      }
+      if (!resumenChoices.riesgo) {
+        resumenChoices.riesgo = new Choices('#resumen-filtro-riesgo', cfg);
+      }
     }
 
     if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
@@ -869,6 +990,57 @@ document.addEventListener('DOMContentLoaded', () => {
     // Cargar filtros genéricos de Cliente/Unidad
     loadClienteUnidadFiltersGenerico('resumen-filtro-cliente', 'resumen-filtro-unidad', true, resumenChoices);
 
+    // Agregar event listeners para Choices.js en Resumen
+    // Nota: Choices.js dispara eventos 'change' en el elemento select nativo
+    setTimeout(() => {
+      const clienteSelect = document.getElementById('resumen-filtro-cliente');
+      const unidadSelect = document.getElementById('resumen-filtro-unidad');
+      const categoriaSelect = document.getElementById('resumen-filtro-categoria');
+      const riesgoSelect = document.getElementById('resumen-filtro-riesgo');
+
+      // PASO 2: Agregar onChange listener al cliente que cargue unidades
+      if (clienteSelect) {
+        clienteSelect.addEventListener('change', async () => {
+          console.log('Cliente cambió en Resumen');
+          const cliente = resumenChoices.cliente.getValue(true);
+          const clienteValue = Array.isArray(cliente) ? cliente[0] : cliente;
+          
+          if (clienteValue && clienteValue !== 'Todos') {
+            console.log('Cargando unidades para:', clienteValue);
+            await loadResumenUnidadesByCliente(clienteValue);
+          }
+          
+          renderResumen();
+        });
+      }
+      if (unidadSelect) {
+        unidadSelect.addEventListener('change', () => {
+          console.log('Unidad cambió');
+          renderResumen();
+        });
+      }
+      if (categoriaSelect) {
+        categoriaSelect.addEventListener('change', () => {
+          console.log('Categoría cambió');
+          renderResumen();
+        });
+      }
+      if (riesgoSelect) {
+        riesgoSelect.addEventListener('change', () => {
+          console.log('Riesgo cambió');
+          renderResumen();
+        });
+      }
+    }, 100);
+
+    // Listener para daterangepicker
+    if (typeof $ !== 'undefined') {
+      $('#resumen-filtro-fecha').on('apply.daterangepicker', () => {
+        console.log('Fecha cambió');
+        renderResumen();
+      });
+    }
+
     document.getElementById('resumen-btn-refresh')?.addEventListener('click', renderResumen);
     queryAndRenderResumen();
   }
@@ -881,7 +1053,11 @@ document.addEventListener('DOMContentLoaded', () => {
         .orderBy('__name__', 'desc')
         .limit(10000)
         .get();
-      cachedIncidents = snapshot.docs.map(doc => {
+      
+      console.log(`Incidentes descargados: ${snapshot.docs.length}`);
+      
+      // PASO 2: APLICAR FILTRO DE ACCESO A LOS DATOS
+      let incidentsRaw = snapshot.docs.map(doc => {
         const data = doc.data();
         return {
           id: doc.id,
@@ -890,31 +1066,93 @@ document.addEventListener('DOMContentLoaded', () => {
         };
       });
 
+      // FILTRAR DATOS ANTES DE CACHEAR
+      cachedIncidents = applyAccessFilter(incidentsRaw);
+      
+      console.log(`Incidentes después de filtro de acceso: ${cachedIncidents.length} (raw: ${incidentsRaw.length})`);
+      console.log('Primeros 3 incidentes cacheados:');
+      cachedIncidents.slice(0, 3).forEach((d, i) => {
+        console.log(`${i}: cliente=${d.cliente}, unidad=${d.unidad}, tipoIncidente=${d.tipoIncidente}, riesgo=${d.Nivelderiesgo}`);
+      });
+
       populateResumenFilters(cachedIncidents);
+      
+      // PASO 3: Cargar unidades iniciales para el cliente actual
+      const clienteActual = accessControl && accessControl.userType === 'CLIENTE' 
+        ? accessControl.clienteAsignado 
+        : 'Todos';
+      
+      console.log('Cargando unidades iniciales para:', clienteActual);
+      await loadResumenUnidadesByCliente(clienteActual);
+      
       renderResumen();
     } catch (e) {
+      console.error('Error al cargar datos del resumen:', e);
       UI.toast('Error al cargar datos del resumen.');
     } finally {
       UI.hideOverlay();
     }
   }
 
+  // ============= PASO 1: FILTRO CENTRAL DE ACCESO (OBLIGATORIO) =============
+  // Aplica las restricciones de CLIENTE/UNIDAD a CUALQUIER dato
+  function applyAccessFilter(rows) {
+    if (!accessControl || accessControl.userType !== 'CLIENTE') {
+      // ADMIN y SUPERVISOR ven todos los datos
+      return rows;
+    }
+    
+    // CLIENTE solo ve SU cliente asignado
+    return rows.filter(r => {
+      const clienteMatch = r.cliente === accessControl.clienteAsignado;
+      const unidadMatch = !accessControl.unidadAsignada || r.unidad === accessControl.unidadAsignada;
+      return clienteMatch && unidadMatch;
+    });
+  }
+
   // Función simplificada para cargar solo categorías y riesgos
   function populateResumenFilters(data) {
     if (!resumenChoices.categoria || !resumenChoices.riesgo) return;
 
-    // Cargar categorías y riesgos del data
+    // PASO 4: NO reconstruir clientes desde data global - ya vienen filtrados
+    // Cargar categorías y riesgos SOLO del data filtrado
     const categorias = [...new Set(data.map(d => bucketOf(d.tipoIncidente)).filter(Boolean))];
     const riesgos = [...new Set(data.map(d => d.Nivelderiesgo).filter(Boolean))];
 
-    resumenChoices.categoria.setChoices(
-      [{ value: 'Todos', label: 'Todas', selected: true }, ...categorias.map(c => ({ value: c, label: c }))],
-      'value', 'label', false
-    );
-    resumenChoices.riesgo.setChoices(
-      [{ value: 'Todos', label: 'Todos', selected: true }, ...riesgos.map(r => ({ value: r, label: r }))],
-      'value', 'label', false
-    );
+    // Cargar Categorías
+    if (resumenChoices.categoria && categorias.length > 0) {
+      resumenChoices.categoria.setChoices(
+        [{ value: 'Todos', label: 'Todas', selected: true }, ...categorias.map(c => ({ value: c, label: c }))],
+        'value', 'label', false
+      );
+    }
+    
+    // Cargar Riesgos
+    if (resumenChoices.riesgo && riesgos.length > 0) {
+      resumenChoices.riesgo.setChoices(
+        [{ value: 'Todos', label: 'Todos', selected: true }, ...riesgos.map(r => ({ value: r, label: r }))],
+        'value', 'label', false
+      );
+    }
+
+    // PASO 3: Para CLIENTE, mostrar SOLO su cliente y bloquearlo
+    if (resumenChoices.cliente) {
+      if (accessControl && accessControl.userType === 'CLIENTE') {
+        const clienteNombre = accessControl.clienteAsignado || 'Sin asignar';
+        resumenChoices.cliente.setChoices(
+          [{ value: clienteNombre, label: clienteNombre, selected: true }],
+          'value', 'label', true // clearStore = true para reemplazar todo
+        );
+        
+        // Bloquear el select visualmente
+        const clienteSelect = document.getElementById('resumen-filtro-cliente');
+        if (clienteSelect) {
+          clienteSelect.disabled = true;
+          clienteSelect.style.opacity = '0.6';
+          clienteSelect.title = `Acceso restringido a: ${clienteNombre}`;
+        }
+      }
+    }
   }
 
   // === Layout unificado para KPI (mismas alturas de cards) ===
@@ -970,15 +1208,84 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderResumen() {
-    if (typeof $ === 'undefined' || typeof $.fn.daterangepicker === 'undefined') return;
+    if (typeof $ === 'undefined' || typeof $.fn.daterangepicker === 'undefined') {
+      console.warn('jQuery o daterangepicker no están disponibles');
+      return;
+    }
+
+    if (!cachedIncidents || cachedIncidents.length === 0) {
+      console.warn('No hay incidentes cacheados');
+      return;
+    }
+
+    // Obtener valores de filtros - manejo seguro para Choices.js
+    let clienteValue = 'Todos';
+    let unidadValue = 'Todas';
+    let categoriaValue = 'Todos';
+    let riesgoValue = 'Todos';
+
+    try {
+      // Usar getValue(true) que devuelve el string del valor seleccionado
+      if (resumenChoices.cliente) {
+        const val = resumenChoices.cliente.getValue(true);
+        // Si getValue devuelve un array, tomar el primer elemento
+        if (Array.isArray(val) && val.length > 0) {
+          clienteValue = val[0];
+        } else if (typeof val === 'string' && val.length > 0) {
+          clienteValue = val;
+        }
+        console.log('Cliente obtenido:', clienteValue, '(raw:', val, ')');
+      }
+
+      if (resumenChoices.unidad) {
+        const val = resumenChoices.unidad.getValue(true);
+        if (Array.isArray(val) && val.length > 0) {
+          unidadValue = val[0];
+        } else if (typeof val === 'string' && val.length > 0) {
+          unidadValue = val;
+        }
+        console.log('Unidad obtenida:', unidadValue, '(raw:', val, ')');
+      }
+
+      if (resumenChoices.categoria) {
+        const val = resumenChoices.categoria.getValue(true);
+        if (Array.isArray(val) && val.length > 0) {
+          categoriaValue = val[0];
+        } else if (typeof val === 'string' && val.length > 0) {
+          categoriaValue = val;
+        }
+        console.log('Categoría obtenida:', categoriaValue, '(raw:', val, ')');
+      }
+
+      if (resumenChoices.riesgo) {
+        const val = resumenChoices.riesgo.getValue(true);
+        if (Array.isArray(val) && val.length > 0) {
+          riesgoValue = val[0];
+        } else if (typeof val === 'string' && val.length > 0) {
+          riesgoValue = val;
+        }
+        console.log('Riesgo obtenido:', riesgoValue, '(raw:', val, ')');
+      }
+    } catch (e) {
+      console.error('Error obteniendo valores de filtros:', e);
+    }
 
     const filters = {
-      cliente: (resumenChoices.cliente && resumenChoices.cliente.getValue(true)) || 'Todos',
-      unidad: (resumenChoices.unidad && resumenChoices.unidad.getValue(true)) || 'Todos',
-      categoria: (resumenChoices.categoria && resumenChoices.categoria.getValue(true)) || 'Todos',
-      riesgo: (resumenChoices.riesgo && resumenChoices.riesgo.getValue(true)) || 'Todos',
+      cliente: clienteValue,
+      unidad: unidadValue,
+      categoria: categoriaValue,
+      riesgo: riesgoValue,
       fecha: $('#resumen-filtro-fecha').val().split(' - ')
     };
+
+    // Debug: mostrar qué filtros se están usando
+    console.log('===== FILTROS APLICADOS =====');
+    console.log('Cliente:', filters.cliente);
+    console.log('Unidad:', filters.unidad);
+    console.log('Categoría:', filters.categoria);
+    console.log('Riesgo:', filters.riesgo);
+    console.log('Fecha:', filters.fecha);
+    console.log('Total incidentes cacheados:', cachedIncidents.length);
 
     const startDate = moment(filters.fecha[0], 'DD/MM/YYYY').startOf('day');
     const endDate = moment(filters.fecha[1], 'DD/MM/YYYY').endOf('day');
@@ -986,12 +1293,33 @@ document.addEventListener('DOMContentLoaded', () => {
     const filteredData = cachedIncidents.filter(d => {
       const d_date = moment(d.timestamp);
       const inDate = d_date.isBetween(startDate, endDate, undefined, '[]');
-      const inCli = filters.cliente === 'Todos' || d.cliente === filters.cliente;
-      const inUni = filters.unidad === 'Todos' || d.unidad === filters.unidad;
+      const inCli = filters.cliente === 'Todos' || (d.cliente === filters.cliente);
+      const inUni = filters.unidad === 'Todas' || (d.unidad === filters.unidad);
       const inCat = filters.categoria === 'Todos' || bucketOf(d.tipoIncidente) === filters.categoria;
       const inR = filters.riesgo === 'Todos' || d.Nivelderiesgo === filters.riesgo;
+      
+      // Debug para el primer incidente
+      if (d_date.isSame(startDate, 'day') && inDate) {
+        console.log('Incidente sample:', {
+          cliente: d.cliente, 
+          inCli,
+          unidad: d.unidad,
+          inUni,
+          tipoIncidente: d.tipoIncidente,
+          bucket: bucketOf(d.tipoIncidente),
+          inCat,
+          riesgo: d.Nivelderiesgo,
+          inR,
+          timestamp: d.timestamp
+        });
+      }
+      
       return inDate && inCli && inUni && inCat && inR;
     });
+
+    console.log(`===== RESULTADOS =====`);
+    console.log(`Incidentes filtrados: ${filteredData.length} de ${cachedIncidents.length} totales`);
+    console.log('============================');
 
     document.getElementById('resumen-total-incidentes').textContent = filteredData.length.toLocaleString('es-PE');
 
@@ -1096,6 +1424,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function drawCategoriaChart(data) {
+    // Si no hay datos, mostrar gráfico vacío
+    if (!data || data.length === 0) {
+      console.warn('No hay datos para gráfico de categoría');
+      const canvas = document.getElementById('resumen-chart-categoria');
+      if (canvas && resumenCharts['resumen-chart-categoria']) {
+        resumenCharts['resumen-chart-categoria'].destroy();
+      }
+      return;
+    }
+
     // Agrupar por tipoIncidente exacto (no por categoría)
     const tipoMap = data.reduce((acc, d) => {
       const tipo = (d.tipoIncidente || 'Sin especificar').trim();
@@ -1107,7 +1445,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const sorted = Object.entries(tipoMap).sort((a, b) => b[1] - a[1]);
     const labels = sorted.map(x => x[0]);
     const values = sorted.map(x => x[1]);
-    const total = values.reduce((a, b) => a + b, 0);
+    const total = values.reduce((a, b) => a + b, 0) || 1;
 
     // Crear abreviaturas mejoradas para etiquetas largas
     const createAbbreviation = (text) => {
@@ -1182,16 +1520,18 @@ document.addEventListener('DOMContentLoaded', () => {
             titleFont: { size: 13, weight: 'bold' },
             bodyFont: { size: 12 },
             callbacks: { 
-              title: (ctx) => labels[ctx[0].dataIndex],
+              title: (ctx) => labels[ctx[0]?.dataIndex || 0] || 'Categoría',
               label: (c) => {
-                const pct = pf(c.raw, total);
-                return `Cantidad: ${nf.format(c.raw)} (${pct}%)`;
+                const pct = total > 0 ? pf(c.raw || 0, total) : '0.0';
+                return `Cantidad: ${nf.format(c.raw || 0)} (${pct}%)`;
               }
             }
           },
           datalabels: {
-            formatter: (v, ctx) => {
-              const pct = pf(v, total);
+            display: values.length < 50, // Desactivar si hay muchas barras
+            formatter: (v) => {
+              if (!v) return '';
+              const pct = total > 0 ? pf(v, total) : '0.0';
               return `${nf.format(v)}\n${pct}%`;
             },
             anchor: 'end',
@@ -1207,7 +1547,7 @@ document.addEventListener('DOMContentLoaded', () => {
             beginAtZero: true,
             ticks: { 
               color: themeInk(),
-              stepSize: Math.ceil(Math.max(...values) / 5)
+              stepSize: Math.ceil(Math.max(...values, 1) / 5)
             },
             grid: { color: 'rgba(0,0,0,0.05)' }
           },
@@ -1239,6 +1579,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function drawUnidadChart(data) {
+    if (!data || data.length === 0) {
+      console.warn('No hay datos para gráfico de unidad');
+      return;
+    }
+
     const counts = data.reduce((acc, curr) => {
       const unidad = curr.unidad || 'No definido';
       acc[unidad] = (acc[unidad] || 0) + 1;
@@ -1247,7 +1592,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 15);
     const labels = sorted.map(item => item[0]);
     const values = sorted.map(item => item[1]);
-    const total = values.reduce((a, b) => a + b, 0);
+    const total = values.reduce((a, b) => a + b, 0) || 1;
 
     // Generar gradient de colores
     const colors = labels.map((_, i) => {
@@ -1286,13 +1631,14 @@ document.addEventListener('DOMContentLoaded', () => {
             bodyFont: { size: 12 },
             callbacks: { 
               label: (c) => {
-                const pct = pf(c.raw, total);
-                return `${c.dataset.label}: ${nf.format(c.raw)} (${pct}%)`;
+                const pct = total > 0 ? pf(c.raw || 0, total) : '0.0';
+                return `${c.dataset.label}: ${nf.format(c.raw || 0)} (${pct}%)`;
               }
             }
           },
           datalabels: {
-            formatter: (v) => nf.format(v),
+            display: values.length < 20, // Solo mostrar si hay pocas barras
+            formatter: (v) => v > 0 ? nf.format(v) : '',
             anchor: 'end',
             align: 'top',
             offset: 1,
@@ -1314,7 +1660,7 @@ document.addEventListener('DOMContentLoaded', () => {
         onClick: (_evt, elements) => {
           if (!elements?.length) return;
           const chosen = labels[elements[0].index];
-          try { resumenChoices.sedes?.setChoiceByValue(chosen); } catch { /* noop */ }
+          try { resumenChoices.unidad?.setChoiceByValue(chosen); } catch { /* noop */ }
           document.getElementById('resumen-btn-refresh')?.click();
         }
       }
@@ -1322,6 +1668,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function drawFechaChart(data, start, end) {
+    if (!data || data.length === 0) {
+      console.warn('No hay datos para gráfico de fecha');
+      return;
+    }
+
     const diffDays = end.diff(start, 'days');
     let labels, counts;
 
@@ -1380,7 +1731,7 @@ document.addEventListener('DOMContentLoaded', () => {
             titleFont: { size: 13, weight: 'bold' },
             bodyFont: { size: 12 },
             callbacks: { 
-              label: (c) => `${c.dataset.label}: ${nf.format(c.raw)} incidentes`
+              label: (c) => `${c.dataset.label}: ${nf.format(c.raw || 0)} incidentes`
             }
           },
           datalabels: { display: false }
@@ -1402,6 +1753,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function drawMesChart(data) {
+    if (!data || data.length === 0) {
+      console.warn('No hay datos para gráfico de mes');
+      return;
+    }
+
     const monthsData = [
       { short: 'ene', long: 'Enero', num: 0 },
       { short: 'feb', long: 'Febrero', num: 1 },
@@ -1428,7 +1784,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const labels = monthsData.map(m => m.long);
     const values = monthsData.map(m => counts[m.short] || 0);
-    const total = values.reduce((a, b) => a + b, 0);
+    const total = values.reduce((a, b) => a + b, 0) || 1;
     const maxValue = Math.max(...values, 1);
 
     // Generar gradient de colores
@@ -1467,12 +1823,13 @@ document.addEventListener('DOMContentLoaded', () => {
             bodyFont: { size: 12 },
             callbacks: { 
               label: (c) => {
-                const pct = total > 0 ? pf(c.raw, total) : '0.0';
-                return `${c.dataset.label}: ${nf.format(c.raw)} (${pct}%)`;
+                const pct = total > 0 ? pf(c.raw || 0, total) : '0.0';
+                return `${c.dataset.label}: ${nf.format(c.raw || 0)} (${pct}%)`;
               }
             }
           },
           datalabels: {
+            display: true,
             formatter: (v) => v > 0 ? nf.format(v) : '',
             anchor: 'end',
             align: 'top',
@@ -1664,6 +2021,46 @@ document.addEventListener('DOMContentLoaded', () => {
       }, 100);
     }
   }
+  // ============= FUNCIÓN PARA CARGAR UNIDADES POR CLIENTE (KPI DETALLE DE INCIDENTES) =============
+  async function loadDetalleUnidadesByCliente(cliente) {
+    if (!detalleChoices.unidad) return;
+    
+    console.log(`[DETALLE] Cargando unidades para cliente: ${cliente}`);
+
+    // OBTENER UNIDADES DIRECTAMENTE DE CLIENTE_UNIDAD (no de incidentes)
+    const unidades = await getUnidadesFromClienteUnidad(cliente);
+    console.log(`[DETALLE] Unidades encontradas para ${cliente}:`, unidades);
+
+    const unidadSelect = document.getElementById('detalle-filtro-unidad');
+    if (!unidadSelect) return;
+
+    // Destruir la instancia anterior de Choices
+    if (detalleChoices.unidad) {
+      detalleChoices.unidad.destroy();
+    }
+
+    if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
+      // Usuario CLIENTE con UNIDAD específica - bloquear
+      const unidadNombre = accessControl.unidadAsignada;
+      
+      unidadSelect.innerHTML = `<option value="${unidadNombre}" selected>${unidadNombre}</option>`;
+      
+      const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
+      detalleChoices.unidad = new Choices('#detalle-filtro-unidad', cfg);
+      
+      unidadSelect.disabled = true;
+      unidadSelect.style.opacity = '0.6';
+      unidadSelect.title = `Acceso restringido a: ${unidadNombre}`;
+    } else {
+      // Usuario ADMIN/SUPERVISOR o CLIENTE sin unidad específica - mostrar todas las disponibles
+      unidadSelect.innerHTML = '<option value="Todas" selected>Todas</option>' +
+        unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+      
+      const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
+      detalleChoices.unidad = new Choices('#detalle-filtro-unidad', cfg);
+    }
+  }
+
   async function initDetalleIncidentesDashboard() {
     const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', shouldSort: false };
     detalleChoices.cliente = new Choices('#detalle-filtro-cliente', cfg);
@@ -1677,6 +2074,23 @@ document.addEventListener('DOMContentLoaded', () => {
     // Usar la función genérica para cargar Cliente/Unidad desde CLIENTE_UNIDAD
     await loadClienteUnidadFiltersGenerico('detalle-filtro-cliente', 'detalle-filtro-unidad', true, detalleChoices);
 
+    // Agregar listener de cliente para recargar unidades
+    const clienteSelect = document.getElementById('detalle-filtro-cliente');
+    if (clienteSelect) {
+      clienteSelect.addEventListener('change', async () => {
+        console.log('[DETALLE] Cliente cambió');
+        const cliente = detalleChoices.cliente.getValue(true);
+        const clienteValue = Array.isArray(cliente) ? cliente[0] : cliente;
+        
+        if (clienteValue && clienteValue !== 'Todos') {
+          console.log('[DETALLE] Cargando unidades para:', clienteValue);
+          await loadDetalleUnidadesByCliente(clienteValue);
+        }
+        
+        queryAndRenderDetalle();
+      });
+    }
+
     // Configurar date pickers
     const hoy = new Date();
     const hace30Dias = new Date(hoy.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -1685,6 +2099,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('detalle-btn-refresh')?.addEventListener('click', queryAndRenderDetalle);
     document.getElementById('detalle-btn-export')?.addEventListener('click', exportDetalleCSV);
+
+    // Cargar unidades iniciales
+    const clienteActual = accessControl && accessControl.userType === 'CLIENTE' 
+      ? accessControl.clienteAsignado 
+      : 'Todos';
+    
+    console.log('[DETALLE] Cargando unidades iniciales para:', clienteActual);
+    await loadDetalleUnidadesByCliente(clienteActual);
 
     queryAndRenderDetalle();
     detalleInitialized = true;
@@ -2711,8 +3133,14 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     
     // Event listener para cambio de Cliente (actualiza Unidades)
-    document.getElementById('kpi-ronda-cliente')?.addEventListener('change', () => {
-      loadKpiRondaUnidadesPorCliente();
+    document.getElementById('kpi-ronda-cliente')?.addEventListener('change', async () => {
+      const clienteSelect = document.getElementById('kpi-ronda-cliente');
+      const cliente = clienteSelect?.value || '';
+      
+      if (cliente) {
+        console.log('[RONDA GENERAL] Cliente cambió a:', cliente);
+        await loadRondaGeneralUnidadesByCliente(cliente);
+      }
     });
     
     // Event listeners para filtros de fecha
@@ -2732,20 +3160,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadKpiRondaClientesUnidades() {
     try {
-      // Obtener clientes de CLIENTE_UNIDAD
-      const snapshot = await db.collection('CLIENTE_UNIDAD').get();
-      const clientes = [];
-      
-      snapshot.docs.forEach(doc => {
-        clientes.push(doc.id);
-      });
-      
-      // Ordenar alfabéticamente
-      clientes.sort((a, b) => a.localeCompare(b, 'es'));
-      
-      // Cargar en select
       const clienteSelect = document.getElementById('kpi-ronda-cliente');
-      if (clienteSelect) {
+      if (!clienteSelect) return;
+
+      // Si es usuario CLIENTE, mostrar SOLO su cliente
+      if (accessControl && accessControl.userType === 'CLIENTE') {
+        const clienteAsignado = accessControl.clienteAsignado;
+        clienteSelect.innerHTML = `<option value="${clienteAsignado}">${clienteAsignado}</option>`;
+        clienteSelect.disabled = true;
+        clienteSelect.style.opacity = '0.6';
+        clienteSelect.title = `Acceso restringido a: ${clienteAsignado}`;
+        
+        // Cargar unidades iniciales para CLIENTE
+        await loadRondaGeneralUnidadesByCliente(clienteAsignado);
+      } else {
+        // ADMIN/SUPERVISOR: mostrar todos los clientes
+        const snapshot = await db.collection('CLIENTE_UNIDAD').get();
+        const clientes = [];
+        
+        snapshot.docs.forEach(doc => {
+          clientes.push(doc.id);
+        });
+        
+        clientes.sort((a, b) => a.localeCompare(b, 'es'));
+        
         clienteSelect.innerHTML = '<option value="">Todos</option>';
         clientes.forEach(cliente => {
           const option = document.createElement('option');
@@ -2759,41 +3197,38 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  async function loadKpiRondaUnidadesPorCliente() {
+  async function loadRondaGeneralUnidadesByCliente(cliente) {
     try {
-      const clienteSelect = document.getElementById('kpi-ronda-cliente');
-      const cliente = clienteSelect?.value || '';
       const unidadSelect = document.getElementById('kpi-ronda-unidad');
-      
-      // Limpiar unidades anteriores (excepto "Todas")
+      if (!unidadSelect) return;
+
+      console.log(`[RONDA GENERAL] Cargando unidades para cliente: ${cliente}`);
+
+      // Obtener unidades DIRECTAMENTE DE CLIENTE_UNIDAD
+      const unidades = await getUnidadesFromClienteUnidad(cliente);
+      console.log(`[RONDA GENERAL] Unidades encontradas:`, unidades);
+
+      // Limpiar select
       unidadSelect.innerHTML = '<option value="">Todas</option>';
-      
-      if (!cliente) return;
-      
-      // Obtener unidades desde la SUBCOLECCIÓN UNIDADES del cliente
-      const unidadesSnapshot = await db
-        .collection('CLIENTE_UNIDAD')
-        .doc(cliente)
-        .collection('UNIDADES')
-        .get();
-      
-      const unidades = [];
-      unidadesSnapshot.forEach(doc => {
-        unidades.push(doc.id);
-      });
-      
-      // Ordenar alfabéticamente
-      unidades.sort((a, b) => a.localeCompare(b, 'es'));
-      
-      // Agregar unidades al select
-      unidades.forEach(unidad => {
-        const option = document.createElement('option');
-        option.value = unidad;
-        option.textContent = unidad;
-        unidadSelect.appendChild(option);
-      });
+
+      // Si usuario es CLIENTE con UNIDAD asignada, mostrar SOLO esa
+      if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
+        const unidadNombre = accessControl.unidadAsignada;
+        unidadSelect.innerHTML = `<option value="${unidadNombre}">${unidadNombre}</option>`;
+        unidadSelect.disabled = true;
+        unidadSelect.style.opacity = '0.6';
+        unidadSelect.title = `Acceso restringido a: ${unidadNombre}`;
+      } else {
+        // Agregar todas las unidades disponibles
+        unidades.forEach(unidad => {
+          const option = document.createElement('option');
+          option.value = unidad;
+          option.textContent = unidad;
+          unidadSelect.appendChild(option);
+        });
+      }
     } catch (error) {
-      console.error('Error al cargar unidades KPI:', error);
+      console.error('[RONDA GENERAL] Error al cargar unidades:', error);
     }
   }
 
@@ -10010,9 +10445,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Remover listeners anteriores para evitar duplicados
     if (btnAplicar) {
-      btnAplicar.removeEventListener('click', loadAndRenderIncidenciaQR);
-      btnAplicar.addEventListener('click', async () => {
-        await loadAndRenderIncidenciaQR();
+      btnAplicar.removeEventListener('click', renderIncidenciaQR);
+      btnAplicar.addEventListener('click', () => {
+        renderIncidenciaQR();
       });
     }
     
@@ -10049,13 +10484,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (iqrChoices.unidad) {
       try {
-        iqrChoices.unidad.setChoiceByValue('Todos');
+        iqrChoices.unidad.setChoiceByValue('Todas');
       } catch (e) {
         const select = document.getElementById('iqr-unidad');
         if (select) select.value = 'Todas';
       }
     }
-    loadAndRenderIncidenciaQR();
+    renderIncidenciaQR();
   }
 
   async function loadAndRenderIncidenciaQR() {
@@ -10079,30 +10514,38 @@ document.addEventListener('DOMContentLoaded', () => {
       iqrAllData = snapshot.docs.map(doc => {
         const data = doc.data();
         
-        // Parsear fecha - puede venir en varios formatos
+        // Preservar timestamp original y crear fecha derivada
         let fecha = new Date();
-        if (data.fechaHora) {
+        let timestamp = data.timestamp;
+        
+        // Si no hay timestamp, intentar crear uno desde fechaHora
+        if (!timestamp && data.fechaHora) {
           if (typeof data.fechaHora === 'string') {
-            // Intentar parsear string en formato "DD/MM/YYYY, HH:MM:SS"
             try {
               fecha = new Date(data.fechaHora);
-              if (isNaN(fecha.getTime())) {
-                // Si falla, usar fecha actual
+              if (!isNaN(fecha.getTime())) {
+                timestamp = fecha;
+              } else {
                 fecha = new Date();
+                timestamp = new Date();
               }
             } catch (e) {
               fecha = new Date();
+              timestamp = new Date();
             }
           } else if (data.fechaHora.toDate) {
             fecha = data.fechaHora.toDate();
+            timestamp = fecha;
           }
-        } else if (data.timestamp) {
-          fecha = data.timestamp.toDate ? data.timestamp.toDate() : new Date(data.timestamp);
+        } else if (timestamp) {
+          // Si hay timestamp, convertirlo a Date si es necesario
+          fecha = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
         }
 
         return {
           id: doc.id,
           ...data,
+          timestamp: timestamp,
           fecha: fecha,
         };
       });
@@ -10124,28 +10567,42 @@ document.addEventListener('DOMContentLoaded', () => {
     const clienteSelect = document.getElementById('iqr-cliente');
     const unidadSelect = document.getElementById('iqr-unidad');
 
-    if (clienteSelect && iqrChoices.cliente) {
-      try {
-        iqrChoices.cliente.clearStore();
-        iqrChoices.cliente.setChoices(
-          [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
-          'value', 'label', false
-        );
-      } catch (e) {
+    // Actualizar select de cliente
+    if (clienteSelect) {
+      if (iqrChoices.cliente) {
+        try {
+          iqrChoices.cliente.clearStore();
+          iqrChoices.cliente.setChoices(
+            [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
+            'value', 'label', false
+          );
+        } catch (e) {
+          // Si Choices falla, usar select HTML normal
+          clienteSelect.innerHTML = '<option value="Todos">Todos</option>' + clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+        }
+      } else {
+        // Si Choices no está disponible, usar select HTML normal
+        clienteSelect.innerHTML = '<option value="Todos">Todos</option>' + clientes.map(c => `<option value="${c}">${c}</option>`).join('');
       }
-    } else {
     }
 
-    if (unidadSelect && iqrChoices.unidad) {
-      try {
-        iqrChoices.unidad.clearStore();
-        iqrChoices.unidad.setChoices(
-          [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
-          'value', 'label', false
-        );
-      } catch (e) {
+    // Actualizar select de unidad
+    if (unidadSelect) {
+      if (iqrChoices.unidad) {
+        try {
+          iqrChoices.unidad.clearStore();
+          iqrChoices.unidad.setChoices(
+            [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
+            'value', 'label', false
+          );
+        } catch (e) {
+          // Si Choices falla, usar select HTML normal
+          unidadSelect.innerHTML = '<option value="Todas">Todas</option>' + unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+        }
+      } else {
+        // Si Choices no está disponible, usar select HTML normal
+        unidadSelect.innerHTML = '<option value="Todas">Todas</option>' + unidades.map(u => `<option value="${u}">${u}</option>`).join('');
       }
-    } else {
     }
   }
 
@@ -10158,37 +10615,64 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function getFilteredIncidenciaQRData() {
     let data = [...iqrAllData];
+    
     // Filtro de cliente - SOLO si se seleccionó algo diferente a "Todos"
     const clienteSelect = document.getElementById('iqr-cliente');
-    const clienteVal = clienteSelect?.value;
-    if (clienteVal && clienteVal !== 'Todos' && clienteVal.trim() !== '') {
-      const beforeCount = data.length;
-      data = data.filter(d => d.cliente && d.cliente.trim() === clienteVal.trim());
+    let clienteVal = clienteSelect?.value;
+    
+    // Si está vacío o es "Todos", no filtrar
+    if (clienteVal && clienteVal.trim() !== '' && clienteVal.trim() !== 'Todos') {
+      clienteVal = clienteVal.trim();
+      data = data.filter(d => d.cliente && d.cliente.trim() === clienteVal);
     }
 
     // Filtro de unidad - SOLO si se seleccionó algo diferente a "Todas"
     const unidadSelect = document.getElementById('iqr-unidad');
-    const unidadVal = unidadSelect?.value;
-    if (unidadVal && unidadVal !== 'Todas' && unidadVal.trim() !== '') {
-      const beforeCount = data.length;
-      data = data.filter(d => d.unidad && d.unidad.trim() === unidadVal.trim());
+    let unidadVal = unidadSelect?.value;
+    
+    // Si está vacío o es "Todas", no filtrar
+    if (unidadVal && unidadVal.trim() !== '' && unidadVal.trim() !== 'Todas') {
+      unidadVal = unidadVal.trim();
+      data = data.filter(d => d.unidad && d.unidad.trim() === unidadVal);
     }
 
-    // Filtro de fechas
+    // Filtro de fechas usando timestamp
     const fechaInicio = document.getElementById('iqr-fecha-inicio')?.value;
     const fechaFin = document.getElementById('iqr-fecha-fin')?.value;
     if (fechaInicio) {
       const start = new Date(fechaInicio);
       start.setHours(0, 0, 0, 0);
       const beforeCount = data.length;
-      data = data.filter(d => d.fecha >= start);
+      data = data.filter(d => {
+        let ts = d.timestamp;
+        if (ts && ts.toDate) ts = ts.toDate();
+        else if (typeof ts === 'string') ts = new Date(ts);
+        return ts >= start;
+      });
     }
     if (fechaFin) {
       const end = new Date(fechaFin);
       end.setHours(23, 59, 59, 999);
       const beforeCount = data.length;
-      data = data.filter(d => d.fecha <= end);
+      data = data.filter(d => {
+        let ts = d.timestamp;
+        if (ts && ts.toDate) ts = ts.toDate();
+        else if (typeof ts === 'string') ts = new Date(ts);
+        return ts <= end;
+      });
     }
+    
+    // ORDENAR POR TIMESTAMP: MÁS RECIENTE PRIMERO (descendente)
+    data.sort((a, b) => {
+      let tsA = a.timestamp;
+      let tsB = b.timestamp;
+      if (tsA && tsA.toDate) tsA = tsA.toDate();
+      else if (typeof tsA === 'string') tsA = new Date(tsA);
+      if (tsB && tsB.toDate) tsB = tsB.toDate();
+      else if (typeof tsB === 'string') tsB = new Date(tsB);
+      return tsB - tsA; // Descendente: más reciente primero
+    });
+    
     if (data.length > 0);
     return data;
   }
@@ -10202,7 +10686,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // Gráfico de Incidencias por Fecha (usando timestamp)
     const byDate = {};
     data.forEach(d => {
-      const dateKey = d.fecha.toISOString().split('T')[0];
+      let ts = d.timestamp;
+      if (ts && ts.toDate) ts = ts.toDate();
+      else if (typeof ts === 'string') ts = new Date(ts);
+      const dateKey = ts.toISOString().split('T')[0];
       byDate[dateKey] = (byDate[dateKey] || 0) + 1;
     });
     const sortedDates = Object.keys(byDate).sort();
@@ -10321,22 +10808,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
     tbody.innerHTML = '';
     if (data.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 20px; color: #a0aec0;">No hay datos para mostrar</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="11" style="text-align: center; padding: 20px; color: #a0aec0;">No hay datos para mostrar</td></tr>';
       return;
     }
 
     data.forEach((d, index) => {
       const fila = document.createElement('tr');
       
-      // Parsear fecha
-      let fechaStr = '-';
-      if (d.fecha instanceof Date) {
-        fechaStr = d.fecha.toLocaleString('es-PE', { 
-          year: 'numeric', month: '2-digit', day: '2-digit',
-          hour: '2-digit', minute: '2-digit', second: '2-digit'
-        });
+      // Parsear timestamp - FORMATO: dd/mm/yyyy hh:mm
+      let timestampStr = '-';
+      if (d.timestamp) {
+        let ts = d.timestamp;
+        if (ts.toDate) {
+          ts = ts.toDate();
+        } else if (typeof ts === 'string') {
+          ts = new Date(ts);
+        }
+        if (ts instanceof Date && !Number.isNaN(ts.getTime())) {
+          const day = String(ts.getDate()).padStart(2, '0');
+          const month = String(ts.getMonth() + 1).padStart(2, '0');
+          const year = ts.getFullYear();
+          const hours = String(ts.getHours()).padStart(2, '0');
+          const minutes = String(ts.getMinutes()).padStart(2, '0');
+          timestampStr = `${day}/${month}/${year} ${hours}:${minutes}`;
+        }
+      } else if (d.fecha instanceof Date) {
+        const day = String(d.fecha.getDate()).padStart(2, '0');
+        const month = String(d.fecha.getMonth() + 1).padStart(2, '0');
+        const year = d.fecha.getFullYear();
+        const hours = String(d.fecha.getHours()).padStart(2, '0');
+        const minutes = String(d.fecha.getMinutes()).padStart(2, '0');
+        timestampStr = `${day}/${month}/${year} ${hours}:${minutes}`;
       } else if (typeof d.fechaHora === 'string') {
-        fechaStr = d.fechaHora;
+        timestampStr = d.fechaHora;
       }
 
       // Determinar estado - si tiene respuestas, está completada
@@ -10367,15 +10871,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const fotoCell = d.foto ? `<img src="${d.foto}" alt="Foto" style="max-width: 40px; cursor: pointer;" onclick="showImageModal('${d.foto}')">` : '-';
 
+      // PUESTO: obtener el puesto del registro
+      const puestoDisplay = d.puesto || '-';
+      
+      // PUNTO: obtener el nombrePunto
+      const puntoDisplay = d.nombrePunto || '-';
+
       fila.innerHTML = `
-        <td>${fechaStr}</td>
+        <td>${timestampStr}</td>
         <td>${d.usuario || d.nombrePunto || '-'}</td>
         <td>${d.cliente || '-'}</td>
         <td>${d.unidad || '-'}</td>
         <td><span class="iqr-badge">${codigoQR}</span></td>
         <td>${pregunta}</td>
         <td>${respuesta}</td>
-        <td>${d.puesto || '-'}</td>
+        <td>${puestoDisplay}</td>
+        <td>${puntoDisplay}</td>
         <td><span class="${estadoClass}">${estadoText}</span></td>
         <td class="iqr-foto-cell">${fotoCell}</td>
       `;
@@ -10396,16 +10907,36 @@ document.addEventListener('DOMContentLoaded', () => {
         [`Fecha Generación: ${new Date().toLocaleString('es-PE')}`],
         [`Total de Registros: ${data.length}`],
         [],
-        ['Fecha/Hora', 'Usuario', 'Cliente', 'Unidad', 'QR', 'Pregunta', 'Respuesta', 'Puesto', 'Estado']
+        ['Timestamp', 'Usuario', 'Cliente', 'Unidad', 'QR', 'Pregunta', 'Respuesta', 'Puesto', 'Punto', 'Estado']
       ];
       
       data.forEach(d => {
-        // Parsear fecha
-        let fechaStr = '';
-        if (d.fecha instanceof Date) {
-          fechaStr = d.fecha.toLocaleString('es-PE');
+        // Parsear timestamp - FORMATO: dd/mm/yyyy hh:mm
+        let timestampStr = '';
+        if (d.timestamp) {
+          let ts = d.timestamp;
+          if (ts.toDate) {
+            ts = ts.toDate();
+          } else if (typeof ts === 'string') {
+            ts = new Date(ts);
+          }
+          if (ts instanceof Date && !Number.isNaN(ts.getTime())) {
+            const day = String(ts.getDate()).padStart(2, '0');
+            const month = String(ts.getMonth() + 1).padStart(2, '0');
+            const year = ts.getFullYear();
+            const hours = String(ts.getHours()).padStart(2, '0');
+            const minutes = String(ts.getMinutes()).padStart(2, '0');
+            timestampStr = `${day}/${month}/${year} ${hours}:${minutes}`;
+          }
+        } else if (d.fecha instanceof Date) {
+          const day = String(d.fecha.getDate()).padStart(2, '0');
+          const month = String(d.fecha.getMonth() + 1).padStart(2, '0');
+          const year = d.fecha.getFullYear();
+          const hours = String(d.fecha.getHours()).padStart(2, '0');
+          const minutes = String(d.fecha.getMinutes()).padStart(2, '0');
+          timestampStr = `${day}/${month}/${year} ${hours}:${minutes}`;
         } else if (typeof d.fechaHora === 'string') {
-          fechaStr = d.fechaHora;
+          timestampStr = d.fechaHora;
         }
 
         // Obtener primera pregunta y respuesta
@@ -10429,16 +10960,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const codigoQR = d.codigoQRleido || d.qrId || '';
         const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
         const estado = tieneRespuestas ? 'Completada' : 'Pendiente';
+        
+        // PUESTO: obtener el puesto del registro
+        const puestoDisplay = d.puesto || '';
+        
+        // PUNTO: obtener el nombrePunto
+        const puntoDisplay = d.nombrePunto || '';
 
         ws_data.push([
-          fechaStr,
+          timestampStr,
           d.usuario || d.nombrePunto || '',
           d.cliente || '',
           d.unidad || '',
           codigoQR,
           pregunta.substring(0, 50),
           respuesta.substring(0, 50),
-          d.puesto || '',
+          puestoDisplay,
+          puntoDisplay,
           estado
         ]);
       });
@@ -10447,14 +10985,15 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Configurar estilos y ancho de columnas
       ws['!cols'] = [
-        { wch: 18 }, // Fecha/Hora
+        { wch: 18 }, // Timestamp
         { wch: 15 }, // Usuario
         { wch: 15 }, // Cliente
         { wch: 12 }, // Unidad
         { wch: 12 }, // QR
         { wch: 20 }, // Pregunta
         { wch: 20 }, // Respuesta
-        { wch: 10 }, // Puesto
+        { wch: 12 }, // Puesto
+        { wch: 12 }, // Punto
         { wch: 12 }  // Estado
       ];
 
@@ -10472,7 +11011,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Configurar fila de encabezados (fila 5)
       const headerRow = 5;
-      for (let col = 0; col < 9; col++) {
+      for (let col = 0; col < 10; col++) {
         const cellRef = XLSX.utils.encode_col(col) + headerRow;
         if (ws[cellRef]) {
           ws[cellRef].fill = { fgColor: { rgb: 'FF2c5aa0' } };
@@ -10554,11 +11093,32 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const tableBody = data.map(d => {
-        let fechaStr = '';
-        if (d.fecha instanceof Date) {
-          fechaStr = d.fecha.toLocaleString('es-PE');
+        // Parsear timestamp - FORMATO: dd/mm/yyyy hh:mm
+        let timestampStr = '';
+        if (d.timestamp) {
+          let ts = d.timestamp;
+          if (ts.toDate) {
+            ts = ts.toDate();
+          } else if (typeof ts === 'string') {
+            ts = new Date(ts);
+          }
+          if (ts instanceof Date && !Number.isNaN(ts.getTime())) {
+            const day = String(ts.getDate()).padStart(2, '0');
+            const month = String(ts.getMonth() + 1).padStart(2, '0');
+            const year = ts.getFullYear();
+            const hours = String(ts.getHours()).padStart(2, '0');
+            const minutes = String(ts.getMinutes()).padStart(2, '0');
+            timestampStr = `${day}/${month}/${year} ${hours}:${minutes}`;
+          }
+        } else if (d.fecha instanceof Date) {
+          const day = String(d.fecha.getDate()).padStart(2, '0');
+          const month = String(d.fecha.getMonth() + 1).padStart(2, '0');
+          const year = d.fecha.getFullYear();
+          const hours = String(d.fecha.getHours()).padStart(2, '0');
+          const minutes = String(d.fecha.getMinutes()).padStart(2, '0');
+          timestampStr = `${day}/${month}/${year} ${hours}:${minutes}`;
         } else if (typeof d.fechaHora === 'string') {
-          fechaStr = d.fechaHora;
+          timestampStr = d.fechaHora;
         }
 
         let pregunta = '';
@@ -10581,16 +11141,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const codigoQR = d.codigoQRleido || d.qrId || '';
         const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
         const estado = tieneRespuestas ? 'Completada' : 'Pendiente';
+        
+        // PUESTO: obtener el puesto del registro
+        const puestoDisplay = d.puesto || '';
+        
+        // PUNTO: obtener el nombrePunto
+        const puntoDisplay = d.nombrePunto || '';
 
         return [
-          fechaStr,
+          timestampStr,
           d.usuario || d.nombrePunto || '',
           d.cliente || '',
           d.unidad || '',
           codigoQR,
           pregunta.substring(0, 20),
           respuesta.substring(0, 20),
-          d.puesto || '',
+          puestoDisplay,
+          puntoDisplay,
           estado
         ];
       });
@@ -10645,10 +11212,10 @@ document.addEventListener('DOMContentLoaded', () => {
         content.push({
           table: {
             headerRows: 1,
-            widths: ['11%', '9%', '11%', '9%', '8%', '9%', '9%', '8%', '9%'],
+            widths: ['10%', '8%', '10%', '8%', '7%', '8%', '8%', '7%', '7%', '8%'],
             body: [
               [
-                { text: 'Fecha/Hora', style: 'tableHeader' },
+                { text: 'Timestamp', style: 'tableHeader' },
                 { text: 'Usuario', style: 'tableHeader' },
                 { text: 'Cliente', style: 'tableHeader' },
                 { text: 'Unidad', style: 'tableHeader' },
@@ -10656,6 +11223,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 { text: 'Pregunta', style: 'tableHeader' },
                 { text: 'Respuesta', style: 'tableHeader' },
                 { text: 'Puesto', style: 'tableHeader' },
+                { text: 'Punto', style: 'tableHeader' },
                 { text: 'Estado', style: 'tableHeader' }
               ],
               ...tableBody.map((row, idx) => [
@@ -10667,10 +11235,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 { text: row[5], style: 'tableCell', fontSize: 7 },
                 { text: row[6], style: 'tableCell', fontSize: 7 },
                 { text: row[7], style: 'tableCell' },
+                { text: row[8], style: 'tableCell' },
                 { 
-                  text: row[8], 
+                  text: row[9], 
                   style: 'tableCell',
-                  color: row[8] === 'Completada' ? '#10b981' : '#f59e0b',
+                  color: row[9] === 'Completada' ? '#10b981' : '#f59e0b',
                   bold: true,
                   alignment: 'center'
                 }
