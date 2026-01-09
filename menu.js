@@ -1208,6 +1208,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderResumen() {
+    // [EXTRA] Limpiar gráficos previos (recomendado cuando se aplican filtros)
+    limpiarKPI();
+
     if (typeof $ === 'undefined' || typeof $.fn.daterangepicker === 'undefined') {
       console.warn('jQuery o daterangepicker no están disponibles');
       return;
@@ -1341,6 +1344,51 @@ document.addEventListener('DOMContentLoaded', () => {
       resumenCharts[canvasId].destroy();
     }
     resumenCharts[canvasId] = new Chart(canvas, config);
+  }
+
+  // Función global para resetear gráficos cuando no hay datos
+  function resetChart(canvasId, type = 'bar') {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return null;
+
+    if (resumenCharts[canvasId]) {
+      resumenCharts[canvasId].destroy();
+    }
+
+    resumenCharts[canvasId] = new Chart(canvas, {
+      type,
+      data: {
+        labels: [],
+        datasets: []
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { enabled: false }
+        },
+        scales: {
+          x: { display: false },
+          y: { display: false }
+        }
+      }
+    });
+
+    return resumenCharts[canvasId];
+  }
+
+  // ===== FUNCIÓN EXTRA (RECOMENDADO): Limpiar todos los gráficos de KPI cuando se aplican filtros =====
+  function limpiarKPI() {
+    console.log('[KPI] Limpiando gráficos...');
+    // Destruir todos los gráficos activos
+    Object.keys(resumenCharts).forEach(key => {
+      if (resumenCharts[key]) {
+        resumenCharts[key].destroy();
+        resumenCharts[key] = null;
+      }
+    });
+    console.log('[KPI] Gráficos limpios');
   }
 
   // ======================= GRÁFICOS RESUMEN =======================
@@ -1581,6 +1629,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function drawUnidadChart(data) {
     if (!data || data.length === 0) {
       console.warn('No hay datos para gráfico de unidad');
+      resetChart('resumen-chart-unidad', 'bar');
       return;
     }
 
@@ -1670,6 +1719,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function drawFechaChart(data, start, end) {
     if (!data || data.length === 0) {
       console.warn('No hay datos para gráfico de fecha');
+      resetChart('resumen-chart-fecha', 'line');
       return;
     }
 
@@ -1755,6 +1805,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function drawMesChart(data) {
     if (!data || data.length === 0) {
       console.warn('No hay datos para gráfico de mes');
+      resetChart('resumen-chart-mes', 'bar');
       return;
     }
 
@@ -2078,12 +2129,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const clienteSelect = document.getElementById('detalle-filtro-cliente');
     if (clienteSelect) {
       clienteSelect.addEventListener('change', async () => {
-        console.log('[DETALLE] Cliente cambió');
         const cliente = detalleChoices.cliente.getValue(true);
         const clienteValue = Array.isArray(cliente) ? cliente[0] : cliente;
         
         if (clienteValue && clienteValue !== 'Todos') {
-          console.log('[DETALLE] Cargando unidades para:', clienteValue);
           await loadDetalleUnidadesByCliente(clienteValue);
         }
         
@@ -2282,6 +2331,40 @@ document.addEventListener('DOMContentLoaded', () => {
     const canvas = document.getElementById('detalle-chart-area');
     if (!canvas) return;
 
+    // Verificar si hay datos válidos
+    const hasData = Object.values(series).some(data => {
+      if (Array.isArray(data)) {
+        return data.some(v => v > 0);
+      }
+      return false;
+    });
+
+    if (detalleChart) detalleChart.destroy();
+
+    // Si no hay datos, mostrar gráfico vacío
+    if (!hasData) {
+      detalleChart = new Chart(canvas, {
+        type: 'line',
+        data: { labels: months, datasets: [] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { color: themeInk() }
+            },
+            tooltip: { enabled: false }
+          },
+          scales: {
+            y: { ticks: { color: themeInk() } },
+            x: { ticks: { color: themeInk() } }
+          }
+        }
+      });
+      return;
+    }
+
     // Construir dinámicamente los datasets según los tipos disponibles
     const colors = ['#7c3aed', '#2563eb', '#06b6d4', '#0ea5e9', '#f59e0b', '#ef4444', '#10b981', '#8b5cf6', '#6366f1', '#ec4899'];
     const datasets = Object.entries(series).map(([label, data], idx) => {
@@ -2299,7 +2382,6 @@ document.addEventListener('DOMContentLoaded', () => {
       };
     });
 
-    if (detalleChart) detalleChart.destroy();
     detalleChart = new Chart(canvas, {
       type: 'line',
       data: { labels: months, datasets },
@@ -10437,6 +10519,13 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
+    // Agregar listener al cliente para cargar unidades desde CLIENTE_UNIDAD
+    const clienteSelect = document.getElementById('iqr-cliente');
+    if (clienteSelect) {
+      clienteSelect.removeEventListener('change', handleIQRClienteChange);
+      clienteSelect.addEventListener('change', handleIQRClienteChange);
+    }
+
     // Agregar listeners (una sola vez)
     const btnAplicar = document.getElementById('iqr-btn-aplicar');
     const btnLimpiar = document.getElementById('iqr-btn-limpiar');
@@ -10445,9 +10534,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Remover listeners anteriores para evitar duplicados
     if (btnAplicar) {
-      btnAplicar.removeEventListener('click', renderIncidenciaQR);
-      btnAplicar.addEventListener('click', () => {
-        renderIncidenciaQR();
+      btnAplicar.removeEventListener('click', loadAndRenderIncidenciaQR);
+      btnAplicar.addEventListener('click', async () => {
+        await loadAndRenderIncidenciaQR();
       });
     }
     
@@ -10470,6 +10559,43 @@ document.addEventListener('DOMContentLoaded', () => {
     await loadAndRenderIncidenciaQR();
   }
 
+  async function handleIQRClienteChange() {
+    const clienteSelect = document.getElementById('iqr-cliente');
+    const unidadSelect = document.getElementById('iqr-unidad');
+    const clienteValue = clienteSelect?.value;
+
+    if (clienteValue && clienteValue !== 'Todos') {
+      // Cargar unidades directamente de CLIENTE_UNIDAD
+      const unidades = await getUnidadesFromClienteUnidad(clienteValue);
+      
+      if (iqrChoices.unidad) {
+        try {
+          iqrChoices.unidad.clearStore();
+          iqrChoices.unidad.setChoices(
+            [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
+            'value', 'label', true
+          );
+        } catch (e) {
+          console.error('Error actualizando unidades en IQR:', e);
+        }
+      }
+    } else {
+      // Si selecciona "Todos", cargar todas las unidades de los datos
+      const unidades = [...new Set(iqrAllData.map(d => d.unidad).filter(Boolean))].sort();
+      if (iqrChoices.unidad) {
+        try {
+          iqrChoices.unidad.clearStore();
+          iqrChoices.unidad.setChoices(
+            [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
+            'value', 'label', true
+          );
+        } catch (e) {
+          console.error('Error actualizando unidades en IQR:', e);
+        }
+      }
+    }
+  }
+
   function limpiarFiltrosIQR() {
     document.getElementById('iqr-fecha-inicio').value = '';
     document.getElementById('iqr-fecha-fin').value = '';
@@ -10484,13 +10610,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (iqrChoices.unidad) {
       try {
-        iqrChoices.unidad.setChoiceByValue('Todas');
+        iqrChoices.unidad.setChoiceByValue('Todos');
       } catch (e) {
         const select = document.getElementById('iqr-unidad');
         if (select) select.value = 'Todas';
       }
     }
-    renderIncidenciaQR();
+    loadAndRenderIncidenciaQR();
   }
 
   async function loadAndRenderIncidenciaQR() {
@@ -10514,38 +10640,30 @@ document.addEventListener('DOMContentLoaded', () => {
       iqrAllData = snapshot.docs.map(doc => {
         const data = doc.data();
         
-        // Preservar timestamp original y crear fecha derivada
+        // Parsear fecha - puede venir en varios formatos
         let fecha = new Date();
-        let timestamp = data.timestamp;
-        
-        // Si no hay timestamp, intentar crear uno desde fechaHora
-        if (!timestamp && data.fechaHora) {
+        if (data.fechaHora) {
           if (typeof data.fechaHora === 'string') {
+            // Intentar parsear string en formato "DD/MM/YYYY, HH:MM:SS"
             try {
               fecha = new Date(data.fechaHora);
-              if (!isNaN(fecha.getTime())) {
-                timestamp = fecha;
-              } else {
+              if (isNaN(fecha.getTime())) {
+                // Si falla, usar fecha actual
                 fecha = new Date();
-                timestamp = new Date();
               }
             } catch (e) {
               fecha = new Date();
-              timestamp = new Date();
             }
           } else if (data.fechaHora.toDate) {
             fecha = data.fechaHora.toDate();
-            timestamp = fecha;
           }
-        } else if (timestamp) {
-          // Si hay timestamp, convertirlo a Date si es necesario
-          fecha = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+        } else if (data.timestamp) {
+          fecha = data.timestamp.toDate ? data.timestamp.toDate() : new Date(data.timestamp);
         }
 
         return {
           id: doc.id,
           ...data,
-          timestamp: timestamp,
           fecha: fecha,
         };
       });
@@ -10567,42 +10685,28 @@ document.addEventListener('DOMContentLoaded', () => {
     const clienteSelect = document.getElementById('iqr-cliente');
     const unidadSelect = document.getElementById('iqr-unidad');
 
-    // Actualizar select de cliente
-    if (clienteSelect) {
-      if (iqrChoices.cliente) {
-        try {
-          iqrChoices.cliente.clearStore();
-          iqrChoices.cliente.setChoices(
-            [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
-            'value', 'label', false
-          );
-        } catch (e) {
-          // Si Choices falla, usar select HTML normal
-          clienteSelect.innerHTML = '<option value="Todos">Todos</option>' + clientes.map(c => `<option value="${c}">${c}</option>`).join('');
-        }
-      } else {
-        // Si Choices no está disponible, usar select HTML normal
-        clienteSelect.innerHTML = '<option value="Todos">Todos</option>' + clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+    if (clienteSelect && iqrChoices.cliente) {
+      try {
+        iqrChoices.cliente.clearStore();
+        iqrChoices.cliente.setChoices(
+          [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
+          'value', 'label', false
+        );
+      } catch (e) {
       }
+    } else {
     }
 
-    // Actualizar select de unidad
-    if (unidadSelect) {
-      if (iqrChoices.unidad) {
-        try {
-          iqrChoices.unidad.clearStore();
-          iqrChoices.unidad.setChoices(
-            [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
-            'value', 'label', false
-          );
-        } catch (e) {
-          // Si Choices falla, usar select HTML normal
-          unidadSelect.innerHTML = '<option value="Todas">Todas</option>' + unidades.map(u => `<option value="${u}">${u}</option>`).join('');
-        }
-      } else {
-        // Si Choices no está disponible, usar select HTML normal
-        unidadSelect.innerHTML = '<option value="Todas">Todas</option>' + unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+    if (unidadSelect && iqrChoices.unidad) {
+      try {
+        iqrChoices.unidad.clearStore();
+        iqrChoices.unidad.setChoices(
+          [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
+          'value', 'label', false
+        );
+      } catch (e) {
       }
+    } else {
     }
   }
 
@@ -10615,25 +10719,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function getFilteredIncidenciaQRData() {
     let data = [...iqrAllData];
-    
     // Filtro de cliente - SOLO si se seleccionó algo diferente a "Todos"
     const clienteSelect = document.getElementById('iqr-cliente');
-    let clienteVal = clienteSelect?.value;
-    
-    // Si está vacío o es "Todos", no filtrar
-    if (clienteVal && clienteVal.trim() !== '' && clienteVal.trim() !== 'Todos') {
-      clienteVal = clienteVal.trim();
-      data = data.filter(d => d.cliente && d.cliente.trim() === clienteVal);
+    const clienteVal = clienteSelect?.value;
+    if (clienteVal && clienteVal !== 'Todos' && clienteVal.trim() !== '') {
+      const beforeCount = data.length;
+      data = data.filter(d => d.cliente && d.cliente.trim() === clienteVal.trim());
     }
 
     // Filtro de unidad - SOLO si se seleccionó algo diferente a "Todas"
     const unidadSelect = document.getElementById('iqr-unidad');
-    let unidadVal = unidadSelect?.value;
-    
-    // Si está vacío o es "Todas", no filtrar
-    if (unidadVal && unidadVal.trim() !== '' && unidadVal.trim() !== 'Todas') {
-      unidadVal = unidadVal.trim();
-      data = data.filter(d => d.unidad && d.unidad.trim() === unidadVal);
+    const unidadVal = unidadSelect?.value;
+    if (unidadVal && unidadVal !== 'Todas' && unidadVal.trim() !== '') {
+      const beforeCount = data.length;
+      data = data.filter(d => d.unidad && d.unidad.trim() === unidadVal.trim());
     }
 
     // Filtro de fechas usando timestamp
