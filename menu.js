@@ -31,369 +31,370 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Evita doble ejecución del mismo script
-  if (window.__wiredCuadernoInc__) { /* already wired */ } else { window.__wiredCuadernoInc__ = true;
+  if (window.__wiredCuadernoInc__) { /* already wired */ } else {
+    window.__wiredCuadernoInc__ = true;
 
-  // ============================================================================
-  // 1) CONFIGURACIÓN E INICIALIZACIÓN DE FIREBASE
-  // ============================================================================
-  const COLLECTIONS = {
-    USERS: 'USUARIOS',
-    CLIENT_UNITS: 'CLIENTE_UNIDAD',
-    LOGBOOK: 'CUADERNO',
-    INCIDENTS: 'INCIDENCIAS_REGISTRADAS'
-  };
+    // ============================================================================
+    // 1) CONFIGURACIÓN E INICIALIZACIÓN DE FIREBASE
+    // ============================================================================
+    const COLLECTIONS = {
+      USERS: 'USUARIOS',
+      CLIENT_UNITS: 'CLIENTE_UNIDAD',
+      LOGBOOK: 'CUADERNO',
+      INCIDENTS: 'INCIDENCIAS_REGISTRADAS'
+    };
 
-  if (!firebase.apps.length) {
-    firebase.initializeApp(window.firebaseConfig);
-  }
-  const auth = firebase.auth();
-  const db = window.db = firebase.firestore();
-
-  // ============================================================================
-  // 2) SELECTORES DE ELEMENTOS DEL DOM Y ESTADO GLOBAL
-  // ============================================================================
-
-  // --- Layout y Navegación Principal ---
-  const sidebar = document.getElementById('sidebar');
-  const burgerBtn = document.getElementById('burger');
-  const menuToggleBtn = document.getElementById('menuToggleBtn');
-  const menuOverlay = document.getElementById('menu-overlay');
-  const navItems = document.querySelectorAll('.nav-item');
-  const views = document.querySelectorAll('.view');
-  const logoutBtn = document.getElementById('logoutBtn');
-  const avatarEl = document.getElementById('avatar');
-  const userNameEl = document.getElementById('userName');
-  const userMetaEl = document.getElementById('userMeta');
-
-  // --- Usuarios ---
-  const usersTbody = document.getElementById('usersTbody');
-  const usersCountEl = document.getElementById('usersCount');
-
-  // --- Cliente/Unidad ---
-  const clienteUnidadSearchInput = document.getElementById('clienteUnidadSearchInput');
-  const clienteUnidadTbody = document.getElementById('clienteUnidadTbody');
-  const cuAgregarClienteBtn = document.getElementById('cuAgregarClienteBtn');
-  const cuAgregarUnidadBtn = document.getElementById('cuAgregarUnidadBtn');
-  const cuAgregarPuestoBtn = document.getElementById('cuAgregarPuestoBtn');
-
-  // --- Cuaderno ---
-  const cuadernoClienteSelect = document.getElementById('cuaderno-cliente');
-  const cuadernoUnidadSelect = document.getElementById('cuaderno-unidad');
-  const cuadernoFechaInicio = document.getElementById('cuaderno-fecha-inicio');
-  const cuadernoFechaFin = document.getElementById('cuaderno-fecha-fin');
-  const cuadernoTbody = document.getElementById('cuadernoTbody');
-  const cuadernoBtnBuscar = document.getElementById('cuaderno-btn-buscar');
-  const cuadernoBtnLimpiar = document.getElementById('cuaderno-btn-limpiar');
-  const cuadernoBtnExportar = document.getElementById('cuaderno-btn-exportar');
-  const cuadernoBtnImprimirPDF = document.getElementById('cuaderno-btn-imprimir-pdf');
-
-  // --- Incidencias (nuevo) ---
-  const incFechaInicio = document.getElementById('incidencias-fecha-inicio');
-  const incFechaFin = document.getElementById('incidencias-fecha-fin');
-  const incCliente = document.getElementById('incidencias-cliente');
-  const incUnidad = document.getElementById('incidencias-unidad');
-  const incEstado = document.getElementById('incidencias-estado');
-  const incBtnBuscar = document.getElementById('incidencias-btn-buscar');
-  const incBtnLimpiar = document.getElementById('incidencias-btn-limpiar');
-  const incBtnExportar = document.getElementById('incidencias-btn-exportar');
-  const incidenciasTbody = document.getElementById('incidenciasTbody');
-
-  // --- Tiempo de Conexión ---
-  const tiempoConexionFechaInicio = document.getElementById('tiempo-conexion-fecha-inicio');
-  const tiempoConexionFechaFin = document.getElementById('tiempo-conexion-fecha-fin');
-  const tiempoConexionCliente = document.getElementById('tiempo-conexion-cliente');
-  const tiempoConexionUnidad = document.getElementById('tiempo-conexion-unidad');
-  const tiempoConexionUsuario = document.getElementById('tiempo-conexion-usuario');
-  const tiempoConexionBtnBuscar = document.getElementById('tiempo-conexion-btn-buscar');
-  const tiempoConexionBtnLimpiar = document.getElementById('tiempo-conexion-btn-limpiar');
-  const tiempoConexionBtnExportar = document.getElementById('tiempo-conexion-btn-exportar');
-  const tiempoConexionBtnPdf = document.getElementById('tiempo-conexion-btn-pdf');
-  const tiempoConexionTbody = document.getElementById('tiempoConexionTbody');
-
-  // ====== Cuaderno: carga de filtros (Cliente/Unidad) desde colección CUADERNO ======
-  async function loadCuadernoFilters() {
-    try {
-      if (!cuadernoClienteSelect && !cuadernoUnidadSelect) return;
-      // Reducido de 2000 a 500 para mejor rendimiento
-      const snap = await getQueryWithClienteFilter(COLLECTIONS.LOGBOOK).orderBy('__name__', 'desc').limit(500).get();
-      const rows = snap.docs.map(d => d.data());
-      const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
-
-      const clientes = uniq(rows.map(r => r.cliente));
-      const unidades = uniq(rows.map(r => r.unidad));
-
-      if (cuadernoClienteSelect) {
-        cuadernoClienteSelect.innerHTML = '<option value="">Todas</option>' +
-          clientes.map(c => `<option value="${c}">${c}</option>`).join('');
-      }
-      if (cuadernoUnidadSelect) {
-        cuadernoUnidadSelect.innerHTML = '<option value="">Todas</option>' +
-          unidades.map(u => `<option value="${u}">${u}</option>`).join('');
-      }
-    } catch (e) { }
-  }
-
-  // --- Incidencias: cargar filtros únicos (Cliente/Unidad/Estado) ---
-  let incidenciasFiltersLoaded = false;
-  async function loadIncidenciasFilters() {
-    try {
-      // Reducido de 5000 a 1000 para mejor rendimiento
-      const snap = await getQueryWithClienteFilter(COLLECTIONS.INCIDENTS).orderBy('__name__', 'desc').limit(1000).get();
-      const rows = snap.docs.map(d => d.data());
-      const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
-
-      const clientes = uniq(rows.map(r => r.cliente));
-      const unidades = uniq(rows.map(r => r.unidad));
-      const estados  = uniq(rows.map(r => r.estado));
-
-      // Obtener filtros del usuario
-      const clienteDelUsuario = accessControl?.getClienteFilter();
-      const unidadDelUsuario = accessControl?.getUnidadFilter?.();
-      const esCliente = !!clienteDelUsuario; // Si hay clienteFiltro, es CLIENTE; si no, es ADMIN
-
-      // Función para llenar select con soporte para deshabilitado
-      const fillSelect = (el, values, preselectedValue = null, disabled = false) => {
-        if (!el) return;
-        el.disabled = disabled;
-        let html = '';
-        if (disabled && preselectedValue) {
-          // Si está deshabilitado, mostrar solo el valor seleccionado
-          html = `<option value="${preselectedValue}" selected disabled>${preselectedValue}</option>`;
-        } else {
-          html = '<option value="">Todos</option>';
-          html += values.map(v=>{
-            const selected = preselectedValue && v === preselectedValue ? ' selected' : '';
-            return `<option value="${v}"${selected}>${v}</option>`;
-          }).join('');
-        }
-        el.innerHTML = html;
-      };
-
-      // Si es CLIENTE: Cliente bloqueado, Unidad libre (mostrando sus unidades), Estados libre
-      // Si es ADMIN: Todo libre
-      fillSelect(incCliente, clientes, clienteDelUsuario, esCliente);
-      fillSelect(incUnidad, unidades, unidadDelUsuario, false);
-      fillSelect(incEstado, estados, null, false);
-
-    } catch (e) {
+    if (!firebase.apps.length) {
+      firebase.initializeApp(window.firebaseConfig);
     }
-  }
+    const auth = firebase.auth();
+    const db = window.db = firebase.firestore();
 
-  // Cargar filtros para Tiempo de Conexión
-  async function loadTiempoConexionFilters() {
-    try {
-      // Cargar caché de usuarios PRIMERO
-      const usuariosCache = {};
-      let usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
-      
-      let usuarios = usuariosSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      
-      // Si es SUPERVISOR, filtrar para excluir usuarios con TIPOACCESO = 'ADMIN'
-      if (accessControl?.isSupervisor()) {
-        usuarios = usuarios.filter(u => !u.TIPOACCESO || u.TIPOACCESO !== 'ADMIN');
-      }
-      
-      usuarios.forEach(userData => {
-        usuariosCache[userData.id] = {
-          NOMBRES: userData.NOMBRES || '',
-          APELLIDOS: userData.APELLIDOS || '',
-          cliente: userData.CLIENTE || '',
-          unidad: userData.UNIDAD || ''
+    // ============================================================================
+    // 2) SELECTORES DE ELEMENTOS DEL DOM Y ESTADO GLOBAL
+    // ============================================================================
+
+    // --- Layout y Navegación Principal ---
+    const sidebar = document.getElementById('sidebar');
+    const burgerBtn = document.getElementById('burger');
+    const menuToggleBtn = document.getElementById('menuToggleBtn');
+    const menuOverlay = document.getElementById('menu-overlay');
+    const navItems = document.querySelectorAll('.nav-item');
+    const views = document.querySelectorAll('.view');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const avatarEl = document.getElementById('avatar');
+    const userNameEl = document.getElementById('userName');
+    const userMetaEl = document.getElementById('userMeta');
+
+    // --- Usuarios ---
+    const usersTbody = document.getElementById('usersTbody');
+    const usersCountEl = document.getElementById('usersCount');
+
+    // --- Cliente/Unidad ---
+    const clienteUnidadSearchInput = document.getElementById('clienteUnidadSearchInput');
+    const clienteUnidadTbody = document.getElementById('clienteUnidadTbody');
+    const cuAgregarClienteBtn = document.getElementById('cuAgregarClienteBtn');
+    const cuAgregarUnidadBtn = document.getElementById('cuAgregarUnidadBtn');
+    const cuAgregarPuestoBtn = document.getElementById('cuAgregarPuestoBtn');
+
+    // --- Cuaderno ---
+    const cuadernoClienteSelect = document.getElementById('cuaderno-cliente');
+    const cuadernoUnidadSelect = document.getElementById('cuaderno-unidad');
+    const cuadernoFechaInicio = document.getElementById('cuaderno-fecha-inicio');
+    const cuadernoFechaFin = document.getElementById('cuaderno-fecha-fin');
+    const cuadernoTbody = document.getElementById('cuadernoTbody');
+    const cuadernoBtnBuscar = document.getElementById('cuaderno-btn-buscar');
+    const cuadernoBtnLimpiar = document.getElementById('cuaderno-btn-limpiar');
+    const cuadernoBtnExportar = document.getElementById('cuaderno-btn-exportar');
+    const cuadernoBtnImprimirPDF = document.getElementById('cuaderno-btn-imprimir-pdf');
+
+    // --- Incidencias (nuevo) ---
+    const incFechaInicio = document.getElementById('incidencias-fecha-inicio');
+    const incFechaFin = document.getElementById('incidencias-fecha-fin');
+    const incCliente = document.getElementById('incidencias-cliente');
+    const incUnidad = document.getElementById('incidencias-unidad');
+    const incEstado = document.getElementById('incidencias-estado');
+    const incBtnBuscar = document.getElementById('incidencias-btn-buscar');
+    const incBtnLimpiar = document.getElementById('incidencias-btn-limpiar');
+    const incBtnExportar = document.getElementById('incidencias-btn-exportar');
+    const incidenciasTbody = document.getElementById('incidenciasTbody');
+
+    // --- Tiempo de Conexión ---
+    const tiempoConexionFechaInicio = document.getElementById('tiempo-conexion-fecha-inicio');
+    const tiempoConexionFechaFin = document.getElementById('tiempo-conexion-fecha-fin');
+    const tiempoConexionCliente = document.getElementById('tiempo-conexion-cliente');
+    const tiempoConexionUnidad = document.getElementById('tiempo-conexion-unidad');
+    const tiempoConexionUsuario = document.getElementById('tiempo-conexion-usuario');
+    const tiempoConexionBtnBuscar = document.getElementById('tiempo-conexion-btn-buscar');
+    const tiempoConexionBtnLimpiar = document.getElementById('tiempo-conexion-btn-limpiar');
+    const tiempoConexionBtnExportar = document.getElementById('tiempo-conexion-btn-exportar');
+    const tiempoConexionBtnPdf = document.getElementById('tiempo-conexion-btn-pdf');
+    const tiempoConexionTbody = document.getElementById('tiempoConexionTbody');
+
+    // ====== Cuaderno: carga de filtros (Cliente/Unidad) desde colección CUADERNO ======
+    async function loadCuadernoFilters() {
+      try {
+        if (!cuadernoClienteSelect && !cuadernoUnidadSelect) return;
+        // Reducido de 2000 a 500 para mejor rendimiento
+        const snap = await getQueryWithClienteFilter(COLLECTIONS.LOGBOOK).orderBy('__name__', 'desc').limit(500).get();
+        const rows = snap.docs.map(d => d.data());
+        const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+
+        const clientes = uniq(rows.map(r => r.cliente));
+        const unidades = uniq(rows.map(r => r.unidad));
+
+        if (cuadernoClienteSelect) {
+          cuadernoClienteSelect.innerHTML = '<option value="">Todas</option>' +
+            clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+        }
+        if (cuadernoUnidadSelect) {
+          cuadernoUnidadSelect.innerHTML = '<option value="">Todas</option>' +
+            unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+        }
+      } catch (e) { }
+    }
+
+    // --- Incidencias: cargar filtros únicos (Cliente/Unidad/Estado) ---
+    let incidenciasFiltersLoaded = false;
+    async function loadIncidenciasFilters() {
+      try {
+        // Reducido de 5000 a 1000 para mejor rendimiento
+        const snap = await getQueryWithClienteFilter(COLLECTIONS.INCIDENTS).orderBy('__name__', 'desc').limit(1000).get();
+        const rows = snap.docs.map(d => d.data());
+        const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+
+        const clientes = uniq(rows.map(r => r.cliente));
+        const unidades = uniq(rows.map(r => r.unidad));
+        const estados = uniq(rows.map(r => r.estado));
+
+        // Obtener filtros del usuario
+        const clienteDelUsuario = accessControl?.getClienteFilter();
+        const unidadDelUsuario = accessControl?.getUnidadFilter?.();
+        const esCliente = !!clienteDelUsuario; // Si hay clienteFiltro, es CLIENTE; si no, es ADMIN
+
+        // Función para llenar select con soporte para deshabilitado
+        const fillSelect = (el, values, preselectedValue = null, disabled = false) => {
+          if (!el) return;
+          el.disabled = disabled;
+          let html = '';
+          if (disabled && preselectedValue) {
+            // Si está deshabilitado, mostrar solo el valor seleccionado
+            html = `<option value="${preselectedValue}" selected disabled>${preselectedValue}</option>`;
+          } else {
+            html = '<option value="">Todos</option>';
+            html += values.map(v => {
+              const selected = preselectedValue && v === preselectedValue ? ' selected' : '';
+              return `<option value="${v}"${selected}>${v}</option>`;
+            }).join('');
+          }
+          el.innerHTML = html;
         };
-      });
 
-      // Usar getQueryWithClienteFilter que filtra por cliente en Firestore
-      const snap = await getQueryWithClienteFilter('CONTROL_TIEMPOS_USUARIOS').orderBy('__name__', 'desc').limit(1000).get();
-      const rows = snap.docs.map(d => d.data());
-      const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a,b)=>a.localeCompare(b,'es'));
+        // Si es CLIENTE: Cliente bloqueado, Unidad libre (mostrando sus unidades), Estados libre
+        // Si es ADMIN: Todo libre
+        fillSelect(incCliente, clientes, clienteDelUsuario, esCliente);
+        fillSelect(incUnidad, unidades, unidadDelUsuario, false);
+        fillSelect(incEstado, estados, null, false);
 
-      // ========================
-      // RESTRICCIÓN POR CLIENTE
-      // ========================
-      if (accessControl.userType === 'CLIENTE') {
-        // Bloquear CLIENTE
-        const tcCliente = accessControl.clienteAsignado;
-        tiempoConexionCliente.innerHTML = `<option value="${tcCliente}">${tcCliente}</option>`;
-        tiempoConexionCliente.value = accessControl.clienteAsignado;
-        tiempoConexionCliente.disabled = true;
+      } catch (e) {
+      }
+    }
 
-        // Bloquear UNIDADES SOLO DEL CLIENTE
-        const unidades = await getUnidadesByCliente(accessControl.clienteAsignado);
-        tiempoConexionUnidad.innerHTML = '<option value="">Todas</option>';
-        unidades.forEach(u => {
-          tiempoConexionUnidad.innerHTML += `<option value="${u}">${u}</option>`;
+    // Cargar filtros para Tiempo de Conexión
+    async function loadTiempoConexionFilters() {
+      try {
+        // Cargar caché de usuarios PRIMERO
+        const usuariosCache = {};
+        let usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
+
+        let usuarios = usuariosSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        // Si es SUPERVISOR, filtrar para excluir usuarios con TIPOACCESO = 'ADMIN'
+        if (accessControl?.isSupervisor()) {
+          usuarios = usuarios.filter(u => !u.TIPOACCESO || u.TIPOACCESO !== 'ADMIN');
+        }
+
+        usuarios.forEach(userData => {
+          usuariosCache[userData.id] = {
+            NOMBRES: userData.NOMBRES || '',
+            APELLIDOS: userData.APELLIDOS || '',
+            cliente: userData.CLIENTE || '',
+            unidad: userData.UNIDAD || ''
+          };
         });
-      }
-      // Si es ADMIN, mostrar todos
-      else {
-        const clientes = uniq(rows.map(r => {
-          const usuarioID = r.usuarioID || r.usuario;
-          return usuariosCache[usuarioID]?.cliente || r.cliente || '';
-        }).filter(Boolean));
 
-        const unidades = uniq(rows.map(r => {
-          const usuarioID = r.usuarioID || r.usuario;
-          return usuariosCache[usuarioID]?.unidad || r.unidad || '';
-        }).filter(Boolean));
+        // Usar getQueryWithClienteFilter que filtra por cliente en Firestore
+        const snap = await getQueryWithClienteFilter('CONTROL_TIEMPOS_USUARIOS').orderBy('__name__', 'desc').limit(1000).get();
+        const rows = snap.docs.map(d => d.data());
+        const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
 
-        tiempoConexionCliente.innerHTML = '<option value="">Todas</option>' +
-          clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+        // ========================
+        // RESTRICCIÓN POR CLIENTE
+        // ========================
+        if (accessControl.userType === 'CLIENTE') {
+          // Bloquear CLIENTE
+          const tcCliente = accessControl.clienteAsignado;
+          tiempoConexionCliente.innerHTML = `<option value="${tcCliente}">${tcCliente}</option>`;
+          tiempoConexionCliente.value = accessControl.clienteAsignado;
+          tiempoConexionCliente.disabled = true;
 
-        tiempoConexionUnidad.innerHTML = '<option value="">Todas</option>' +
-          unidades.map(u => `<option value="${u}">${u}</option>`).join('');
-      }
-
-      // Usuarios - siempre mostrar todos los disponibles
-      const usuariosIds = uniq(rows.map(r => r.usuarioID || r.usuario).filter(Boolean));
-      tiempoConexionUsuario.innerHTML = '<option value="">Todos</option>' +
-        usuariosIds.map(uid => {
-          const userData = usuariosCache[uid];
-          const label = userData ? `${userData.NOMBRES} ${userData.APELLIDOS}` : uid;
-          return `<option value="${uid}">${label}</option>`;
-        }).join('');
-
-      tiempoConexionFiltersLoaded = true;
-    } catch (e) {
-    }
-  }
-
-  // Función auxiliar para obtener unidades por cliente
-  async function getUnidadesByCliente(cliente) {
-    const usuariosSnap = await db.collection(COLLECTIONS.USERS).where('CLIENTE', '==', cliente).get();
-    const unidades = new Set();
-    usuariosSnap.forEach(doc => {
-      const userData = doc.data();
-      if (userData.UNIDAD) unidades.add(userData.UNIDAD);
-    });
-    return Array.from(unidades).sort((a,b)=>a.localeCompare(b,'es'));
-  }
-
-  // Función auxiliar para calcular la duración entre dos fechas
-  function calcularDuracionTiempo(horaInicio, horaCierre) {
-    if (!horaInicio || !horaCierre) return '--';
-    
-    let inicio, fin;
-    
-    // Convertir a Date si son Timestamp de Firebase
-    if (horaInicio.toDate && typeof horaInicio.toDate === 'function') {
-      inicio = horaInicio.toDate();
-    } else if (typeof horaInicio === 'string') {
-      inicio = new Date(horaInicio);
-    } else {
-      inicio = horaInicio;
-    }
-    
-    if (horaCierre.toDate && typeof horaCierre.toDate === 'function') {
-      fin = horaCierre.toDate();
-    } else if (typeof horaCierre === 'string') {
-      fin = new Date(horaCierre);
-    } else {
-      fin = horaCierre;
-    }
-    
-    if (!(inicio instanceof Date) || !(fin instanceof Date) || Number.isNaN(inicio.getTime()) || Number.isNaN(fin.getTime())) {
-      return '--';
-    }
-    
-    const diffMs = fin.getTime() - inicio.getTime();
-    if (diffMs < 0) return '--';
-    
-    const horas = Math.floor(diffMs / (1000 * 60 * 60));
-    const minutos = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-    const segundos = Math.floor((diffMs % (1000 * 60)) / 1000);
-    
-    if (horas > 0) {
-      return `${horas}h ${minutos}m ${segundos}s`;
-    } else if (minutos > 0) {
-      return `${minutos}m ${segundos}s`;
-    } else {
-      return `${segundos}s`;
-    }
-  }
-
-  // Función para llenar la tabla de Tiempo de Conexión con datos de USUARIOS
-  async function fillTiempoConexionTable(rows) {
-    if (!tiempoConexionTbody) return;
-    
-    // Cache de usuarios para evitar búsquedas repetidas
-    const usuariosCache = {};
-    
-    // Cargar todos los usuarios de Firebase en caché
-    try {
-      let usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
-      
-      let usuarios = usuariosSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      
-      // Si es SUPERVISOR, filtrar para excluir usuarios con TIPOACCESO = 'ADMIN'
-      if (accessControl?.isSupervisor()) {
-        usuarios = usuarios.filter(u => !u.TIPOACCESO || u.TIPOACCESO !== 'ADMIN');
-      }
-      
-      usuarios.forEach(userData => {
-        usuariosCache[userData.id] = {
-          nombres: userData.NOMBRES || '',
-          apellidos: userData.APELLIDOS || '',
-          cliente: userData.CLIENTE || '',
-          unidad: userData.UNIDAD || ''
-        };
-      });
-    } catch (e) {
-    }
-    
-    // Array para guardar datos enriquecidos
-    const enrichedRows = [];
-    
-    tiempoConexionTbody.innerHTML = rows.map(r => {
-      // Extraer usuario ID
-      const usuarioID = r.usuarioID || r.usuario || '--';
-      
-      // Buscar en caché
-      const usuarioData = usuariosCache[usuarioID] || {};
-      const nombreCompleto = usuarioData.nombres && usuarioData.apellidos
-        ? `${usuarioData.nombres} ${usuarioData.apellidos}`
-        : usuarioID;
-      const cliente = usuarioData.cliente || '--';
-      const unidad = usuarioData.unidad || '--';
-      
-      // Extraer fecha e hora de inicio
-      let fechaInicio = '--';
-      let horaInicio = '--';
-      let fechaObj = null;
-      if (r.horaInicio) {
-        fechaObj = r.horaInicio.toDate ? r.horaInicio.toDate() : new Date(r.horaInicio);
-        if (fechaObj instanceof Date && !Number.isNaN(fechaObj.getTime())) {
-          fechaInicio = fechaObj.toLocaleDateString('es-PE');
-          horaInicio = fechaObj.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          // Bloquear UNIDADES SOLO DEL CLIENTE
+          const unidades = await getUnidadesByCliente(accessControl.clienteAsignado);
+          tiempoConexionUnidad.innerHTML = '<option value="">Todas</option>';
+          unidades.forEach(u => {
+            tiempoConexionUnidad.innerHTML += `<option value="${u}">${u}</option>`;
+          });
         }
-      }
-      
-      // Extraer hora de fin
-      let horaFin = '--';
-      if (r.horaCierre) {
-        const fechaObjFin = r.horaCierre.toDate ? r.horaCierre.toDate() : new Date(r.horaCierre);
-        if (fechaObjFin instanceof Date && !Number.isNaN(fechaObjFin.getTime())) {
-          horaFin = fechaObjFin.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        // Si es ADMIN, mostrar todos
+        else {
+          const clientes = uniq(rows.map(r => {
+            const usuarioID = r.usuarioID || r.usuario;
+            return usuariosCache[usuarioID]?.cliente || r.cliente || '';
+          }).filter(Boolean));
+
+          const unidades = uniq(rows.map(r => {
+            const usuarioID = r.usuarioID || r.usuario;
+            return usuariosCache[usuarioID]?.unidad || r.unidad || '';
+          }).filter(Boolean));
+
+          tiempoConexionCliente.innerHTML = '<option value="">Todas</option>' +
+            clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+
+          tiempoConexionUnidad.innerHTML = '<option value="">Todas</option>' +
+            unidades.map(u => `<option value="${u}">${u}</option>`).join('');
         }
+
+        // Usuarios - siempre mostrar todos los disponibles
+        const usuariosIds = uniq(rows.map(r => r.usuarioID || r.usuario).filter(Boolean));
+        tiempoConexionUsuario.innerHTML = '<option value="">Todos</option>' +
+          usuariosIds.map(uid => {
+            const userData = usuariosCache[uid];
+            const label = userData ? `${userData.NOMBRES} ${userData.APELLIDOS}` : uid;
+            return `<option value="${uid}">${label}</option>`;
+          }).join('');
+
+        tiempoConexionFiltersLoaded = true;
+      } catch (e) {
       }
-      
-      // Calcular duración
-      const duracion = calcularDuracionTiempo(r.horaInicio, r.horaCierre);
-      
-      // Guardar datos enriquecidos
-      enrichedRows.push({
-        usuarioID: usuarioID,
-        nombreCompleto: nombreCompleto,
-        cliente: cliente,
-        unidad: unidad,
-        fechaInicio: fechaInicio,
-        horaInicio: horaInicio,
-        horaFin: horaFin,
-        duracion: duracion,
-        horaInicioObj: r.horaInicio,
-        horaCierreObj: r.horaCierre
+    }
+
+    // Función auxiliar para obtener unidades por cliente
+    async function getUnidadesByCliente(cliente) {
+      const usuariosSnap = await db.collection(COLLECTIONS.USERS).where('CLIENTE', '==', cliente).get();
+      const unidades = new Set();
+      usuariosSnap.forEach(doc => {
+        const userData = doc.data();
+        if (userData.UNIDAD) unidades.add(userData.UNIDAD);
       });
-      
-      return `<tr>
+      return Array.from(unidades).sort((a, b) => a.localeCompare(b, 'es'));
+    }
+
+    // Función auxiliar para calcular la duración entre dos fechas
+    function calcularDuracionTiempo(horaInicio, horaCierre) {
+      if (!horaInicio || !horaCierre) return '--';
+
+      let inicio, fin;
+
+      // Convertir a Date si son Timestamp de Firebase
+      if (horaInicio.toDate && typeof horaInicio.toDate === 'function') {
+        inicio = horaInicio.toDate();
+      } else if (typeof horaInicio === 'string') {
+        inicio = new Date(horaInicio);
+      } else {
+        inicio = horaInicio;
+      }
+
+      if (horaCierre.toDate && typeof horaCierre.toDate === 'function') {
+        fin = horaCierre.toDate();
+      } else if (typeof horaCierre === 'string') {
+        fin = new Date(horaCierre);
+      } else {
+        fin = horaCierre;
+      }
+
+      if (!(inicio instanceof Date) || !(fin instanceof Date) || Number.isNaN(inicio.getTime()) || Number.isNaN(fin.getTime())) {
+        return '--';
+      }
+
+      const diffMs = fin.getTime() - inicio.getTime();
+      if (diffMs < 0) return '--';
+
+      const horas = Math.floor(diffMs / (1000 * 60 * 60));
+      const minutos = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+      const segundos = Math.floor((diffMs % (1000 * 60)) / 1000);
+
+      if (horas > 0) {
+        return `${horas}h ${minutos}m ${segundos}s`;
+      } else if (minutos > 0) {
+        return `${minutos}m ${segundos}s`;
+      } else {
+        return `${segundos}s`;
+      }
+    }
+
+    // Función para llenar la tabla de Tiempo de Conexión con datos de USUARIOS
+    async function fillTiempoConexionTable(rows) {
+      if (!tiempoConexionTbody) return;
+
+      // Cache de usuarios para evitar búsquedas repetidas
+      const usuariosCache = {};
+
+      // Cargar todos los usuarios de Firebase en caché
+      try {
+        let usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
+
+        let usuarios = usuariosSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        // Si es SUPERVISOR, filtrar para excluir usuarios con TIPOACCESO = 'ADMIN'
+        if (accessControl?.isSupervisor()) {
+          usuarios = usuarios.filter(u => !u.TIPOACCESO || u.TIPOACCESO !== 'ADMIN');
+        }
+
+        usuarios.forEach(userData => {
+          usuariosCache[userData.id] = {
+            nombres: userData.NOMBRES || '',
+            apellidos: userData.APELLIDOS || '',
+            cliente: userData.CLIENTE || '',
+            unidad: userData.UNIDAD || ''
+          };
+        });
+      } catch (e) {
+      }
+
+      // Array para guardar datos enriquecidos
+      const enrichedRows = [];
+
+      tiempoConexionTbody.innerHTML = rows.map(r => {
+        // Extraer usuario ID
+        const usuarioID = r.usuarioID || r.usuario || '--';
+
+        // Buscar en caché
+        const usuarioData = usuariosCache[usuarioID] || {};
+        const nombreCompleto = usuarioData.nombres && usuarioData.apellidos
+          ? `${usuarioData.nombres} ${usuarioData.apellidos}`
+          : usuarioID;
+        const cliente = usuarioData.cliente || '--';
+        const unidad = usuarioData.unidad || '--';
+
+        // Extraer fecha e hora de inicio
+        let fechaInicio = '--';
+        let horaInicio = '--';
+        let fechaObj = null;
+        if (r.horaInicio) {
+          fechaObj = r.horaInicio.toDate ? r.horaInicio.toDate() : new Date(r.horaInicio);
+          if (fechaObj instanceof Date && !Number.isNaN(fechaObj.getTime())) {
+            fechaInicio = fechaObj.toLocaleDateString('es-PE');
+            horaInicio = fechaObj.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          }
+        }
+
+        // Extraer hora de fin
+        let horaFin = '--';
+        if (r.horaCierre) {
+          const fechaObjFin = r.horaCierre.toDate ? r.horaCierre.toDate() : new Date(r.horaCierre);
+          if (fechaObjFin instanceof Date && !Number.isNaN(fechaObjFin.getTime())) {
+            horaFin = fechaObjFin.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          }
+        }
+
+        // Calcular duración
+        const duracion = calcularDuracionTiempo(r.horaInicio, r.horaCierre);
+
+        // Guardar datos enriquecidos
+        enrichedRows.push({
+          usuarioID: usuarioID,
+          nombreCompleto: nombreCompleto,
+          cliente: cliente,
+          unidad: unidad,
+          fechaInicio: fechaInicio,
+          horaInicio: horaInicio,
+          horaFin: horaFin,
+          duracion: duracion,
+          horaInicioObj: r.horaInicio,
+          horaCierreObj: r.horaCierre
+        });
+
+        return `<tr>
         <td>${nombreCompleto}</td>
         <td>${cliente}</td>
         <td>${unidad}</td>
@@ -402,1643 +403,1644 @@ document.addEventListener('DOMContentLoaded', () => {
         <td>${horaFin}</td>
         <td style="font-weight: 600; color: #3b82f6;">${duracion}</td>
       </tr>`;
-    }).join('');
-    
-    // Guardar datos enriquecidos en el dataset
-    tiempoConexionTbody.dataset.rows = JSON.stringify(enrichedRows);
-  }
+      }).join('');
 
-  // Hook: cuando entro a la vista Cuaderno, cargo filtros una vez
-  let cuadernoFiltersLoaded = false;
-  let tiempoConexionFiltersLoaded = false;
-
-  document.addEventListener('click', (ev) => {
-    const toCuaderno = ev.target.closest('[data-target="view-cuaderno"]');
-    if (toCuaderno && !cuadernoFiltersLoaded) {
-      cuadernoFiltersLoaded = true;
-      loadCuadernoFilters();
+      // Guardar datos enriquecidos en el dataset
+      tiempoConexionTbody.dataset.rows = JSON.stringify(enrichedRows);
     }
-    const toInc = ev.target.closest('[data-target="view-incidencias"]');
-    if (toInc && !incidenciasFiltersLoaded) {
-      loadIncidenciasFilters();
-    }
-    const toTiempoConexion = ev.target.closest('[data-target="view-tiempo-conexion"]');
-    if (toTiempoConexion && !tiempoConexionFiltersLoaded) {
-      tiempoConexionFiltersLoaded = true;
-      loadTiempoConexionFilters();
-    }
-  });
 
-  // --- Overlays y Diálogos ---
-  const overlay = document.getElementById('overlay');
-  const olTitle = document.getElementById('olTitle');
-  const olSub = document.getElementById('olSub');
-  const olBar = document.getElementById('olBar');
-  const dialog = document.getElementById('dialog');
-  const dialogIcon = document.getElementById('dialogIcon');
-  const dialogTitle = document.getElementById('dialogTitle');
-  const dialogMessage = document.getElementById('dialogMessage');
-  const dialogActions = document.getElementById('dialogActions');
-  const toast = document.getElementById('toast');
+    // Hook: cuando entro a la vista Cuaderno, cargo filtros una vez
+    let cuadernoFiltersLoaded = false;
+    let tiempoConexionFiltersLoaded = false;
 
-  // --- Modales de edición (Usuarios / Cliente-Unidad) ---
-  const editModal = document.getElementById('editModal');
-  const editForm = document.getElementById('editForm');
-  const editCancelBtn = document.getElementById('editCancel');
-  const editSaveBtn = document.getElementById('editSave');
-  const editNombres = document.getElementById('editNombres');
-  const editApellidos = document.getElementById('editApellidos');
-  const editCliente = document.getElementById('editCliente');
-  const editUnidad = document.getElementById('editUnidad');
-  const editTipo = document.getElementById('editTipo');
-  const editEstado = document.getElementById('editEstado');
-
-  const cuEditModal = document.getElementById('cuEditModal');
-  const cuEditForm = document.getElementById('cuEditForm');
-  const cuEditCancelBtn = document.getElementById('cuEditCancel');
-  const cuEditSaveBtn = document.getElementById('cuEditSave');
-  const cuEditCliente = document.getElementById('cuEditCliente');
-  const cuEditUnidad = document.getElementById('cuEditUnidad');
-  const cuEditPuesto = document.getElementById('cuEditPuesto');
-  const cuEditClienteOriginal = document.getElementById('cuEditClienteOriginal');
-  const cuEditUnidadOriginal = document.getElementById('cuEditUnidadOriginal');
-  const cuEditPuestoOriginal = document.getElementById('cuEditPuestoOriginal');
-
-  // Modal para agregar CLIENTE
-  const cuAgregarClienteModal = document.getElementById('cuAgregarClienteModal');
-  const cuAgregarClienteForm = document.getElementById('cuAgregarClienteForm');
-  const cuAgregarClienteCancel = document.getElementById('cuAgregarClienteCancel');
-  const cuNuevoCliente = document.getElementById('cuNuevoCliente');
-  const cuNuevaUnidadCliente = document.getElementById('cuNuevaUnidadCliente');
-
-  // Modal para agregar UNIDAD
-  const cuAgregarUnidadModal = document.getElementById('cuAgregarUnidadModal');
-  const cuAgregarUnidadForm = document.getElementById('cuAgregarUnidadForm');
-  const cuAgregarUnidadCancel = document.getElementById('cuAgregarUnidadCancel');
-  const cuAgregarUnidadCliente = document.getElementById('cuAgregarUnidadCliente');
-  const cuNuevaUnidad = document.getElementById('cuNuevaUnidad');
-
-  // Modal para agregar PUESTO
-  const cuAgregarPuestoModal = document.getElementById('cuAgregarPuestoModal');
-  const cuAgregarPuestoForm = document.getElementById('cuAgregarPuestoForm');
-  const cuAgregarPuestoCancel = document.getElementById('cuAgregarPuestoCancel');
-  const cuAgregarPuestoCliente = document.getElementById('cuAgregarPuestoCliente');
-  const cuAgregarPuestoUnidad = document.getElementById('cuAgregarPuestoUnidad');
-  const cuNuevoPuesto = document.getElementById('cuNuevoPuesto');
-
-  // --- Estado Global ---
-  const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-  let currentUser = null;
-  let cachedIncidents = [];
-  let cachedUsers = [];
-  let cachedClientesUnidades = [];
-  let resumenCharts = {};
-  let detalleChart = null;
-  let detalleChoices = {};
-  let resumenChoices = {};
-  let detalleInitialized = false;
-  let editingUserId = null;
-  let lastDetalleData = {}; // Para guardar los datos del último detalle para exportación
-
-  // === Paleta y utilidades de formato para gráficos ===
-  const PALETTE = {
-    blue: '#3b82f6',
-    blueLt: '#60a5fa',
-    violet: '#a78bfa',
-    cyan: '#0ea5e9',
-    amber: '#f59e0b',
-    red: '#ef4444',
-    gray: '#9ca3af',
-    purple: '#8b5cf6',
-    green: '#22c55e'
-  };
-  const nf = new Intl.NumberFormat('es-PE');
-  const pf = (value, total) => total ? ((value / total) * 100).toFixed(1) : '0.0';
-  const themeInk = () => getComputedStyle(document.documentElement).getPropertyValue('--fg')?.trim() || '#111';
-
-  // Helpers genéricos
-  const debounce = (fn, wait = 200) => {
-    let t;
-    return (...args) => { clearTimeout(t); t = setTimeout(() => fn.apply(null, args), wait); };
-  };
-  const csvEsc = (s) => `"${(s ?? '').toString().replace(/"/g, '""')}"`;
-
-  // Normalizador y buckets
-  const norm = s => (s || '').toString().trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const BUCKETS = {
-    RIESGO: ['CONDICION DE RIESGO', 'CONDICIÓN DE RIESGO'],
-    CODIGOS: ['CODIGO DE SEGURIDAD Y EMERGENCIA', 'CÓDIGOS DE SEGURIDAD Y EMERGENCIA'],
-    AMBIENTAL: ['ACTO DE SISTEMA MEDIO AMBIENTAL', 'ACTOS DE SISTEMA MEDIOAMBIENTAL'],
-    SSO: ['ACTO DE SEGURIDAD Y SALUD OCUPACIONAL', 'ACTOS DE SEGURIDAD Y SALUD OCUPACIONAL']
-  };
-  const bucketOf = (tipo) => {
-    const t = norm(tipo);
-    for (const [k, arr] of Object.entries(BUCKETS)) {
-      if (arr.some(x => t.includes(norm(x)))) return k;
-    }
-    return 'OTROS';
-  };
-
-  // Helpers modales
-  function openModal(modal) { modal?.classList.add('show'); modal?.setAttribute('aria-hidden', 'false'); }
-  function closeModal(modal) { modal?.classList.remove('show'); modal?.setAttribute('aria-hidden', 'true'); }
-
-  // ============================================================================
-  // 3) HELPERS DE UI (MODALES, TOASTS, ETC.)
-  // ============================================================================
-  window.UI = {
-    showOverlay(title = 'Procesando…', sub = 'Conectando con el servidor') {
-      if (!overlay) return;
-      if (olTitle) olTitle.textContent = title;
-      if (olSub) olSub.textContent = sub;
-      if (olBar) olBar.style.width = '0%';
-      overlay.classList.add('show');
-      overlay.setAttribute('aria-hidden', 'false');
-      let p = 0; const t = setInterval(() => {
-        p = Math.min(100, p + Math.random() * 18);
-        if (olBar) olBar.style.width = p + '%';
-        if (p >= 100) clearInterval(t);
-      }, 250);
-    },
-    hideOverlay() {
-      if (!overlay) return;
-      if (olBar) olBar.style.width = '100%';
-      setTimeout(() => {
-        overlay.classList.remove('show');
-        overlay.setAttribute('aria-hidden', 'true');
-      }, 260);
-    },
-    toast(msg) {
-      if (!toast || !msg) return;
-      toast.textContent = msg;
-      toast.classList.add('show');
-      setTimeout(() => toast.classList.remove('show'), 2500);
-    },
-    confirm({ title = 'Confirmar', message = '', confirmText = 'Aceptar', cancelText = 'Cancelar', kind = 'warn' }) {
-      if (!dialog) return Promise.resolve(false);
-      if (dialogIcon) dialogIcon.textContent = kind === 'err' ? '!' : (kind === 'warn' ? '⚠' : '★');
-      if (dialogTitle) dialogTitle.textContent = title;
-      if (dialogMessage) dialogMessage.textContent = message;
-      if (dialogActions) {
-        dialogActions.innerHTML = `
-          <button class="btn secondary" id="dlgCancel">${cancelText}</button>
-          <button class="btn ${kind}" id="dlgYes">${confirmText}</button>`;
-      }
-      dialog.classList.add('show');
-      return new Promise(res => {
-        const close = v => { dialog.classList.remove('show'); res(v); };
-        document.getElementById('dlgCancel')?.addEventListener('click', () => close(false), { once: true });
-        document.getElementById('dlgYes')?.addEventListener('click', () => close(true), { once: true });
-      });
-    }
-  };
-
-  // ============================================================================
-  // 4) LÓGICA DE NAVEGACIÓN (MENÚ LATERAL Y PESTAÑAS KPI)
-  // ============================================================================
-  burgerBtn?.addEventListener('click', () => {
-    const collapsed = sidebar.classList.toggle('collapsed');
-    burgerBtn.classList.toggle('active', collapsed);
-    localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
-    setTimeout(() => window.dispatchEvent(new Event('resize')), 200);
-  });
-
-  const toggleMenuMobile = () => {
-    sidebar?.classList.toggle('show');
-    menuOverlay?.classList.toggle('show');
-  };
-  menuToggleBtn?.addEventListener('click', toggleMenuMobile);
-  menuOverlay?.addEventListener('click', toggleMenuMobile);
-
-  if (localStorage.getItem('sidebarCollapsed') == null) {
-    localStorage.setItem('sidebarCollapsed', '1');
-  }
-  if (localStorage.getItem('sidebarCollapsed') === '1') {
-    sidebar?.classList.add('collapsed');
-    burgerBtn?.classList.add('active');
-  }
-
-  navItems.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const target = btn.getAttribute('data-target');
-      
-      // ===== VALIDAR CONTROL DE ACCESO (RESTRICCIÓN CRÍTICA) =====
-      if (!accessControl) {
-        UI.showError('Error de Seguridad', 'Sistema de control de acceso no disponible');
-        return;
-      }
-      
-      // Validar acceso a la vista
-      if (!accessControl.validateViewAccess(target)) {
-        const summary = accessControl.getSummary();
-        UI.showError(
-          '🔒 Acceso Denegado',
-          `No tienes permisos para acceder a esta sección.\n\nTipo de acceso: ${summary.accessLevel} (${summary.userType})\n\nContacta al administrador si crees que esto es un error.`
-        );
-        return; // ← BLOQUEA AQUÍ
-      }
-      
-      // Si llegó aquí, tiene permisos
-      if (window.innerWidth < 1024) toggleMenuMobile();
-      navItems.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      views.forEach(v => v.classList.toggle('shown', v.id === target));
-
-      if (target === 'view-usuarios' && (!usersTbody || !usersTbody.dataset.initialized)) {
-        loadUsers().catch(() => {});
-        if (usersTbody) usersTbody.dataset.initialized = 'true';
-      }
-      if (target === 'view-cliente-unidad' && (!clienteUnidadTbody || !clienteUnidadTbody.dataset.initialized)) {
-        loadClienteUnidad().catch(() => {});
-        if (clienteUnidadTbody) clienteUnidadTbody.dataset.initialized = 'true';
-      }
-      if (target === 'view-cuaderno' && !cuadernoFiltersLoaded) {
+    document.addEventListener('click', (ev) => {
+      const toCuaderno = ev.target.closest('[data-target="view-cuaderno"]');
+      if (toCuaderno && !cuadernoFiltersLoaded) {
         cuadernoFiltersLoaded = true;
         loadCuadernoFilters();
       }
-      if (target === 'view-incidencias' && !incidenciasFiltersLoaded) {
+      const toInc = ev.target.closest('[data-target="view-incidencias"]');
+      if (toInc && !incidenciasFiltersLoaded) {
         loadIncidenciasFilters();
       }
-      if (target === 'view-tiempo-conexion' && !tiempoConexionFiltersLoaded) {
+      const toTiempoConexion = ev.target.closest('[data-target="view-tiempo-conexion"]');
+      if (toTiempoConexion && !tiempoConexionFiltersLoaded) {
         tiempoConexionFiltersLoaded = true;
         loadTiempoConexionFilters();
       }
     });
-  });
 
-  // --- Rondas Menu Toggle ---
-  const navGroup = document.querySelector('.nav-group');
-  const navGroupToggle = document.querySelector('.nav-group-toggle');
-  const navSubitems = document.querySelectorAll('.nav-subitem');
+    // --- Overlays y Diálogos ---
+    const overlay = document.getElementById('overlay');
+    const olTitle = document.getElementById('olTitle');
+    const olSub = document.getElementById('olSub');
+    const olBar = document.getElementById('olBar');
+    const dialog = document.getElementById('dialog');
+    const dialogIcon = document.getElementById('dialogIcon');
+    const dialogTitle = document.getElementById('dialogTitle');
+    const dialogMessage = document.getElementById('dialogMessage');
+    const dialogActions = document.getElementById('dialogActions');
+    const toast = document.getElementById('toast');
 
-  navGroupToggle?.addEventListener('click', (e) => {
-    e.preventDefault();
-    const menu = navGroup?.querySelector('.nav-group-menu');
-    if (menu) {
-      menu.classList.toggle('shown');
-      navGroupToggle.setAttribute('aria-expanded', menu.classList.contains('shown'));
-    }
-  });
+    // --- Modales de edición (Usuarios / Cliente-Unidad) ---
+    const editModal = document.getElementById('editModal');
+    const editForm = document.getElementById('editForm');
+    const editCancelBtn = document.getElementById('editCancel');
+    const editSaveBtn = document.getElementById('editSave');
+    const editNombres = document.getElementById('editNombres');
+    const editApellidos = document.getElementById('editApellidos');
+    const editCliente = document.getElementById('editCliente');
+    const editUnidad = document.getElementById('editUnidad');
+    const editTipo = document.getElementById('editTipo');
+    const editEstado = document.getElementById('editEstado');
 
-  navSubitems.forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (window.innerWidth < 1024) toggleMenuMobile();
-      navItems.forEach(b => b.classList.remove('active'));
-      navSubitems.forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const target = btn.getAttribute('data-target');
-      views.forEach(v => v.classList.toggle('shown', v.id === target));
+    const cuEditModal = document.getElementById('cuEditModal');
+    const cuEditForm = document.getElementById('cuEditForm');
+    const cuEditCancelBtn = document.getElementById('cuEditCancel');
+    const cuEditSaveBtn = document.getElementById('cuEditSave');
+    const cuEditCliente = document.getElementById('cuEditCliente');
+    const cuEditUnidad = document.getElementById('cuEditUnidad');
+    const cuEditPuesto = document.getElementById('cuEditPuesto');
+    const cuEditClienteOriginal = document.getElementById('cuEditClienteOriginal');
+    const cuEditUnidadOriginal = document.getElementById('cuEditUnidadOriginal');
+    const cuEditPuestoOriginal = document.getElementById('cuEditPuestoOriginal');
+
+    // Modal para agregar CLIENTE
+    const cuAgregarClienteModal = document.getElementById('cuAgregarClienteModal');
+    const cuAgregarClienteForm = document.getElementById('cuAgregarClienteForm');
+    const cuAgregarClienteCancel = document.getElementById('cuAgregarClienteCancel');
+    const cuNuevoCliente = document.getElementById('cuNuevoCliente');
+    const cuNuevaUnidadCliente = document.getElementById('cuNuevaUnidadCliente');
+
+    // Modal para agregar UNIDAD
+    const cuAgregarUnidadModal = document.getElementById('cuAgregarUnidadModal');
+    const cuAgregarUnidadForm = document.getElementById('cuAgregarUnidadForm');
+    const cuAgregarUnidadCancel = document.getElementById('cuAgregarUnidadCancel');
+    const cuAgregarUnidadCliente = document.getElementById('cuAgregarUnidadCliente');
+    const cuNuevaUnidad = document.getElementById('cuNuevaUnidad');
+
+    // Modal para agregar PUESTO
+    const cuAgregarPuestoModal = document.getElementById('cuAgregarPuestoModal');
+    const cuAgregarPuestoForm = document.getElementById('cuAgregarPuestoForm');
+    const cuAgregarPuestoCancel = document.getElementById('cuAgregarPuestoCancel');
+    const cuAgregarPuestoCliente = document.getElementById('cuAgregarPuestoCliente');
+    const cuAgregarPuestoUnidad = document.getElementById('cuAgregarPuestoUnidad');
+    const cuNuevoPuesto = document.getElementById('cuNuevoPuesto');
+
+    // --- Estado Global ---
+    const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+    let currentUser = null;
+    let cachedIncidents = [];
+    let cachedUsers = [];
+    let cachedClientesUnidades = [];
+    let resumenCharts = {};
+    let detalleChart = null;
+    let detalleChoices = {};
+    let resumenChoices = {};
+    let detalleInitialized = false;
+    let editingUserId = null;
+    let lastDetalleData = {}; // Para guardar los datos del último detalle para exportación
+
+    // === Paleta y utilidades de formato para gráficos ===
+    const PALETTE = {
+      blue: '#3b82f6',
+      blueLt: '#60a5fa',
+      violet: '#a78bfa',
+      cyan: '#0ea5e9',
+      amber: '#f59e0b',
+      red: '#ef4444',
+      gray: '#9ca3af',
+      purple: '#8b5cf6',
+      green: '#22c55e'
+    };
+    const nf = new Intl.NumberFormat('es-PE');
+    const pf = (value, total) => total ? ((value / total) * 100).toFixed(1) : '0.0';
+    const themeInk = () => getComputedStyle(document.documentElement).getPropertyValue('--fg')?.trim() || '#111';
+
+    // Helpers genéricos
+    const debounce = (fn, wait = 200) => {
+      let t;
+      return (...args) => { clearTimeout(t); t = setTimeout(() => fn.apply(null, args), wait); };
+    };
+    const csvEsc = (s) => `"${(s ?? '').toString().replace(/"/g, '""')}"`;
+
+    // Normalizador y buckets
+    const norm = s => (s || '').toString().trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const BUCKETS = {
+      RIESGO: ['CONDICION DE RIESGO', 'CONDICIÓN DE RIESGO'],
+      CODIGOS: ['CODIGO DE SEGURIDAD Y EMERGENCIA', 'CÓDIGOS DE SEGURIDAD Y EMERGENCIA'],
+      AMBIENTAL: ['ACTO DE SISTEMA MEDIO AMBIENTAL', 'ACTOS DE SISTEMA MEDIOAMBIENTAL'],
+      SSO: ['ACTO DE SEGURIDAD Y SALUD OCUPACIONAL', 'ACTOS DE SEGURIDAD Y SALUD OCUPACIONAL']
+    };
+    const bucketOf = (tipo) => {
+      const t = norm(tipo);
+      for (const [k, arr] of Object.entries(BUCKETS)) {
+        if (arr.some(x => t.includes(norm(x)))) return k;
+      }
+      return 'OTROS';
+    };
+
+    // Helpers modales
+    function openModal(modal) { modal?.classList.add('show'); modal?.setAttribute('aria-hidden', 'false'); }
+    function closeModal(modal) { modal?.classList.remove('show'); modal?.setAttribute('aria-hidden', 'true'); }
+
+    // ============================================================================
+    // 3) HELPERS DE UI (MODALES, TOASTS, ETC.)
+    // ============================================================================
+    window.UI = {
+      showOverlay(title = 'Procesando…', sub = 'Conectando con el servidor') {
+        if (!overlay) return;
+        if (olTitle) olTitle.textContent = title;
+        if (olSub) olSub.textContent = sub;
+        if (olBar) olBar.style.width = '0%';
+        overlay.classList.add('show');
+        overlay.setAttribute('aria-hidden', 'false');
+        let p = 0; const t = setInterval(() => {
+          p = Math.min(100, p + Math.random() * 18);
+          if (olBar) olBar.style.width = p + '%';
+          if (p >= 100) clearInterval(t);
+        }, 250);
+      },
+      hideOverlay() {
+        if (!overlay) return;
+        if (olBar) olBar.style.width = '100%';
+        setTimeout(() => {
+          overlay.classList.remove('show');
+          overlay.setAttribute('aria-hidden', 'true');
+        }, 260);
+      },
+      toast(msg) {
+        if (!toast || !msg) return;
+        toast.textContent = msg;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 2500);
+      },
+      confirm({ title = 'Confirmar', message = '', confirmText = 'Aceptar', cancelText = 'Cancelar', kind = 'warn' }) {
+        if (!dialog) return Promise.resolve(false);
+        if (dialogIcon) dialogIcon.textContent = kind === 'err' ? '!' : (kind === 'warn' ? '⚠' : '★');
+        if (dialogTitle) dialogTitle.textContent = title;
+        if (dialogMessage) dialogMessage.textContent = message;
+        if (dialogActions) {
+          dialogActions.innerHTML = `
+          <button class="btn secondary" id="dlgCancel">${cancelText}</button>
+          <button class="btn ${kind}" id="dlgYes">${confirmText}</button>`;
+        }
+        dialog.classList.add('show');
+        return new Promise(res => {
+          const close = v => { dialog.classList.remove('show'); res(v); };
+          document.getElementById('dlgCancel')?.addEventListener('click', () => close(false), { once: true });
+          document.getElementById('dlgYes')?.addEventListener('click', () => close(true), { once: true });
+        });
+      }
+    };
+
+    // ============================================================================
+    // 4) LÓGICA DE NAVEGACIÓN (MENÚ LATERAL Y PESTAÑAS KPI)
+    // ============================================================================
+    burgerBtn?.addEventListener('click', () => {
+      const collapsed = sidebar.classList.toggle('collapsed');
+      burgerBtn.classList.toggle('active', collapsed);
+      localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 200);
     });
-  });
 
-  const kpiSubnav = document.querySelector('.kpi-subnav');
-  kpiSubnav?.addEventListener('click', (e) => {
-    const targetButton = e.target.closest('.kpi-subnav-btn');
-    if (!targetButton) return;
+    const toggleMenuMobile = () => {
+      sidebar?.classList.toggle('show');
+      menuOverlay?.classList.toggle('show');
+    };
+    menuToggleBtn?.addEventListener('click', toggleMenuMobile);
+    menuOverlay?.addEventListener('click', toggleMenuMobile);
 
-    kpiSubnav.querySelectorAll('.kpi-subnav-btn').forEach(btn => btn.classList.remove('active'));
-    targetButton.classList.add('active');
-
-    document.querySelectorAll('.kpi-subview').forEach(view => {
-      view.classList.toggle('active', view.id === targetButton.dataset.target);
-    });
-
-    if (targetButton.dataset.target === 'kpi-detalle-incidentes' && !detalleInitialized) {
-      initDetalleIncidentesDashboard();
+    if (localStorage.getItem('sidebarCollapsed') == null) {
+      localStorage.setItem('sidebarCollapsed', '1');
     }
-    if (targetButton.dataset.target === 'kpi-acceso-peatonal' && !apInitialized) {
-      initAccesoPeatonalDashboard();
-      apInitialized = true;
+    if (localStorage.getItem('sidebarCollapsed') === '1') {
+      sidebar?.classList.add('collapsed');
+      burgerBtn?.classList.add('active');
     }
-    if (targetButton.dataset.target === 'kpi-detalle-acceso') {
-      initDetalleAccesoDashboard();
-    }
-    if (targetButton.dataset.target === 'kpi-ronda-general') {
-      initKpiRondaGeneral();
-    }
-    if (targetButton.dataset.target === 'kpi-detalle-rondas') {
-      initDetalleRondas();
-    }
-  });
 
-  // ============================================================================
-  // 5A) LÓGICA DEL PANEL "RESUMEN"
-  // ============================================================================
-  // ======================================================
-  // 🔄 Sincronizar filtros Cliente/Unidad (GENÉRICO)
-  // ======================================================
-  async function loadClienteUnidadFiltersGenerico(clienteSelectId, unidadSelectId, usarChoices = false, choicesObj = null) {
-    try {
-      const clienteSelect = document.getElementById(clienteSelectId);
-      const unidadSelect = document.getElementById(unidadSelectId);
-      if (!clienteSelect || !unidadSelect) return;
+    navItems.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = btn.getAttribute('data-target');
 
-      // Obtener todos los clientes desde CLIENTE_UNIDAD
-      const clientesSnapshot = await db.collection('CLIENTE_UNIDAD').get();
-      const clientes = [];
-      
-      clientesSnapshot.docs.forEach(doc => {
-        clientes.push(doc.id);
+        // ===== VALIDAR CONTROL DE ACCESO (RESTRICCIÓN CRÍTICA) =====
+        if (!accessControl) {
+          UI.showError('Error de Seguridad', 'Sistema de control de acceso no disponible');
+          return;
+        }
+
+        // Validar acceso a la vista
+        if (!accessControl.validateViewAccess(target)) {
+          const summary = accessControl.getSummary();
+          UI.showError(
+            '🔒 Acceso Denegado',
+            `No tienes permisos para acceder a esta sección.\n\nTipo de acceso: ${summary.accessLevel} (${summary.userType})\n\nContacta al administrador si crees que esto es un error.`
+          );
+          return; // ← BLOQUEA AQUÍ
+        }
+
+        // Si llegó aquí, tiene permisos
+        if (window.innerWidth < 1024) toggleMenuMobile();
+        navItems.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        views.forEach(v => v.classList.toggle('shown', v.id === target));
+
+        if (target === 'view-usuarios' && (!usersTbody || !usersTbody.dataset.initialized)) {
+          loadUsers().catch(() => { });
+          if (usersTbody) usersTbody.dataset.initialized = 'true';
+        }
+        if (target === 'view-cliente-unidad' && (!clienteUnidadTbody || !clienteUnidadTbody.dataset.initialized)) {
+          loadClienteUnidad().catch(() => { });
+          if (clienteUnidadTbody) clienteUnidadTbody.dataset.initialized = 'true';
+        }
+        if (target === 'view-cuaderno' && !cuadernoFiltersLoaded) {
+          cuadernoFiltersLoaded = true;
+          loadCuadernoFilters();
+        }
+        if (target === 'view-incidencias' && !incidenciasFiltersLoaded) {
+          loadIncidenciasFilters();
+        }
+        if (target === 'view-tiempo-conexion' && !tiempoConexionFiltersLoaded) {
+          tiempoConexionFiltersLoaded = true;
+          loadTiempoConexionFilters();
+        }
       });
-      clientes.sort((a, b) => a.localeCompare(b, 'es'));
+    });
 
-      // Si el usuario tiene restricción de CLIENTE
-      const clienteAsignado = window.accessControl?.getClienteFilter?.();
-      const unidadAsignada = window.accessControl?.getUnidadFilter?.();
-      const esCliente = !!clienteAsignado;
-      const tieneUnidadAsignada = !!unidadAsignada;
+    // --- Rondas Menu Toggle ---
+    const navGroup = document.querySelector('.nav-group');
+    const navGroupToggle = document.querySelector('.nav-group-toggle');
+    const navSubitems = document.querySelectorAll('.nav-subitem');
 
-      console.log('=== RESTRICCIONES DE USUARIO ===');
-      console.log('Cliente Asignado:', clienteAsignado);
-      console.log('Unidad Asignada:', unidadAsignada);
-      console.log('Es Cliente:', esCliente);
-      console.log('Tiene Unidad Asignada:', tieneUnidadAsignada);
+    navGroupToggle?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const menu = navGroup?.querySelector('.nav-group-menu');
+      if (menu) {
+        menu.classList.toggle('shown');
+        navGroupToggle.setAttribute('aria-expanded', menu.classList.contains('shown'));
+      }
+    });
 
-      // Función para rellenar el select de cliente
-      const rellenarClientes = () => {
-        if (usarChoices && choicesObj) {
-          // Usando Choices.js con el objeto pasado como parámetro
-          if (esCliente) {
-            console.log(`Cliente restringido a: ${clienteAsignado}`);
-            choicesObj.cliente.setChoices(
-              [{ value: clienteAsignado, label: clienteAsignado, selected: true }],
-              'value', 'label', true
-            );
-            // Deshabilitar el select de cliente en Choices.js
-            clienteSelect.disabled = true;
-            // Intentar deshabilitar el contenedor de Choices
-            const choicesContainer = clienteSelect.closest('.choices');
-            if (choicesContainer) {
-              choicesContainer.style.opacity = '0.6';
-              choicesContainer.style.pointerEvents = 'none';
-              choicesContainer.title = `Restringido a ${clienteAsignado}`;
+    navSubitems.forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (window.innerWidth < 1024) toggleMenuMobile();
+        navItems.forEach(b => b.classList.remove('active'));
+        navSubitems.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const target = btn.getAttribute('data-target');
+        views.forEach(v => v.classList.toggle('shown', v.id === target));
+      });
+    });
+
+    const kpiSubnav = document.querySelector('.kpi-subnav');
+    kpiSubnav?.addEventListener('click', (e) => {
+      const targetButton = e.target.closest('.kpi-subnav-btn');
+      if (!targetButton) return;
+
+      kpiSubnav.querySelectorAll('.kpi-subnav-btn').forEach(btn => btn.classList.remove('active'));
+      targetButton.classList.add('active');
+
+      document.querySelectorAll('.kpi-subview').forEach(view => {
+        view.classList.toggle('active', view.id === targetButton.dataset.target);
+      });
+
+      if (targetButton.dataset.target === 'kpi-detalle-incidentes' && !detalleInitialized) {
+        initDetalleIncidentesDashboard();
+      }
+      if (targetButton.dataset.target === 'kpi-acceso-peatonal' && !apInitialized) {
+        initAccesoPeatonalDashboard();
+        apInitialized = true;
+      }
+      if (targetButton.dataset.target === 'kpi-detalle-acceso') {
+        initDetalleAccesoDashboard();
+      }
+      if (targetButton.dataset.target === 'kpi-ronda-general') {
+        initKpiRondaGeneral();
+      }
+      if (targetButton.dataset.target === 'kpi-detalle-rondas') {
+        initDetalleRondas();
+      }
+    });
+
+    // ============================================================================
+    // 5A) LÓGICA DEL PANEL "RESUMEN"
+    // ============================================================================
+    // ======================================================
+    // 🔄 Sincronizar filtros Cliente/Unidad (GENÉRICO)
+    // ======================================================
+    async function loadClienteUnidadFiltersGenerico(clienteSelectId, unidadSelectId, usarChoices = false, choicesObj = null) {
+      try {
+        const clienteSelect = document.getElementById(clienteSelectId);
+        const unidadSelect = document.getElementById(unidadSelectId);
+        if (!clienteSelect || !unidadSelect) return;
+
+        // Obtener todos los clientes desde CLIENTE_UNIDAD
+        const clientesSnapshot = await db.collection('CLIENTE_UNIDAD').get();
+        const clientes = [];
+
+        clientesSnapshot.docs.forEach(doc => {
+          clientes.push(doc.id);
+        });
+        clientes.sort((a, b) => a.localeCompare(b, 'es'));
+
+        // Si el usuario tiene restricción de CLIENTE
+        const clienteAsignado = window.accessControl?.getClienteFilter?.();
+        const unidadAsignada = window.accessControl?.getUnidadFilter?.();
+        const esCliente = !!clienteAsignado;
+        const tieneUnidadAsignada = !!unidadAsignada;
+
+        console.log('=== RESTRICCIONES DE USUARIO ===');
+        console.log('Cliente Asignado:', clienteAsignado);
+        console.log('Unidad Asignada:', unidadAsignada);
+        console.log('Es Cliente:', esCliente);
+        console.log('Tiene Unidad Asignada:', tieneUnidadAsignada);
+
+        // Función para rellenar el select de cliente
+        const rellenarClientes = () => {
+          if (usarChoices && choicesObj) {
+            // Usando Choices.js con el objeto pasado como parámetro
+            if (esCliente) {
+              console.log(`Cliente restringido a: ${clienteAsignado}`);
+              choicesObj.cliente.setChoices(
+                [{ value: clienteAsignado, label: clienteAsignado, selected: true }],
+                'value', 'label', true
+              );
+              // Deshabilitar el select de cliente en Choices.js
+              clienteSelect.disabled = true;
+              // Intentar deshabilitar el contenedor de Choices
+              const choicesContainer = clienteSelect.closest('.choices');
+              if (choicesContainer) {
+                choicesContainer.style.opacity = '0.6';
+                choicesContainer.style.pointerEvents = 'none';
+                choicesContainer.title = `Restringido a ${clienteAsignado}`;
+              }
+            } else {
+              console.log('Sin restricción de cliente - mostrando todos');
+              choicesObj.cliente.setChoices(
+                [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
+                'value', 'label', true
+              );
             }
           } else {
-            console.log('Sin restricción de cliente - mostrando todos');
-            choicesObj.cliente.setChoices(
-              [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
-              'value', 'label', true
-            );
+            // Usando HTML plano
+            clienteSelect.innerHTML = '';
+            if (esCliente) {
+              clienteSelect.innerHTML = `<option value="${clienteAsignado}" selected>${clienteAsignado}</option>`;
+              clienteSelect.disabled = true;
+            } else {
+              clienteSelect.innerHTML = '<option value="">Todos</option>' +
+                clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+            }
           }
-        } else {
-          // Usando HTML plano
-          clienteSelect.innerHTML = '';
-          if (esCliente) {
-            clienteSelect.innerHTML = `<option value="${clienteAsignado}" selected>${clienteAsignado}</option>`;
-            clienteSelect.disabled = true;
-          } else {
-            clienteSelect.innerHTML = '<option value="">Todos</option>' +
-              clientes.map(c => `<option value="${c}">${c}</option>`).join('');
-          }
-        }
-      };
+        };
 
-      // Función para filtrar y rellenar unidades según el cliente seleccionado
-      const actualizarUnidades = async (clienteElegido) => {
-        let unidades = [];
+        // Función para filtrar y rellenar unidades según el cliente seleccionado
+        const actualizarUnidades = async (clienteElegido) => {
+          let unidades = [];
 
-        if (clienteElegido && clienteElegido !== 'Todos') {
-          // Obtener unidades desde la SUBCOLECCIÓN del cliente
-          const unidadesSnapshot = await db
-            .collection('CLIENTE_UNIDAD')
-            .doc(clienteElegido)
-            .collection('UNIDADES')
-            .get();
-
-          unidadesSnapshot.forEach(doc => {
-            unidades.push(doc.id);
-          });
-        } else {
-          // Obtener todas las unidades de todos los clientes
-          for (const cliente of clientes) {
+          if (clienteElegido && clienteElegido !== 'Todos') {
+            // Obtener unidades desde la SUBCOLECCIÓN del cliente
             const unidadesSnapshot = await db
               .collection('CLIENTE_UNIDAD')
-              .doc(cliente)
+              .doc(clienteElegido)
               .collection('UNIDADES')
               .get();
 
             unidadesSnapshot.forEach(doc => {
               unidades.push(doc.id);
             });
-          }
-          unidades = [...new Set(unidades)]; // Eliminar duplicados
-        }
-
-        unidades.sort((a, b) => a.localeCompare(b, 'es'));
-
-        if (usarChoices && choicesObj) {
-          // Usando Choices.js con el objeto pasado como parámetro
-          if (tieneUnidadAsignada) {
-            // Usuario restringido a una unidad específica
-            console.log(`Unidad restringida a: ${unidadAsignada}`);
-            choicesObj.unidad.setChoices(
-              [{ value: unidadAsignada, label: unidadAsignada, selected: true }],
-              'value', 'label', true
+          } else {
+            // Obtener todas las unidades de todos los clientes (OPTIMIZADO: Paralelo)
+            const promises = clientes.map(cliente =>
+              db.collection('CLIENTE_UNIDAD').doc(cliente).collection('UNIDADES').get()
             );
-            // Deshabilitar el select de unidad
-            unidadSelect.disabled = true;
-            const choicesContainer = unidadSelect.closest('.choices');
-            if (choicesContainer) {
-              choicesContainer.style.opacity = '0.6';
-              choicesContainer.style.pointerEvents = 'none';
-              choicesContainer.title = `Restringido a ${unidadAsignada}`;
+
+            const snapshots = await Promise.all(promises);
+
+            snapshots.forEach(unidadesSnapshot => {
+              unidadesSnapshot.forEach(doc => {
+                unidades.push(doc.id);
+              });
+            });
+
+            unidades = [...new Set(unidades)]; // Eliminar duplicados
+          }
+
+          unidades.sort((a, b) => a.localeCompare(b, 'es'));
+
+          if (usarChoices && choicesObj) {
+            // Usando Choices.js con el objeto pasado como parámetro
+            if (tieneUnidadAsignada) {
+              // Usuario restringido a una unidad específica
+              console.log(`Unidad restringida a: ${unidadAsignada}`);
+              choicesObj.unidad.setChoices(
+                [{ value: unidadAsignada, label: unidadAsignada, selected: true }],
+                'value', 'label', true
+              );
+              // Deshabilitar el select de unidad
+              unidadSelect.disabled = true;
+              const choicesContainer = unidadSelect.closest('.choices');
+              if (choicesContainer) {
+                choicesContainer.style.opacity = '0.6';
+                choicesContainer.style.pointerEvents = 'none';
+                choicesContainer.title = `Restringido a ${unidadAsignada}`;
+              }
+            } else {
+              // Usuario sin restricción de unidad
+              choicesObj.unidad.setChoices(
+                [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
+                'value', 'label', true
+              );
+              // Resetear la selección de unidad a "Todas"
+              choicesObj.unidad.clearStore();
+              choicesObj.unidad.setChoiceByValue('Todas');
             }
           } else {
-            // Usuario sin restricción de unidad
-            choicesObj.unidad.setChoices(
-              [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
-              'value', 'label', true
-            );
-            // Resetear la selección de unidad a "Todas"
-            choicesObj.unidad.clearStore();
-            choicesObj.unidad.setChoiceByValue('Todas');
+            // Usando HTML plano
+            if (tieneUnidadAsignada) {
+              unidadSelect.innerHTML = `<option value="${unidadAsignada}" selected>${unidadAsignada}</option>`;
+              unidadSelect.disabled = true;
+            } else {
+              unidadSelect.innerHTML = '<option value="">Todas</option>' +
+                unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+            }
           }
-        } else {
-          // Usando HTML plano
-          if (tieneUnidadAsignada) {
-            unidadSelect.innerHTML = `<option value="${unidadAsignada}" selected>${unidadAsignada}</option>`;
-            unidadSelect.disabled = true;
-          } else {
-            unidadSelect.innerHTML = '<option value="">Todas</option>' +
-              unidades.map(u => `<option value="${u}">${u}</option>`).join('');
-          }
+        };
+
+        // Rellenar clientes
+        rellenarClientes();
+
+        // Llenar unidades iniciales
+        await actualizarUnidades(esCliente ? clienteAsignado : 'Todos');
+
+        // Escuchar cambios de cliente (solo si no está bloqueado)
+        if (!esCliente) {
+          // Para Choices.js, usar el evento 'change' en el select
+          clienteSelect.addEventListener('change', async (e) => {
+            console.log('Cliente cambió a:', e.target.value);
+            await actualizarUnidades(e.target.value);
+            // Disparar renderResumen si está disponible (para resumen específicamente)
+            if (typeof renderResumen === 'function' && clienteSelectId.includes('resumen')) {
+              // Esperar a que las unidades se actualicen antes de renderizar
+              setTimeout(() => {
+                renderResumen();
+              }, 100);
+            }
+          });
         }
-      };
 
-      // Rellenar clientes
-      rellenarClientes();
-
-      // Llenar unidades iniciales
-      await actualizarUnidades(esCliente ? clienteAsignado : 'Todos');
-
-      // Escuchar cambios de cliente (solo si no está bloqueado)
-      if (!esCliente) {
-        // Para Choices.js, usar el evento 'change' en el select
-        clienteSelect.addEventListener('change', async (e) => {
-          console.log('Cliente cambió a:', e.target.value);
-          await actualizarUnidades(e.target.value);
-          // Disparar renderResumen si está disponible (para resumen específicamente)
-          if (typeof renderResumen === 'function' && clienteSelectId.includes('resumen')) {
-            // Esperar a que las unidades se actualicen antes de renderizar
-            setTimeout(() => {
-              renderResumen();
-            }, 100);
-          }
-        });
-      }
-
-    } catch (error) {
-      console.error('Error al cargar filtros Cliente/Unidad:', error);
-    }
-  }
-
-  // ============= FUNCIÓN CORRECTA: OBTENER UNIDADES DIRECTAMENTE DE BD (NO DE INCIDENTES) =============
-  async function getUnidadesFromClienteUnidad(cliente) {
-    try {
-      const snap = await db
-        .collection('CLIENTE_UNIDAD')
-        .doc(cliente)
-        .collection('UNIDADES')
-        .get();
-
-      return snap.docs
-        .map(d => d.id)
-        .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b, 'es'));
-    } catch (e) {
-      console.error(`[KPI] Error obteniendo unidades de CLIENTE_UNIDAD:`, e);
-      return [];
-    }
-  }
-
-  // ============= PASO 1: FUNCIÓN PARA CARGAR UNIDADES POR CLIENTE (ESPECÍFICA PARA KPI) =============
-  async function loadResumenUnidadesByCliente(cliente) {
-    if (!resumenChoices.unidad) return;
-    
-    console.log(`Cargando unidades para cliente: ${cliente}`);
-
-    // OBTENER UNIDADES DIRECTAMENTE DE CLIENTE_UNIDAD (no de incidentes)
-    const unidades = await getUnidadesFromClienteUnidad(cliente);
-    console.log(`Unidades encontradas para ${cliente}:`, unidades);
-
-    const unidadSelect = document.getElementById('resumen-filtro-unidad');
-    if (!unidadSelect) return;
-
-    // Destruir la instancia anterior de Choices
-    if (resumenChoices.unidad) {
-      resumenChoices.unidad.destroy();
-    }
-
-    if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
-      // Usuario CLIENTE con UNIDAD específica - bloquear
-      const unidadNombre = accessControl.unidadAsignada;
-      
-      unidadSelect.innerHTML = `<option value="${unidadNombre}" selected>${unidadNombre}</option>`;
-      
-      const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
-      resumenChoices.unidad = new Choices('#resumen-filtro-unidad', cfg);
-      
-      unidadSelect.disabled = true;
-      unidadSelect.style.opacity = '0.6';
-      unidadSelect.title = `Acceso restringido a: ${unidadNombre}`;
-    } else {
-      // Usuario ADMIN/SUPERVISOR o CLIENTE sin unidad específica - mostrar todas las disponibles
-      unidadSelect.innerHTML = '<option value="Todas" selected>Todas</option>' +
-        unidades.map(u => `<option value="${u}">${u}</option>`).join('');
-      
-      const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
-      resumenChoices.unidad = new Choices('#resumen-filtro-unidad', cfg);
-    }
-  }
-
-  function initResumenDashboard() {
-    // Defaults de fecha: últimos 30 días (si no hubiera valor)
-    if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
-      const $dp = $('#resumen-filtro-fecha');
-      if (!$dp.val()) {
-        const start = moment().subtract(29, 'days');
-        const end = moment();
-        $dp.val(`${start.format('DD/MM/YYYY')} - ${end.format('DD/MM/YYYY')}`);
+      } catch (error) {
+        console.error('Error al cargar filtros Cliente/Unidad:', error);
       }
     }
 
-    const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
-    if (window.Choices) {
-      // Inicializar SOLO UNA VEZ si no existen
-      if (!resumenChoices.cliente) {
-        resumenChoices.cliente = new Choices('#resumen-filtro-cliente', cfg);
+    // ============= FUNCIÓN CORRECTA: OBTENER UNIDADES DIRECTAMENTE DE BD (NO DE INCIDENTES) =============
+    async function getUnidadesFromClienteUnidad(cliente) {
+      try {
+        const snap = await db
+          .collection('CLIENTE_UNIDAD')
+          .doc(cliente)
+          .collection('UNIDADES')
+          .get();
+
+        return snap.docs
+          .map(d => d.id)
+          .filter(Boolean)
+          .sort((a, b) => a.localeCompare(b, 'es'));
+      } catch (e) {
+        console.error(`[KPI] Error obteniendo unidades de CLIENTE_UNIDAD:`, e);
+        return [];
       }
-      if (!resumenChoices.unidad) {
+    }
+
+    // ============= PASO 1: FUNCIÓN PARA CARGAR UNIDADES POR CLIENTE (ESPECÍFICA PARA KPI) =============
+    async function loadResumenUnidadesByCliente(cliente) {
+      if (!resumenChoices.unidad) return;
+
+      console.log(`Cargando unidades para cliente: ${cliente}`);
+
+      // OBTENER UNIDADES DIRECTAMENTE DE CLIENTE_UNIDAD (no de incidentes)
+      const unidades = await getUnidadesFromClienteUnidad(cliente);
+      console.log(`Unidades encontradas para ${cliente}:`, unidades);
+
+      const unidadSelect = document.getElementById('resumen-filtro-unidad');
+      if (!unidadSelect) return;
+
+      // Destruir la instancia anterior de Choices
+      if (resumenChoices.unidad) {
+        resumenChoices.unidad.destroy();
+      }
+
+      if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
+        // Usuario CLIENTE con UNIDAD específica - bloquear
+        const unidadNombre = accessControl.unidadAsignada;
+
+        unidadSelect.innerHTML = `<option value="${unidadNombre}" selected>${unidadNombre}</option>`;
+
+        const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
+        resumenChoices.unidad = new Choices('#resumen-filtro-unidad', cfg);
+
+        unidadSelect.disabled = true;
+        unidadSelect.style.opacity = '0.6';
+        unidadSelect.title = `Acceso restringido a: ${unidadNombre}`;
+      } else {
+        // Usuario ADMIN/SUPERVISOR o CLIENTE sin unidad específica - mostrar todas las disponibles
+        unidadSelect.innerHTML = '<option value="Todas" selected>Todas</option>' +
+          unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+
+        const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
         resumenChoices.unidad = new Choices('#resumen-filtro-unidad', cfg);
       }
-      if (!resumenChoices.categoria) {
-        resumenChoices.categoria = new Choices('#resumen-filtro-categoria', cfg);
-      }
-      if (!resumenChoices.riesgo) {
-        resumenChoices.riesgo = new Choices('#resumen-filtro-riesgo', cfg);
-      }
     }
 
-    if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
-      $('#resumen-filtro-fecha').daterangepicker({
-        opens: 'left',
-        locale: { format: 'DD/MM/YYYY', applyLabel: 'Aplicar', cancelLabel: 'Cancelar' }
-      });
-    } else {
-    }
+    function initResumenDashboard() {
+      // Defaults de fecha: últimos 30 días (si no hubiera valor)
+      if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
+        const $dp = $('#resumen-filtro-fecha');
+        if (!$dp.val()) {
+          const start = moment().subtract(29, 'days');
+          const end = moment();
+          $dp.val(`${start.format('DD/MM/YYYY')} - ${end.format('DD/MM/YYYY')}`);
+        }
+      }
 
-    // Cargar filtros genéricos de Cliente/Unidad
-    loadClienteUnidadFiltersGenerico('resumen-filtro-cliente', 'resumen-filtro-unidad', true, resumenChoices);
+      const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
+      if (window.Choices) {
+        // Inicializar SOLO UNA VEZ si no existen
+        if (!resumenChoices.cliente) {
+          resumenChoices.cliente = new Choices('#resumen-filtro-cliente', cfg);
+        }
+        if (!resumenChoices.unidad) {
+          resumenChoices.unidad = new Choices('#resumen-filtro-unidad', cfg);
+        }
+        if (!resumenChoices.categoria) {
+          resumenChoices.categoria = new Choices('#resumen-filtro-categoria', cfg);
+        }
+        if (!resumenChoices.riesgo) {
+          resumenChoices.riesgo = new Choices('#resumen-filtro-riesgo', cfg);
+        }
+      }
 
-    // Agregar event listeners para Choices.js en Resumen
-    // Nota: Choices.js dispara eventos 'change' en el elemento select nativo
-    setTimeout(() => {
-      const clienteSelect = document.getElementById('resumen-filtro-cliente');
-      const unidadSelect = document.getElementById('resumen-filtro-unidad');
-      const categoriaSelect = document.getElementById('resumen-filtro-categoria');
-      const riesgoSelect = document.getElementById('resumen-filtro-riesgo');
-
-      // PASO 2: Agregar onChange listener al cliente que cargue unidades
-      if (clienteSelect) {
-        clienteSelect.addEventListener('change', async () => {
-          console.log('Cliente cambió en Resumen');
-          const cliente = resumenChoices.cliente.getValue(true);
-          const clienteValue = Array.isArray(cliente) ? cliente[0] : cliente;
-          
-          if (clienteValue && clienteValue !== 'Todos') {
-            console.log('Cargando unidades para:', clienteValue);
-            await loadResumenUnidadesByCliente(clienteValue);
-          }
-          
-          renderResumen();
+      if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
+        $('#resumen-filtro-fecha').daterangepicker({
+          opens: 'left',
+          locale: { format: 'DD/MM/YYYY', applyLabel: 'Aplicar', cancelLabel: 'Cancelar' }
         });
+      } else {
       }
-      if (unidadSelect) {
-        unidadSelect.addEventListener('change', () => {
-          console.log('Unidad cambió');
-          renderResumen();
-        });
-      }
-      if (categoriaSelect) {
-        categoriaSelect.addEventListener('change', () => {
-          console.log('Categoría cambió');
-          renderResumen();
-        });
-      }
-      if (riesgoSelect) {
-        riesgoSelect.addEventListener('change', () => {
-          console.log('Riesgo cambió');
-          renderResumen();
-        });
-      }
-    }, 100);
 
-    // Listener para daterangepicker
-    if (typeof $ !== 'undefined') {
-      $('#resumen-filtro-fecha').on('apply.daterangepicker', () => {
-        console.log('Fecha cambió');
-        renderResumen();
-      });
-    }
+      // Cargar filtros genéricos de Cliente/Unidad
+      loadClienteUnidadFiltersGenerico('resumen-filtro-cliente', 'resumen-filtro-unidad', true, resumenChoices);
 
-    document.getElementById('resumen-btn-refresh')?.addEventListener('click', renderResumen);
-    queryAndRenderResumen();
-  }
-
-  async function queryAndRenderResumen() {
-    UI.showOverlay('Cargando resumen…', 'Consultando incidentes (últimos 10000)');
-    try {
-      // Limitar a últimos 10000 incidentes para mejor rendimiento
-      const snapshot = await getQueryWithClienteFilter(COLLECTIONS.INCIDENTS)
-        .orderBy('__name__', 'desc')
-        .limit(10000)
-        .get();
-      
-      console.log(`Incidentes descargados: ${snapshot.docs.length}`);
-      
-      // PASO 2: APLICAR FILTRO DE ACCESO A LOS DATOS
-      let incidentsRaw = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data,
-          timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : (data.timestamp || new Date()),
-        };
-      });
-
-      // FILTRAR DATOS ANTES DE CACHEAR
-      cachedIncidents = applyAccessFilter(incidentsRaw);
-      
-      console.log(`Incidentes después de filtro de acceso: ${cachedIncidents.length} (raw: ${incidentsRaw.length})`);
-      console.log('Primeros 3 incidentes cacheados:');
-      cachedIncidents.slice(0, 3).forEach((d, i) => {
-        console.log(`${i}: cliente=${d.cliente}, unidad=${d.unidad}, tipoIncidente=${d.tipoIncidente}, riesgo=${d.Nivelderiesgo}`);
-      });
-
-      populateResumenFilters(cachedIncidents);
-      
-      // PASO 3: Cargar unidades iniciales para el cliente actual
-      const clienteActual = accessControl && accessControl.userType === 'CLIENTE' 
-        ? accessControl.clienteAsignado 
-        : 'Todos';
-      
-      console.log('Cargando unidades iniciales para:', clienteActual);
-      await loadResumenUnidadesByCliente(clienteActual);
-      
-      renderResumen();
-    } catch (e) {
-      console.error('Error al cargar datos del resumen:', e);
-      UI.toast('Error al cargar datos del resumen.');
-    } finally {
-      UI.hideOverlay();
-    }
-  }
-
-  // ============= PASO 1: FILTRO CENTRAL DE ACCESO (OBLIGATORIO) =============
-  // Aplica las restricciones de CLIENTE/UNIDAD a CUALQUIER dato
-  function applyAccessFilter(rows) {
-    if (!accessControl || accessControl.userType !== 'CLIENTE') {
-      // ADMIN y SUPERVISOR ven todos los datos
-      return rows;
-    }
-    
-    // CLIENTE solo ve SU cliente asignado
-    return rows.filter(r => {
-      const clienteMatch = r.cliente === accessControl.clienteAsignado;
-      const unidadMatch = !accessControl.unidadAsignada || r.unidad === accessControl.unidadAsignada;
-      return clienteMatch && unidadMatch;
-    });
-  }
-
-  // Función simplificada para cargar solo categorías y riesgos
-  function populateResumenFilters(data) {
-    if (!resumenChoices.categoria || !resumenChoices.riesgo) return;
-
-    // PASO 4: NO reconstruir clientes desde data global - ya vienen filtrados
-    // Cargar categorías y riesgos SOLO del data filtrado
-    const categorias = [...new Set(data.map(d => bucketOf(d.tipoIncidente)).filter(Boolean))];
-    const riesgos = [...new Set(data.map(d => d.Nivelderiesgo).filter(Boolean))];
-
-    // Cargar Categorías
-    if (resumenChoices.categoria && categorias.length > 0) {
-      resumenChoices.categoria.setChoices(
-        [{ value: 'Todos', label: 'Todas', selected: true }, ...categorias.map(c => ({ value: c, label: c }))],
-        'value', 'label', false
-      );
-    }
-    
-    // Cargar Riesgos
-    if (resumenChoices.riesgo && riesgos.length > 0) {
-      resumenChoices.riesgo.setChoices(
-        [{ value: 'Todos', label: 'Todos', selected: true }, ...riesgos.map(r => ({ value: r, label: r }))],
-        'value', 'label', false
-      );
-    }
-
-    // PASO 3: Para CLIENTE, mostrar SOLO su cliente y bloquearlo
-    if (resumenChoices.cliente) {
-      if (accessControl && accessControl.userType === 'CLIENTE') {
-        const clienteNombre = accessControl.clienteAsignado || 'Sin asignar';
-        resumenChoices.cliente.setChoices(
-          [{ value: clienteNombre, label: clienteNombre, selected: true }],
-          'value', 'label', true // clearStore = true para reemplazar todo
-        );
-        
-        // Bloquear el select visualmente
+      // Agregar event listeners para Choices.js en Resumen
+      // Nota: Choices.js dispara eventos 'change' en el elemento select nativo
+      setTimeout(() => {
         const clienteSelect = document.getElementById('resumen-filtro-cliente');
+        const unidadSelect = document.getElementById('resumen-filtro-unidad');
+        const categoriaSelect = document.getElementById('resumen-filtro-categoria');
+        const riesgoSelect = document.getElementById('resumen-filtro-riesgo');
+
+        // PASO 2: Agregar onChange listener al cliente que cargue unidades
         if (clienteSelect) {
-          clienteSelect.disabled = true;
-          clienteSelect.style.opacity = '0.6';
-          clienteSelect.title = `Acceso restringido a: ${clienteNombre}`;
+          clienteSelect.addEventListener('change', async () => {
+            console.log('Cliente cambió en Resumen');
+            const cliente = resumenChoices.cliente.getValue(true);
+            const clienteValue = Array.isArray(cliente) ? cliente[0] : cliente;
+
+            if (clienteValue && clienteValue !== 'Todos') {
+              console.log('Cargando unidades para:', clienteValue);
+              await loadResumenUnidadesByCliente(clienteValue);
+            }
+
+            renderResumen();
+          });
         }
-      }
-    }
-  }
-
-  // === Layout unificado para KPI (mismas alturas de cards) ===
-  function applyKpiUnifiedHeights() {
-    const H_SMALL = 260;
-    const H_BAR   = 260;
-    const H_TABLE = 260;
-    const H_HEATMAP = 520; // Mayor altura para el heatmap con 24 horas
-
-    // SKIP resumen charts - they use CSS Grid sizing instead
-    // setH('resumen-chart-riesgo',    H_SMALL);
-    // setH('resumen-chart-categoria', H_BAR);
-    // setH('resumen-chart-unidad',    H_BAR);
-    // setH('resumen-chart-fecha',     H_SMALL);
-    // setH('resumen-chart-mes',       H_BAR);
-    setTableH('resumen-tabla-heatmap', H_HEATMAP);
-
-    setH('detalle-chart-area',      250);
-    setTableH('detalle-tbl-riesgo',    H_TABLE);
-    setTableH('detalle-tbl-codigos',   H_TABLE);
-    setTableH('detalle-tbl-ambiental', H_TABLE);
-    setTableH('detalle-tbl-sso',       H_TABLE);
-
-    setH('ap-chart-fecha',    H_SMALL);
-    setH('ap-chart-estado',   H_SMALL);
-    setH('ap-chart-empresa',  H_BAR);
-    setH('ap-chart-unidad',   H_BAR);
-    setTableH('ap-tabla-heatmap', H_TABLE);
-
-    function setH(canvasId, h){
-      const c = document.getElementById(canvasId);
-      if (!c) return;
-      const box = c.closest('.card, .panel, .box, .kpi-card') || c.parentElement;
-      if (box) {
-        box.style.height = h + 'px';
-        box.style.minHeight = h + 'px';
-      } else {
-        c.parentElement && (c.parentElement.style.height = h + 'px');
-      }
-    }
-    function setTableH(tableId, h){
-      const t = document.getElementById(tableId);
-      if (!t) return;
-      const box = t.closest('.card, .panel, .box, .kpi-card') || t.parentElement;
-      if (box) {
-        box.style.height = h + 'px';
-        box.style.minHeight = h + 'px';
-        box.style.overflow = 'auto';
-      } else {
-        t.parentElement && (t.parentElement.style.cssText += `height:${h}px;min-height:${h}px;overflow:auto;`);
-      }
-    }
-  }
-
-  function renderResumen() {
-    // [EXTRA] Limpiar gráficos previos (recomendado cuando se aplican filtros)
-    limpiarKPI();
-
-    if (typeof $ === 'undefined' || typeof $.fn.daterangepicker === 'undefined') {
-      console.warn('jQuery o daterangepicker no están disponibles');
-      return;
-    }
-
-    if (!cachedIncidents || cachedIncidents.length === 0) {
-      console.warn('No hay incidentes cacheados');
-      return;
-    }
-
-    // Obtener valores de filtros - manejo seguro para Choices.js
-    let clienteValue = 'Todos';
-    let unidadValue = 'Todas';
-    let categoriaValue = 'Todos';
-    let riesgoValue = 'Todos';
-
-    try {
-      // Usar getValue(true) que devuelve el string del valor seleccionado
-      if (resumenChoices.cliente) {
-        const val = resumenChoices.cliente.getValue(true);
-        // Si getValue devuelve un array, tomar el primer elemento
-        if (Array.isArray(val) && val.length > 0) {
-          clienteValue = val[0];
-        } else if (typeof val === 'string' && val.length > 0) {
-          clienteValue = val;
+        if (unidadSelect) {
+          unidadSelect.addEventListener('change', () => {
+            console.log('Unidad cambió');
+            renderResumen();
+          });
         }
-        console.log('Cliente obtenido:', clienteValue, '(raw:', val, ')');
-      }
-
-      if (resumenChoices.unidad) {
-        const val = resumenChoices.unidad.getValue(true);
-        if (Array.isArray(val) && val.length > 0) {
-          unidadValue = val[0];
-        } else if (typeof val === 'string' && val.length > 0) {
-          unidadValue = val;
+        if (categoriaSelect) {
+          categoriaSelect.addEventListener('change', () => {
+            console.log('Categoría cambió');
+            renderResumen();
+          });
         }
-        console.log('Unidad obtenida:', unidadValue, '(raw:', val, ')');
-      }
-
-      if (resumenChoices.categoria) {
-        const val = resumenChoices.categoria.getValue(true);
-        if (Array.isArray(val) && val.length > 0) {
-          categoriaValue = val[0];
-        } else if (typeof val === 'string' && val.length > 0) {
-          categoriaValue = val;
+        if (riesgoSelect) {
+          riesgoSelect.addEventListener('change', () => {
+            console.log('Riesgo cambió');
+            renderResumen();
+          });
         }
-        console.log('Categoría obtenida:', categoriaValue, '(raw:', val, ')');
-      }
+      }, 100);
 
-      if (resumenChoices.riesgo) {
-        const val = resumenChoices.riesgo.getValue(true);
-        if (Array.isArray(val) && val.length > 0) {
-          riesgoValue = val[0];
-        } else if (typeof val === 'string' && val.length > 0) {
-          riesgoValue = val;
-        }
-        console.log('Riesgo obtenido:', riesgoValue, '(raw:', val, ')');
-      }
-    } catch (e) {
-      console.error('Error obteniendo valores de filtros:', e);
-    }
-
-    const filters = {
-      cliente: clienteValue,
-      unidad: unidadValue,
-      categoria: categoriaValue,
-      riesgo: riesgoValue,
-      fecha: $('#resumen-filtro-fecha').val().split(' - ')
-    };
-
-    // Debug: mostrar qué filtros se están usando
-    console.log('===== FILTROS APLICADOS =====');
-    console.log('Cliente:', filters.cliente);
-    console.log('Unidad:', filters.unidad);
-    console.log('Categoría:', filters.categoria);
-    console.log('Riesgo:', filters.riesgo);
-    console.log('Fecha:', filters.fecha);
-    console.log('Total incidentes cacheados:', cachedIncidents.length);
-
-    const startDate = moment(filters.fecha[0], 'DD/MM/YYYY').startOf('day');
-    const endDate = moment(filters.fecha[1], 'DD/MM/YYYY').endOf('day');
-
-    const filteredData = cachedIncidents.filter(d => {
-      const d_date = moment(d.timestamp);
-      const inDate = d_date.isBetween(startDate, endDate, undefined, '[]');
-      const inCli = filters.cliente === 'Todos' || (d.cliente === filters.cliente);
-      const inUni = filters.unidad === 'Todas' || (d.unidad === filters.unidad);
-      const inCat = filters.categoria === 'Todos' || bucketOf(d.tipoIncidente) === filters.categoria;
-      const inR = filters.riesgo === 'Todos' || d.Nivelderiesgo === filters.riesgo;
-      
-      // Debug para el primer incidente
-      if (d_date.isSame(startDate, 'day') && inDate) {
-        console.log('Incidente sample:', {
-          cliente: d.cliente, 
-          inCli,
-          unidad: d.unidad,
-          inUni,
-          tipoIncidente: d.tipoIncidente,
-          bucket: bucketOf(d.tipoIncidente),
-          inCat,
-          riesgo: d.Nivelderiesgo,
-          inR,
-          timestamp: d.timestamp
+      // Listener para daterangepicker
+      if (typeof $ !== 'undefined') {
+        $('#resumen-filtro-fecha').on('apply.daterangepicker', () => {
+          console.log('Fecha cambió');
+          renderResumen();
         });
       }
-      
-      return inDate && inCli && inUni && inCat && inR;
-    });
 
-    console.log(`===== RESULTADOS =====`);
-    console.log(`Incidentes filtrados: ${filteredData.length} de ${cachedIncidents.length} totales`);
-    console.log('============================');
-
-    document.getElementById('resumen-total-incidentes').textContent = filteredData.length.toLocaleString('es-PE');
-
-    drawRiesgoChart(filteredData);
-    drawCategoriaChart(filteredData);
-    drawUnidadChart(filteredData);
-    drawFechaChart(filteredData, startDate, endDate);
-    drawMesChart(filteredData);
-    renderHeatmap(filteredData);
-    initializeResumenMap(filteredData);
-
-    applyKpiUnifiedHeights();
-  }
-
-  function drawChart(canvasId, config) {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) return;
-    if (resumenCharts[canvasId]) {
-      resumenCharts[canvasId].destroy();
-    }
-    resumenCharts[canvasId] = new Chart(canvas, config);
-  }
-
-  // Función global para resetear gráficos cuando no hay datos
-  function resetChart(canvasId, type = 'bar') {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) return null;
-
-    if (resumenCharts[canvasId]) {
-      resumenCharts[canvasId].destroy();
+      document.getElementById('resumen-btn-refresh')?.addEventListener('click', renderResumen);
+      queryAndRenderResumen();
     }
 
-    resumenCharts[canvasId] = new Chart(canvas, {
-      type,
-      data: {
-        labels: [],
-        datasets: []
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: { enabled: false }
-        },
-        scales: {
-          x: { display: false },
-          y: { display: false }
+    async function queryAndRenderResumen() {
+      UI.showOverlay('Cargando resumen…', 'Consultando incidentes (últimos 10000)');
+      try {
+        // Limitar a últimos 10000 incidentes para mejor rendimiento
+        const snapshot = await getQueryWithClienteFilter(COLLECTIONS.INCIDENTS)
+          .orderBy('__name__', 'desc')
+          .limit(10000)
+          .get();
+
+        console.log(`Incidentes descargados: ${snapshot.docs.length}`);
+
+        // PASO 2: APLICAR FILTRO DE ACCESO A LOS DATOS
+        let incidentsRaw = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data,
+            timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : (data.timestamp || new Date()),
+          };
+        });
+
+        // FILTRAR DATOS ANTES DE CACHEAR
+        cachedIncidents = applyAccessFilter(incidentsRaw);
+
+        console.log(`Incidentes después de filtro de acceso: ${cachedIncidents.length} (raw: ${incidentsRaw.length})`);
+        console.log('Primeros 3 incidentes cacheados:');
+        cachedIncidents.slice(0, 3).forEach((d, i) => {
+          console.log(`${i}: cliente=${d.cliente}, unidad=${d.unidad}, tipoIncidente=${d.tipoIncidente}, riesgo=${d.Nivelderiesgo}`);
+        });
+
+        populateResumenFilters(cachedIncidents);
+
+        // PASO 3: Cargar unidades iniciales para el cliente actual
+        const clienteActual = accessControl && accessControl.userType === 'CLIENTE'
+          ? accessControl.clienteAsignado
+          : 'Todos';
+
+        console.log('Cargando unidades iniciales para:', clienteActual);
+        await loadResumenUnidadesByCliente(clienteActual);
+
+        renderResumen();
+      } catch (e) {
+        console.error('Error al cargar datos del resumen:', e);
+        UI.toast('Error al cargar datos del resumen.');
+      } finally {
+        UI.hideOverlay();
+      }
+    }
+
+    // ============= PASO 1: FILTRO CENTRAL DE ACCESO (OBLIGATORIO) =============
+    // Aplica las restricciones de CLIENTE/UNIDAD a CUALQUIER dato
+    function applyAccessFilter(rows) {
+      if (!accessControl || accessControl.userType !== 'CLIENTE') {
+        // ADMIN y SUPERVISOR ven todos los datos
+        return rows;
+      }
+
+      // CLIENTE solo ve SU cliente asignado
+      return rows.filter(r => {
+        const clienteMatch = r.cliente === accessControl.clienteAsignado;
+        const unidadMatch = !accessControl.unidadAsignada || r.unidad === accessControl.unidadAsignada;
+        return clienteMatch && unidadMatch;
+      });
+    }
+
+    // Función simplificada para cargar solo categorías y riesgos
+    function populateResumenFilters(data) {
+      if (!resumenChoices.categoria || !resumenChoices.riesgo) return;
+
+      // PASO 4: NO reconstruir clientes desde data global - ya vienen filtrados
+      // Cargar categorías y riesgos SOLO del data filtrado
+      const categorias = [...new Set(data.map(d => bucketOf(d.tipoIncidente)).filter(Boolean))];
+      const riesgos = [...new Set(data.map(d => d.Nivelderiesgo).filter(Boolean))];
+
+      // Cargar Categorías
+      if (resumenChoices.categoria && categorias.length > 0) {
+        resumenChoices.categoria.setChoices(
+          [{ value: 'Todos', label: 'Todas', selected: true }, ...categorias.map(c => ({ value: c, label: c }))],
+          'value', 'label', false
+        );
+      }
+
+      // Cargar Riesgos
+      if (resumenChoices.riesgo && riesgos.length > 0) {
+        resumenChoices.riesgo.setChoices(
+          [{ value: 'Todos', label: 'Todos', selected: true }, ...riesgos.map(r => ({ value: r, label: r }))],
+          'value', 'label', false
+        );
+      }
+
+      // PASO 3: Para CLIENTE, mostrar SOLO su cliente y bloquearlo
+      if (resumenChoices.cliente) {
+        if (accessControl && accessControl.userType === 'CLIENTE') {
+          const clienteNombre = accessControl.clienteAsignado || 'Sin asignar';
+          resumenChoices.cliente.setChoices(
+            [{ value: clienteNombre, label: clienteNombre, selected: true }],
+            'value', 'label', true // clearStore = true para reemplazar todo
+          );
+
+          // Bloquear el select visualmente
+          const clienteSelect = document.getElementById('resumen-filtro-cliente');
+          if (clienteSelect) {
+            clienteSelect.disabled = true;
+            clienteSelect.style.opacity = '0.6';
+            clienteSelect.title = `Acceso restringido a: ${clienteNombre}`;
+          }
         }
       }
-    });
+    }
 
-    return resumenCharts[canvasId];
-  }
+    // === Layout unificado para KPI (mismas alturas de cards) ===
+    function applyKpiUnifiedHeights() {
+      const H_SMALL = 260;
+      const H_BAR = 260;
+      const H_TABLE = 260;
+      const H_HEATMAP = 520; // Mayor altura para el heatmap con 24 horas
 
-  // ===== FUNCIÓN EXTRA (RECOMENDADO): Limpiar todos los gráficos de KPI cuando se aplican filtros =====
-  function limpiarKPI() {
-    console.log('[KPI] Limpiando gráficos...');
-    // Destruir todos los gráficos activos
-    Object.keys(resumenCharts).forEach(key => {
-      if (resumenCharts[key]) {
-        resumenCharts[key].destroy();
-        resumenCharts[key] = null;
+      // SKIP resumen charts - they use CSS Grid sizing instead
+      // setH('resumen-chart-riesgo',    H_SMALL);
+      // setH('resumen-chart-categoria', H_BAR);
+      // setH('resumen-chart-unidad',    H_BAR);
+      // setH('resumen-chart-fecha',     H_SMALL);
+      // setH('resumen-chart-mes',       H_BAR);
+      setTableH('resumen-tabla-heatmap', H_HEATMAP);
+
+      setH('detalle-chart-area', 250);
+      setTableH('detalle-tbl-riesgo', H_TABLE);
+      setTableH('detalle-tbl-codigos', H_TABLE);
+      setTableH('detalle-tbl-ambiental', H_TABLE);
+      setTableH('detalle-tbl-sso', H_TABLE);
+
+      setH('ap-chart-fecha', H_SMALL);
+      setH('ap-chart-estado', H_SMALL);
+      setH('ap-chart-empresa', H_BAR);
+      setH('ap-chart-unidad', H_BAR);
+      setTableH('ap-tabla-heatmap', H_TABLE);
+
+      function setH(canvasId, h) {
+        const c = document.getElementById(canvasId);
+        if (!c) return;
+        const box = c.closest('.card, .panel, .box, .kpi-card') || c.parentElement;
+        if (box) {
+          box.style.height = h + 'px';
+          box.style.minHeight = h + 'px';
+        } else {
+          c.parentElement && (c.parentElement.style.height = h + 'px');
+        }
       }
-    });
-    console.log('[KPI] Gráficos limpios');
-  }
+      function setTableH(tableId, h) {
+        const t = document.getElementById(tableId);
+        if (!t) return;
+        const box = t.closest('.card, .panel, .box, .kpi-card') || t.parentElement;
+        if (box) {
+          box.style.height = h + 'px';
+          box.style.minHeight = h + 'px';
+          box.style.overflow = 'auto';
+        } else {
+          t.parentElement && (t.parentElement.style.cssText += `height:${h}px;min-height:${h}px;overflow:auto;`);
+        }
+      }
+    }
 
-  // ======================= GRÁFICOS RESUMEN =======================
-  function drawRiesgoChart(data) {
-    const counts = data.reduce((acc, curr) => {
-      const riesgo = curr.Nivelderiesgo || 'No definido';
-      acc[riesgo] = (acc[riesgo] || 0) + 1;
-      return acc;
-    }, {});
-    
-    // Mapear riesgos a colores específicos
-    const riesgoColors = {
-      'ALTO': '#ef4444',
-      'MEDIO': '#f59e0b', 
-      'BAJO': '#10b981',
-      'No definido': '#9ca3af'
-    };
-    
-    const labels = Object.keys(counts);
-    const values = Object.values(counts);
-    const total = values.reduce((a, b) => a + b, 0) || 1;
-    const colors = labels.map(l => riesgoColors[l] || '#8b5cf6');
+    function renderResumen() {
+      // [EXTRA] Limpiar gráficos previos (recomendado cuando se aplican filtros)
+      limpiarKPI();
 
-    drawChart('resumen-chart-riesgo', {
-      type: 'doughnut',
-      data: {
-        labels,
-        datasets: [{
-          data: values,
-          backgroundColor: colors,
-          borderColor: 'var(--bg)',
-          borderWidth: 2,
-          hoverBorderWidth: 4,
-          hoverOffset: 8
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        cutout: '65%',
-        animation: { animateRotate: true, animateScale: false, duration: 750 },
-        plugins: {
-          legend: { 
-            position: 'bottom', 
-            labels: { 
-              color: themeInk(),
+      if (typeof $ === 'undefined' || typeof $.fn.daterangepicker === 'undefined') {
+        console.warn('jQuery o daterangepicker no están disponibles');
+        return;
+      }
+
+      if (!cachedIncidents || cachedIncidents.length === 0) {
+        console.warn('No hay incidentes cacheados');
+        return;
+      }
+
+      // Obtener valores de filtros - manejo seguro para Choices.js
+      let clienteValue = 'Todos';
+      let unidadValue = 'Todas';
+      let categoriaValue = 'Todos';
+      let riesgoValue = 'Todos';
+
+      try {
+        // Usar getValue(true) que devuelve el string del valor seleccionado
+        if (resumenChoices.cliente) {
+          const val = resumenChoices.cliente.getValue(true);
+          // Si getValue devuelve un array, tomar el primer elemento
+          if (Array.isArray(val) && val.length > 0) {
+            clienteValue = val[0];
+          } else if (typeof val === 'string' && val.length > 0) {
+            clienteValue = val;
+          }
+          console.log('Cliente obtenido:', clienteValue, '(raw:', val, ')');
+        }
+
+        if (resumenChoices.unidad) {
+          const val = resumenChoices.unidad.getValue(true);
+          if (Array.isArray(val) && val.length > 0) {
+            unidadValue = val[0];
+          } else if (typeof val === 'string' && val.length > 0) {
+            unidadValue = val;
+          }
+          console.log('Unidad obtenida:', unidadValue, '(raw:', val, ')');
+        }
+
+        if (resumenChoices.categoria) {
+          const val = resumenChoices.categoria.getValue(true);
+          if (Array.isArray(val) && val.length > 0) {
+            categoriaValue = val[0];
+          } else if (typeof val === 'string' && val.length > 0) {
+            categoriaValue = val;
+          }
+          console.log('Categoría obtenida:', categoriaValue, '(raw:', val, ')');
+        }
+
+        if (resumenChoices.riesgo) {
+          const val = resumenChoices.riesgo.getValue(true);
+          if (Array.isArray(val) && val.length > 0) {
+            riesgoValue = val[0];
+          } else if (typeof val === 'string' && val.length > 0) {
+            riesgoValue = val;
+          }
+          console.log('Riesgo obtenido:', riesgoValue, '(raw:', val, ')');
+        }
+      } catch (e) {
+        console.error('Error obteniendo valores de filtros:', e);
+      }
+
+      const filters = {
+        cliente: clienteValue,
+        unidad: unidadValue,
+        categoria: categoriaValue,
+        riesgo: riesgoValue,
+        fecha: $('#resumen-filtro-fecha').val().split(' - ')
+      };
+
+      // Debug: mostrar qué filtros se están usando
+      console.log('===== FILTROS APLICADOS =====');
+      console.log('Cliente:', filters.cliente);
+      console.log('Unidad:', filters.unidad);
+      console.log('Categoría:', filters.categoria);
+      console.log('Riesgo:', filters.riesgo);
+      console.log('Fecha:', filters.fecha);
+      console.log('Total incidentes cacheados:', cachedIncidents.length);
+
+      const startDate = moment(filters.fecha[0], 'DD/MM/YYYY').startOf('day');
+      const endDate = moment(filters.fecha[1], 'DD/MM/YYYY').endOf('day');
+
+      const filteredData = cachedIncidents.filter(d => {
+        const d_date = moment(d.timestamp);
+        const inDate = d_date.isBetween(startDate, endDate, undefined, '[]');
+        const inCli = filters.cliente === 'Todos' || (d.cliente === filters.cliente);
+        const inUni = filters.unidad === 'Todas' || (d.unidad === filters.unidad);
+        const inCat = filters.categoria === 'Todos' || bucketOf(d.tipoIncidente) === filters.categoria;
+        const inR = filters.riesgo === 'Todos' || d.Nivelderiesgo === filters.riesgo;
+
+        // Debug para el primer incidente
+        if (d_date.isSame(startDate, 'day') && inDate) {
+          console.log('Incidente sample:', {
+            cliente: d.cliente,
+            inCli,
+            unidad: d.unidad,
+            inUni,
+            tipoIncidente: d.tipoIncidente,
+            bucket: bucketOf(d.tipoIncidente),
+            inCat,
+            riesgo: d.Nivelderiesgo,
+            inR,
+            timestamp: d.timestamp
+          });
+        }
+
+        return inDate && inCli && inUni && inCat && inR;
+      });
+
+      console.log(`===== RESULTADOS =====`);
+      console.log(`Incidentes filtrados: ${filteredData.length} de ${cachedIncidents.length} totales`);
+      console.log('============================');
+
+      document.getElementById('resumen-total-incidentes').textContent = filteredData.length.toLocaleString('es-PE');
+
+      drawRiesgoChart(filteredData);
+      drawCategoriaChart(filteredData);
+      drawUnidadChart(filteredData);
+      drawFechaChart(filteredData, startDate, endDate);
+      drawMesChart(filteredData);
+      renderHeatmap(filteredData);
+      initializeResumenMap(filteredData);
+
+      applyKpiUnifiedHeights();
+    }
+
+    function drawChart(canvasId, config) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      if (resumenCharts[canvasId]) {
+        resumenCharts[canvasId].destroy();
+      }
+      resumenCharts[canvasId] = new Chart(canvas, config);
+    }
+
+    // Función global para resetear gráficos cuando no hay datos
+    function resetChart(canvasId, type = 'bar') {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return null;
+
+      if (resumenCharts[canvasId]) {
+        resumenCharts[canvasId].destroy();
+      }
+
+      resumenCharts[canvasId] = new Chart(canvas, {
+        type,
+        data: {
+          labels: [],
+          datasets: []
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: { enabled: false }
+          },
+          scales: {
+            x: { display: false },
+            y: { display: false }
+          }
+        }
+      });
+
+      return resumenCharts[canvasId];
+    }
+
+    // ===== FUNCIÓN EXTRA (RECOMENDADO): Limpiar todos los gráficos de KPI cuando se aplican filtros =====
+    function limpiarKPI() {
+      console.log('[KPI] Limpiando gráficos...');
+      // Destruir todos los gráficos activos
+      Object.keys(resumenCharts).forEach(key => {
+        if (resumenCharts[key]) {
+          resumenCharts[key].destroy();
+          resumenCharts[key] = null;
+        }
+      });
+      console.log('[KPI] Gráficos limpios');
+    }
+
+    // ======================= GRÁFICOS RESUMEN =======================
+    function drawRiesgoChart(data) {
+      const counts = data.reduce((acc, curr) => {
+        const riesgo = curr.Nivelderiesgo || 'No definido';
+        acc[riesgo] = (acc[riesgo] || 0) + 1;
+        return acc;
+      }, {});
+
+      // Mapear riesgos a colores específicos
+      const riesgoColors = {
+        'ALTO': '#ef4444',
+        'MEDIO': '#f59e0b',
+        'BAJO': '#10b981',
+        'No definido': '#9ca3af'
+      };
+
+      const labels = Object.keys(counts);
+      const values = Object.values(counts);
+      const total = values.reduce((a, b) => a + b, 0) || 1;
+      const colors = labels.map(l => riesgoColors[l] || '#8b5cf6');
+
+      drawChart('resumen-chart-riesgo', {
+        type: 'doughnut',
+        data: {
+          labels,
+          datasets: [{
+            data: values,
+            backgroundColor: colors,
+            borderColor: 'var(--bg)',
+            borderWidth: 2,
+            hoverBorderWidth: 4,
+            hoverOffset: 8
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '65%',
+          animation: { animateRotate: true, animateScale: false, duration: 750 },
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: {
+                color: themeInk(),
+                padding: 12,
+                font: { size: 13, weight: '500' },
+                usePointStyle: true,
+                pointStyle: 'circle'
+              }
+            },
+            tooltip: {
+              backgroundColor: 'rgba(0,0,0,0.8)',
               padding: 12,
-              font: { size: 13, weight: '500' },
-              usePointStyle: true,
-              pointStyle: 'circle'
-            } 
-          },
-          tooltip: {
-            backgroundColor: 'rgba(0,0,0,0.8)',
-            padding: 12,
-            titleFont: { size: 14, weight: 'bold' },
-            bodyFont: { size: 13 },
-            cornerRadius: 8,
-            displayColors: true,
-            callbacks: {
-              label: function (context) {
-                const v = context.raw || 0;
+              titleFont: { size: 14, weight: 'bold' },
+              bodyFont: { size: 13 },
+              cornerRadius: 8,
+              displayColors: true,
+              callbacks: {
+                label: function (context) {
+                  const v = context.raw || 0;
+                  const pct = pf(v, total);
+                  return `  ${nf.format(v)} incidentes (${pct}%)`;
+                }
+              }
+            },
+            datalabels: {
+              color: '#fff',
+              formatter: (v, ctx) => {
                 const pct = pf(v, total);
-                return `  ${nf.format(v)} incidentes (${pct}%)`;
-              }
+                return v > 0 ? `${pct}%` : '';
+              },
+              font: { weight: 'bold', size: 12 },
+              anchor: 'center',
+              align: 'center'
             }
-          },
-          datalabels: {
-            color: '#fff',
-            formatter: (v, ctx) => {
-              const pct = pf(v, total);
-              return v > 0 ? `${pct}%` : '';
-            },
-            font: { weight: 'bold', size: 12 },
-            anchor: 'center',
-            align: 'center'
           }
         }
-      }
-    });
-  }
-
-  function drawCategoriaChart(data) {
-    // Si no hay datos, mostrar gráfico vacío
-    if (!data || data.length === 0) {
-      console.warn('No hay datos para gráfico de categoría');
-      const canvas = document.getElementById('resumen-chart-categoria');
-      if (canvas && resumenCharts['resumen-chart-categoria']) {
-        resumenCharts['resumen-chart-categoria'].destroy();
-      }
-      return;
+      });
     }
 
-    // Agrupar por tipoIncidente exacto (no por categoría)
-    const tipoMap = data.reduce((acc, d) => {
-      const tipo = (d.tipoIncidente || 'Sin especificar').trim();
-      acc[tipo] = (acc[tipo] || 0) + 1;
-      return acc;
-    }, {});
-    
-    // Ordenar por cantidad descendente
-    const sorted = Object.entries(tipoMap).sort((a, b) => b[1] - a[1]);
-    const labels = sorted.map(x => x[0]);
-    const values = sorted.map(x => x[1]);
-    const total = values.reduce((a, b) => a + b, 0) || 1;
-
-    // Crear abreviaturas mejoradas para etiquetas largas
-    const createAbbreviation = (text) => {
-      // Mapa de abreviaturas específicas para categorías comunes
-      const abbrevMap = {
-        'CONDICION DE RIESGO': 'COND. RIESGO',
-        'CONDICIÓN DE RIESGO': 'COND. RIESGO',
-        'CODIGO DE SEGURIDAD Y EMERGENCIA': 'COD. SEGURIDAD',
-        'CÓDIGOS DE SEGURIDAD Y EMERGENCIA': 'COD. SEGURIDAD',
-        'ACTO DE SISTEMA MEDIO AMBIENTAL': 'ACTO AMBIENTAL',
-        'ACTOS DE SISTEMA MEDIOAMBIENTAL': 'ACTO AMBIENTAL',
-        'ACTO DE SEGURIDAD Y SALUD OCUPACIONAL': 'SALUD OCUPAC.',
-        'ACTOS DE SEGURIDAD Y SALUD OCUPACIONAL': 'SALUD OCUPAC.'
-      };
-      
-      // Si existe en el mapa, usar la abreviatura predefinida
-      if (abbrevMap[text]) return abbrevMap[text];
-      
-      // Si es corto, devolver tal cual
-      if (text.length <= 20) return text;
-      
-      // Para otros casos, tomar primeras palabras significativas
-      const words = text.split(' ').filter(w => w.length > 2);
-      if (words.length >= 3) {
-        return words.slice(0, 3).join(' ').substring(0, 20);
-      }
-      return text.substring(0, 18) + '...';
-    };
-
-    // Colores por categoría derivada
-    const getCategoryColor = (tipo) => {
-      const category = bucketOf(tipo);
-      const categoryColors = {
-        'RIESGO': { bg: 'rgba(239, 68, 68, 0.85)', border: 'rgba(220, 38, 38, 1)' },
-        'CODIGOS': { bg: 'rgba(99, 102, 241, 0.85)', border: 'rgba(79, 70, 229, 1)' },
-        'AMBIENTAL': { bg: 'rgba(34, 197, 94, 0.85)', border: 'rgba(22, 163, 74, 1)' },
-        'SSO': { bg: 'rgba(59, 130, 246, 0.85)', border: 'rgba(37, 99, 235, 1)' }
-      };
-      return categoryColors[category] || { bg: 'rgba(156, 163, 175, 0.85)', border: 'rgba(107, 114, 128, 1)' };
-    };
-
-    const bgColors = labels.map(l => getCategoryColor(l).bg);
-    const borderColors = labels.map(l => getCategoryColor(l).border);
-    const abbreviations = labels.map(l => createAbbreviation(l));
-
-    drawChart('resumen-chart-categoria', {
-      type: 'bar',
-      data: {
-        labels: abbreviations,
-        datasets: [{
-          label: 'Cantidad',
-          data: values,
-          backgroundColor: bgColors,
-          borderRadius: 6,
-          borderSkipped: false,
-          borderColor: borderColors,
-          borderWidth: 2,
-          hoverBackgroundColor: labels.map(l => getCategoryColor(l).border)
-        }]
-      },
-      options: {
-        indexAxis: 'x',
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: { duration: 500 },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: 'rgba(0,0,0,0.9)',
-            padding: 14,
-            cornerRadius: 8,
-            titleFont: { size: 13, weight: 'bold' },
-            bodyFont: { size: 12 },
-            callbacks: { 
-              title: (ctx) => labels[ctx[0]?.dataIndex || 0] || 'Categoría',
-              label: (c) => {
-                const pct = total > 0 ? pf(c.raw || 0, total) : '0.0';
-                return `Cantidad: ${nf.format(c.raw || 0)} (${pct}%)`;
-              }
-            }
-          },
-          datalabels: {
-            display: values.length < 50, // Desactivar si hay muchas barras
-            formatter: (v) => {
-              if (!v) return '';
-              const pct = total > 0 ? pf(v, total) : '0.0';
-              return `${nf.format(v)}\n${pct}%`;
-            },
-            anchor: 'end',
-            align: 'top',
-            offset: 8,
-            font: { weight: 'bold', size: 11 },
-            color: themeInk(),
-            lineHeight: 1.4
-          }
-        },
-        scales: {
-          y: { 
-            beginAtZero: true,
-            ticks: { 
-              color: themeInk(),
-              stepSize: Math.ceil(Math.max(...values, 1) / 5)
-            },
-            grid: { color: 'rgba(0,0,0,0.05)' }
-          },
-          x: { 
-            ticks: { 
-              color: themeInk(),
-              maxRotation: 45,
-              minRotation: 0,
-              autoSkip: false,
-              font: { size: 11, weight: '500' },
-              padding: 4
-            },
-            grid: { display: false }
-          }
-        },
-        onClick: (_evt, elements) => {
-          if (!elements?.length) return;
-          const idx = elements[0].index;
-          const tipoSeleccionado = labels[idx];
-          try { 
-            // Obtener la categoría derivada del tipo
-            const cat = bucketOf(tipoSeleccionado);
-            resumenChoices.categoria?.setChoiceByValue(cat); 
-          } catch { /* noop */ }
-          document.getElementById('resumen-btn-refresh')?.click();
+    function drawCategoriaChart(data) {
+      // Si no hay datos, mostrar gráfico vacío
+      if (!data || data.length === 0) {
+        console.warn('No hay datos para gráfico de categoría');
+        const canvas = document.getElementById('resumen-chart-categoria');
+        if (canvas && resumenCharts['resumen-chart-categoria']) {
+          resumenCharts['resumen-chart-categoria'].destroy();
         }
+        return;
       }
-    });
-  }
 
-  function drawUnidadChart(data) {
-    if (!data || data.length === 0) {
-      console.warn('No hay datos para gráfico de unidad');
-      resetChart('resumen-chart-unidad', 'bar');
-      return;
-    }
-
-    const counts = data.reduce((acc, curr) => {
-      const unidad = curr.unidad || 'No definido';
-      acc[unidad] = (acc[unidad] || 0) + 1;
-      return acc;
-    }, {});
-    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 15);
-    const labels = sorted.map(item => item[0]);
-    const values = sorted.map(item => item[1]);
-    const total = values.reduce((a, b) => a + b, 0) || 1;
-
-    // Generar gradient de colores
-    const colors = labels.map((_, i) => {
-      const hue = (i * 25) % 360;
-      return `hsla(${hue}, 70%, 60%, 0.9)`;
-    });
-
-    drawChart('resumen-chart-unidad', {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [{
-          label: 'Incidentes por Unidad',
-          data: values,
-          backgroundColor: colors,
-          borderRadius: 8,
-          borderSkipped: false,
-          borderColor: 'rgba(0,0,0,0.1)',
-          borderWidth: 1
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: { duration: 500 },
-        layout: {
-          padding: { top: 30, bottom: 10, left: 10, right: 10 }
-        },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: 'rgba(0,0,0,0.8)',
-            padding: 12,
-            cornerRadius: 8,
-            titleFont: { size: 13, weight: 'bold' },
-            bodyFont: { size: 12 },
-            callbacks: { 
-              label: (c) => {
-                const pct = total > 0 ? pf(c.raw || 0, total) : '0.0';
-                return `${c.dataset.label}: ${nf.format(c.raw || 0)} (${pct}%)`;
-              }
-            }
-          },
-          datalabels: {
-            display: values.length < 20, // Solo mostrar si hay pocas barras
-            formatter: (v) => v > 0 ? nf.format(v) : '',
-            anchor: 'end',
-            align: 'top',
-            offset: 1,
-            font: { weight: 'bold', size: 11 },
-            color: themeInk()
-          }
-        },
-        scales: {
-          x: { 
-            ticks: { color: themeInk(), autoSkip: true, font: { size: 10 }, maxRotation: 45, minRotation: 0 },
-            grid: { display: false }
-          },
-          y: { 
-            beginAtZero: true,
-            ticks: { color: themeInk() },
-            grid: { color: 'rgba(0,0,0,0.05)' }
-          }
-        },
-        onClick: (_evt, elements) => {
-          if (!elements?.length) return;
-          const chosen = labels[elements[0].index];
-          try { resumenChoices.unidad?.setChoiceByValue(chosen); } catch { /* noop */ }
-          document.getElementById('resumen-btn-refresh')?.click();
-        }
-      }
-    });
-  }
-
-  function drawFechaChart(data, start, end) {
-    if (!data || data.length === 0) {
-      console.warn('No hay datos para gráfico de fecha');
-      resetChart('resumen-chart-fecha', 'line');
-      return;
-    }
-
-    const diffDays = end.diff(start, 'days');
-    let labels, counts;
-
-    if (diffDays < 60) {
-      labels = Array.from({ length: diffDays + 1 }, (_, i) => start.clone().add(i, 'days').format('DD/MM'));
-      counts = data.reduce((acc, curr) => {
-        const key = moment(curr.timestamp).format('DD/MM');
-        acc[key] = (acc[key] || 0) + 1;
+      // Agrupar por tipoIncidente exacto (no por categoría)
+      const tipoMap = data.reduce((acc, d) => {
+        const tipo = (d.tipoIncidente || 'Sin especificar').trim();
+        acc[tipo] = (acc[tipo] || 0) + 1;
         return acc;
       }, {});
-    } else {
-      labels = moment.monthsShort();
-      counts = data.reduce((acc, curr) => {
-        const key = moment(curr.timestamp).format('MMM');
-        acc[key] = (acc[key] || 0) + 1;
+
+      // Ordenar por cantidad descendente
+      const sorted = Object.entries(tipoMap).sort((a, b) => b[1] - a[1]);
+      const labels = sorted.map(x => x[0]);
+      const values = sorted.map(x => x[1]);
+      const total = values.reduce((a, b) => a + b, 0) || 1;
+
+      // Crear abreviaturas mejoradas para etiquetas largas
+      const createAbbreviation = (text) => {
+        // Mapa de abreviaturas específicas para categorías comunes
+        const abbrevMap = {
+          'CONDICION DE RIESGO': 'COND. RIESGO',
+          'CONDICIÓN DE RIESGO': 'COND. RIESGO',
+          'CODIGO DE SEGURIDAD Y EMERGENCIA': 'COD. SEGURIDAD',
+          'CÓDIGOS DE SEGURIDAD Y EMERGENCIA': 'COD. SEGURIDAD',
+          'ACTO DE SISTEMA MEDIO AMBIENTAL': 'ACTO AMBIENTAL',
+          'ACTOS DE SISTEMA MEDIOAMBIENTAL': 'ACTO AMBIENTAL',
+          'ACTO DE SEGURIDAD Y SALUD OCUPACIONAL': 'SALUD OCUPAC.',
+          'ACTOS DE SEGURIDAD Y SALUD OCUPACIONAL': 'SALUD OCUPAC.'
+        };
+
+        // Si existe en el mapa, usar la abreviatura predefinida
+        if (abbrevMap[text]) return abbrevMap[text];
+
+        // Si es corto, devolver tal cual
+        if (text.length <= 20) return text;
+
+        // Para otros casos, tomar primeras palabras significativas
+        const words = text.split(' ').filter(w => w.length > 2);
+        if (words.length >= 3) {
+          return words.slice(0, 3).join(' ').substring(0, 20);
+        }
+        return text.substring(0, 18) + '...';
+      };
+
+      // Colores por categoría derivada
+      const getCategoryColor = (tipo) => {
+        const category = bucketOf(tipo);
+        const categoryColors = {
+          'RIESGO': { bg: 'rgba(239, 68, 68, 0.85)', border: 'rgba(220, 38, 38, 1)' },
+          'CODIGOS': { bg: 'rgba(99, 102, 241, 0.85)', border: 'rgba(79, 70, 229, 1)' },
+          'AMBIENTAL': { bg: 'rgba(34, 197, 94, 0.85)', border: 'rgba(22, 163, 74, 1)' },
+          'SSO': { bg: 'rgba(59, 130, 246, 0.85)', border: 'rgba(37, 99, 235, 1)' }
+        };
+        return categoryColors[category] || { bg: 'rgba(156, 163, 175, 0.85)', border: 'rgba(107, 114, 128, 1)' };
+      };
+
+      const bgColors = labels.map(l => getCategoryColor(l).bg);
+      const borderColors = labels.map(l => getCategoryColor(l).border);
+      const abbreviations = labels.map(l => createAbbreviation(l));
+
+      drawChart('resumen-chart-categoria', {
+        type: 'bar',
+        data: {
+          labels: abbreviations,
+          datasets: [{
+            label: 'Cantidad',
+            data: values,
+            backgroundColor: bgColors,
+            borderRadius: 6,
+            borderSkipped: false,
+            borderColor: borderColors,
+            borderWidth: 2,
+            hoverBackgroundColor: labels.map(l => getCategoryColor(l).border)
+          }]
+        },
+        options: {
+          indexAxis: 'x',
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 500 },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0,0,0,0.9)',
+              padding: 14,
+              cornerRadius: 8,
+              titleFont: { size: 13, weight: 'bold' },
+              bodyFont: { size: 12 },
+              callbacks: {
+                title: (ctx) => labels[ctx[0]?.dataIndex || 0] || 'Categoría',
+                label: (c) => {
+                  const pct = total > 0 ? pf(c.raw || 0, total) : '0.0';
+                  return `Cantidad: ${nf.format(c.raw || 0)} (${pct}%)`;
+                }
+              }
+            },
+            datalabels: {
+              display: values.length < 50, // Desactivar si hay muchas barras
+              formatter: (v) => {
+                if (!v) return '';
+                const pct = total > 0 ? pf(v, total) : '0.0';
+                return `${nf.format(v)}\n${pct}%`;
+              },
+              anchor: 'end',
+              align: 'top',
+              offset: 8,
+              font: { weight: 'bold', size: 11 },
+              color: themeInk(),
+              lineHeight: 1.4
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                color: themeInk(),
+                stepSize: Math.ceil(Math.max(...values, 1) / 5)
+              },
+              grid: { color: 'rgba(0,0,0,0.05)' }
+            },
+            x: {
+              ticks: {
+                color: themeInk(),
+                maxRotation: 45,
+                minRotation: 0,
+                autoSkip: false,
+                font: { size: 11, weight: '500' },
+                padding: 4
+              },
+              grid: { display: false }
+            }
+          },
+          onClick: (_evt, elements) => {
+            if (!elements?.length) return;
+            const idx = elements[0].index;
+            const tipoSeleccionado = labels[idx];
+            try {
+              // Obtener la categoría derivada del tipo
+              const cat = bucketOf(tipoSeleccionado);
+              resumenChoices.categoria?.setChoiceByValue(cat);
+            } catch { /* noop */ }
+            document.getElementById('resumen-btn-refresh')?.click();
+          }
+        }
+      });
+    }
+
+    function drawUnidadChart(data) {
+      if (!data || data.length === 0) {
+        console.warn('No hay datos para gráfico de unidad');
+        resetChart('resumen-chart-unidad', 'bar');
+        return;
+      }
+
+      const counts = data.reduce((acc, curr) => {
+        const unidad = curr.unidad || 'No definido';
+        acc[unidad] = (acc[unidad] || 0) + 1;
         return acc;
       }, {});
-    }
+      const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 15);
+      const labels = sorted.map(item => item[0]);
+      const values = sorted.map(item => item[1]);
+      const total = values.reduce((a, b) => a + b, 0) || 1;
 
-    const values = labels.map(l => counts[l] || 0);
-    const maxValue = Math.max(...values, 1);
+      // Generar gradient de colores
+      const colors = labels.map((_, i) => {
+        const hue = (i * 25) % 360;
+        return `hsla(${hue}, 70%, 60%, 0.9)`;
+      });
 
-    drawChart('resumen-chart-fecha', {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [{
-          label: 'Incidentes por Fecha',
-          data: values,
-          borderColor: '#a78bfa',
-          backgroundColor: 'rgba(167, 139, 250, 0.15)',
-          tension: 0.4,
-          fill: true,
-          pointRadius: 4,
-          pointHoverRadius: 7,
-          pointBackgroundColor: '#a78bfa',
-          pointBorderColor: '#fff',
-          pointBorderWidth: 2,
-          borderWidth: 2.5,
-          segment: {
-            borderDash: (ctx) => ctx.p0DataIndex % 7 === 0 ? [] : undefined
-          }
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: { duration: 500 },
-        interaction: { mode: 'nearest', axis: 'x', intersect: false },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: 'rgba(0,0,0,0.8)',
-            padding: 12,
-            cornerRadius: 8,
-            titleFont: { size: 13, weight: 'bold' },
-            bodyFont: { size: 12 },
-            callbacks: { 
-              label: (c) => `${c.dataset.label}: ${nf.format(c.raw || 0)} incidentes`
-            }
-          },
-          datalabels: { display: false }
+      drawChart('resumen-chart-unidad', {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Incidentes por Unidad',
+            data: values,
+            backgroundColor: colors,
+            borderRadius: 8,
+            borderSkipped: false,
+            borderColor: 'rgba(0,0,0,0.1)',
+            borderWidth: 1
+          }]
         },
-        scales: { 
-          y: { 
-            ticks: { color: themeInk() },
-            grid: { color: 'rgba(0,0,0,0.05)' },
-            beginAtZero: true,
-            max: Math.ceil(maxValue * 1.1)
-          }, 
-          x: { 
-            ticks: { color: themeInk() },
-            grid: { color: 'rgba(0,0,0,0.05)' }
-          } 
-        }
-      }
-    });
-  }
-
-  function drawMesChart(data) {
-    if (!data || data.length === 0) {
-      console.warn('No hay datos para gráfico de mes');
-      resetChart('resumen-chart-mes', 'bar');
-      return;
-    }
-
-    const monthsData = [
-      { short: 'ene', long: 'Enero', num: 0 },
-      { short: 'feb', long: 'Febrero', num: 1 },
-      { short: 'mar', long: 'Marzo', num: 2 },
-      { short: 'abr', long: 'Abril', num: 3 },
-      { short: 'may', long: 'Mayo', num: 4 },
-      { short: 'jun', long: 'Junio', num: 5 },
-      { short: 'jul', long: 'Julio', num: 6 },
-      { short: 'ago', long: 'Agosto', num: 7 },
-      { short: 'sep', long: 'Septiembre', num: 8 },
-      { short: 'oct', long: 'Octubre', num: 9 },
-      { short: 'nov', long: 'Noviembre', num: 10 },
-      { short: 'dic', long: 'Diciembre', num: 11 }
-    ];
-
-    const counts = {};
-    monthsData.forEach(m => { counts[m.short] = 0; });
-
-    data.forEach(curr => {
-      const monthNum = moment(curr.timestamp).month();
-      const monthShort = monthsData[monthNum].short;
-      counts[monthShort] = (counts[monthShort] || 0) + 1;
-    });
-
-    const labels = monthsData.map(m => m.long);
-    const values = monthsData.map(m => counts[m.short] || 0);
-    const total = values.reduce((a, b) => a + b, 0) || 1;
-    const maxValue = Math.max(...values, 1);
-
-    // Generar gradient de colores
-    const colors = values.map((v) => {
-      const intensity = v / maxValue;
-      return `rgba(59, 130, 246, ${0.5 + intensity * 0.5})`;
-    });
-
-    drawChart('resumen-chart-mes', {
-      type: 'bar',
-      data: {
-        labels,
-        datasets: [{
-          label: 'Incidentes por Mes',
-          data: values,
-          backgroundColor: colors,
-          borderRadius: 8,
-          borderSkipped: false,
-          hoverBackgroundColor: 'rgba(59, 130, 246, 1)',
-          borderColor: 'rgba(59, 130, 246, 0.3)',
-          borderWidth: 1
-        }]
-      },
-      options: {
-        indexAxis: 'x',
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: { duration: 500 },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            backgroundColor: 'rgba(0,0,0,0.8)',
-            padding: 12,
-            cornerRadius: 8,
-            titleFont: { size: 13, weight: 'bold' },
-            bodyFont: { size: 12 },
-            callbacks: { 
-              label: (c) => {
-                const pct = total > 0 ? pf(c.raw || 0, total) : '0.0';
-                return `${c.dataset.label}: ${nf.format(c.raw || 0)} (${pct}%)`;
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 500 },
+          layout: {
+            padding: { top: 30, bottom: 10, left: 10, right: 10 }
+          },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0,0,0,0.8)',
+              padding: 12,
+              cornerRadius: 8,
+              titleFont: { size: 13, weight: 'bold' },
+              bodyFont: { size: 12 },
+              callbacks: {
+                label: (c) => {
+                  const pct = total > 0 ? pf(c.raw || 0, total) : '0.0';
+                  return `${c.dataset.label}: ${nf.format(c.raw || 0)} (${pct}%)`;
+                }
               }
+            },
+            datalabels: {
+              display: values.length < 20, // Solo mostrar si hay pocas barras
+              formatter: (v) => v > 0 ? nf.format(v) : '',
+              anchor: 'end',
+              align: 'top',
+              offset: 1,
+              font: { weight: 'bold', size: 11 },
+              color: themeInk()
             }
           },
-          datalabels: {
-            display: true,
-            formatter: (v) => v > 0 ? nf.format(v) : '',
-            anchor: 'end',
-            align: 'top',
-            offset: 6,
-            font: { weight: 'bold', size: 12 },
-            color: themeInk()
+          scales: {
+            x: {
+              ticks: { color: themeInk(), autoSkip: true, font: { size: 10 }, maxRotation: 45, minRotation: 0 },
+              grid: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              ticks: { color: themeInk() },
+              grid: { color: 'rgba(0,0,0,0.05)' }
+            }
+          },
+          onClick: (_evt, elements) => {
+            if (!elements?.length) return;
+            const chosen = labels[elements[0].index];
+            try { resumenChoices.unidad?.setChoiceByValue(chosen); } catch { /* noop */ }
+            document.getElementById('resumen-btn-refresh')?.click();
           }
-        },
-        scales: { 
-          y: { 
-            ticks: { color: themeInk() },
-            grid: { color: 'rgba(0,0,0,0.05)' },
-            beginAtZero: true,
-            max: Math.ceil(maxValue * 1.15)
-          }, 
-          x: { 
-            ticks: { color: themeInk(), maxRotation: 45, minRotation: 45 },
-            grid: { display: false }
-          } 
         }
-      }
-    });
-  }
-
-  function renderHeatmap(data) {
-    const heatmap = Array(24).fill(0).map(() => Array(7).fill(0));
-    data.forEach(d => {
-      const ts = moment(d.timestamp);
-      const hour = ts.hour();
-      const day = ts.day(); // 0=Domingo, 6=Sábado
-      heatmap[hour][day]++;
-    });
-
-    const table = document.getElementById('resumen-tabla-heatmap');
-    if (!table) return;
-    const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-    let html = `<thead><tr><th>Hora</th>${days.map(d => `<th>${d}</th>`).join('')}<th>Total</th></tr></thead><tbody>`;
-    const colTotals = Array(7).fill(0);
-    let maxCell = 0;
-
-    // Mostrar cada hora de 00:00 a 23:59
-    for (let h = 0; h < 24; h++) {
-      const hourLabel = `${String(h).padStart(2, '0')}:00-${String(h).padStart(2, '0')}:59`;
-      let rowTotal = 0;
-      let rowHtml = `<tr><td>${hourLabel}</td>`;
-      for (let d = 0; d < 7; d++) {
-        const val = heatmap[h][d];
-        rowHtml += `<td data-v="${val}">${val}</td>`;
-        colTotals[d] += val;
-        rowTotal += val;
-        maxCell = Math.max(maxCell, val);
-      }
-      rowHtml += `<td><b>${rowTotal}</b></td></tr>`;
-      html += rowHtml;
+      });
     }
-    const grandTotal = colTotals.reduce((a, b) => a + b, 0);
-    html += `</tbody><tfoot><tr><th>Total</th>${colTotals.map(t => `<th><b>${t}</b></th>`).join('')}<th><b>${grandTotal}</b></th></tr></tfoot>`;
-    table.innerHTML = html;
 
-    const cells = table.querySelectorAll('tbody td[data-v]');
-    cells.forEach(td => {
-      const v = +td.dataset.v || 0;
-      const k = maxCell ? v / maxCell : 0;
-      // Gradiente: azul (bajo) -> cian -> amarillo -> naranja -> rojo (alto)
-      let bg, textColor;
-      if (k === 0) {
-        bg = '#f0f9ff';
-        textColor = '#64748b';
-      } else if (k < 0.25) {
-        bg = `rgba(14, 165, 233, ${0.3 + 0.3 * k})`;
-        textColor = '#0c4a6e';
-      } else if (k < 0.5) {
-        bg = `rgba(6, 182, 212, ${0.4 + 0.3 * (k - 0.25) * 2})`;
-        textColor = '#0d7377';
-      } else if (k < 0.75) {
-        bg = `rgba(34, 197, 94, ${0.4 + 0.3 * (k - 0.5) * 2})`;
-        textColor = '#15803d';
-      } else if (k < 0.9) {
-        bg = `rgba(234, 179, 8, ${0.5 + 0.3 * (k - 0.75) / 0.15})`;
-        textColor = '#78350f';
+    function drawFechaChart(data, start, end) {
+      if (!data || data.length === 0) {
+        console.warn('No hay datos para gráfico de fecha');
+        resetChart('resumen-chart-fecha', 'line');
+        return;
+      }
+
+      const diffDays = end.diff(start, 'days');
+      let labels, counts;
+
+      if (diffDays < 60) {
+        labels = Array.from({ length: diffDays + 1 }, (_, i) => start.clone().add(i, 'days').format('DD/MM'));
+        counts = data.reduce((acc, curr) => {
+          const key = moment(curr.timestamp).format('DD/MM');
+          acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        }, {});
       } else {
-        bg = `rgba(239, 68, 68, ${0.6 + 0.4 * (k - 0.9) / 0.1})`;
-        textColor = 'white';
+        labels = moment.monthsShort();
+        counts = data.reduce((acc, curr) => {
+          const key = moment(curr.timestamp).format('MMM');
+          acc[key] = (acc[key] || 0) + 1;
+          return acc;
+        }, {});
       }
-      td.style.background = bg;
-      td.style.color = textColor;
-      td.style.textAlign = 'center';
-      td.style.fontWeight = k > 0.6 ? '700' : k > 0.3 ? '600' : '500';
-      td.style.padding = '0.35rem 0.25rem';
-      td.style.fontSize = '0.7rem';
-    });
 
-    // Scroll a la parte superior para ver desde las 00:00
-    // Usar requestAnimationFrame para asegurar que el DOM esté completamente listo
-    requestAnimationFrame(() => {
-      const tableWrap = table.closest('.table-wrap');
-      if (tableWrap) {
-        tableWrap.scrollTop = 0;
-        tableWrap.scrollLeft = 0;
-        // Forzar scroll nuevamente después de un pequeño delay
-        setTimeout(() => {
+      const values = labels.map(l => counts[l] || 0);
+      const maxValue = Math.max(...values, 1);
+
+      drawChart('resumen-chart-fecha', {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Incidentes por Fecha',
+            data: values,
+            borderColor: '#a78bfa',
+            backgroundColor: 'rgba(167, 139, 250, 0.15)',
+            tension: 0.4,
+            fill: true,
+            pointRadius: 4,
+            pointHoverRadius: 7,
+            pointBackgroundColor: '#a78bfa',
+            pointBorderColor: '#fff',
+            pointBorderWidth: 2,
+            borderWidth: 2.5,
+            segment: {
+              borderDash: (ctx) => ctx.p0DataIndex % 7 === 0 ? [] : undefined
+            }
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 500 },
+          interaction: { mode: 'nearest', axis: 'x', intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0,0,0,0.8)',
+              padding: 12,
+              cornerRadius: 8,
+              titleFont: { size: 13, weight: 'bold' },
+              bodyFont: { size: 12 },
+              callbacks: {
+                label: (c) => `${c.dataset.label}: ${nf.format(c.raw || 0)} incidentes`
+              }
+            },
+            datalabels: { display: false }
+          },
+          scales: {
+            y: {
+              ticks: { color: themeInk() },
+              grid: { color: 'rgba(0,0,0,0.05)' },
+              beginAtZero: true,
+              max: Math.ceil(maxValue * 1.1)
+            },
+            x: {
+              ticks: { color: themeInk() },
+              grid: { color: 'rgba(0,0,0,0.05)' }
+            }
+          }
+        }
+      });
+    }
+
+    function drawMesChart(data) {
+      if (!data || data.length === 0) {
+        console.warn('No hay datos para gráfico de mes');
+        resetChart('resumen-chart-mes', 'bar');
+        return;
+      }
+
+      const monthsData = [
+        { short: 'ene', long: 'Enero', num: 0 },
+        { short: 'feb', long: 'Febrero', num: 1 },
+        { short: 'mar', long: 'Marzo', num: 2 },
+        { short: 'abr', long: 'Abril', num: 3 },
+        { short: 'may', long: 'Mayo', num: 4 },
+        { short: 'jun', long: 'Junio', num: 5 },
+        { short: 'jul', long: 'Julio', num: 6 },
+        { short: 'ago', long: 'Agosto', num: 7 },
+        { short: 'sep', long: 'Septiembre', num: 8 },
+        { short: 'oct', long: 'Octubre', num: 9 },
+        { short: 'nov', long: 'Noviembre', num: 10 },
+        { short: 'dic', long: 'Diciembre', num: 11 }
+      ];
+
+      const counts = {};
+      monthsData.forEach(m => { counts[m.short] = 0; });
+
+      data.forEach(curr => {
+        const monthNum = moment(curr.timestamp).month();
+        const monthShort = monthsData[monthNum].short;
+        counts[monthShort] = (counts[monthShort] || 0) + 1;
+      });
+
+      const labels = monthsData.map(m => m.long);
+      const values = monthsData.map(m => counts[m.short] || 0);
+      const total = values.reduce((a, b) => a + b, 0) || 1;
+      const maxValue = Math.max(...values, 1);
+
+      // Generar gradient de colores
+      const colors = values.map((v) => {
+        const intensity = v / maxValue;
+        return `rgba(59, 130, 246, ${0.5 + intensity * 0.5})`;
+      });
+
+      drawChart('resumen-chart-mes', {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Incidentes por Mes',
+            data: values,
+            backgroundColor: colors,
+            borderRadius: 8,
+            borderSkipped: false,
+            hoverBackgroundColor: 'rgba(59, 130, 246, 1)',
+            borderColor: 'rgba(59, 130, 246, 0.3)',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          indexAxis: 'x',
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: { duration: 500 },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'rgba(0,0,0,0.8)',
+              padding: 12,
+              cornerRadius: 8,
+              titleFont: { size: 13, weight: 'bold' },
+              bodyFont: { size: 12 },
+              callbacks: {
+                label: (c) => {
+                  const pct = total > 0 ? pf(c.raw || 0, total) : '0.0';
+                  return `${c.dataset.label}: ${nf.format(c.raw || 0)} (${pct}%)`;
+                }
+              }
+            },
+            datalabels: {
+              display: true,
+              formatter: (v) => v > 0 ? nf.format(v) : '',
+              anchor: 'end',
+              align: 'top',
+              offset: 6,
+              font: { weight: 'bold', size: 12 },
+              color: themeInk()
+            }
+          },
+          scales: {
+            y: {
+              ticks: { color: themeInk() },
+              grid: { color: 'rgba(0,0,0,0.05)' },
+              beginAtZero: true,
+              max: Math.ceil(maxValue * 1.15)
+            },
+            x: {
+              ticks: { color: themeInk(), maxRotation: 45, minRotation: 45 },
+              grid: { display: false }
+            }
+          }
+        }
+      });
+    }
+
+    function renderHeatmap(data) {
+      const heatmap = Array(24).fill(0).map(() => Array(7).fill(0));
+      data.forEach(d => {
+        const ts = moment(d.timestamp);
+        const hour = ts.hour();
+        const day = ts.day(); // 0=Domingo, 6=Sábado
+        heatmap[hour][day]++;
+      });
+
+      const table = document.getElementById('resumen-tabla-heatmap');
+      if (!table) return;
+      const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+      let html = `<thead><tr><th>Hora</th>${days.map(d => `<th>${d}</th>`).join('')}<th>Total</th></tr></thead><tbody>`;
+      const colTotals = Array(7).fill(0);
+      let maxCell = 0;
+
+      // Mostrar cada hora de 00:00 a 23:59
+      for (let h = 0; h < 24; h++) {
+        const hourLabel = `${String(h).padStart(2, '0')}:00-${String(h).padStart(2, '0')}:59`;
+        let rowTotal = 0;
+        let rowHtml = `<tr><td>${hourLabel}</td>`;
+        for (let d = 0; d < 7; d++) {
+          const val = heatmap[h][d];
+          rowHtml += `<td data-v="${val}">${val}</td>`;
+          colTotals[d] += val;
+          rowTotal += val;
+          maxCell = Math.max(maxCell, val);
+        }
+        rowHtml += `<td><b>${rowTotal}</b></td></tr>`;
+        html += rowHtml;
+      }
+      const grandTotal = colTotals.reduce((a, b) => a + b, 0);
+      html += `</tbody><tfoot><tr><th>Total</th>${colTotals.map(t => `<th><b>${t}</b></th>`).join('')}<th><b>${grandTotal}</b></th></tr></tfoot>`;
+      table.innerHTML = html;
+
+      const cells = table.querySelectorAll('tbody td[data-v]');
+      cells.forEach(td => {
+        const v = +td.dataset.v || 0;
+        const k = maxCell ? v / maxCell : 0;
+        // Gradiente: azul (bajo) -> cian -> amarillo -> naranja -> rojo (alto)
+        let bg, textColor;
+        if (k === 0) {
+          bg = '#f0f9ff';
+          textColor = '#64748b';
+        } else if (k < 0.25) {
+          bg = `rgba(14, 165, 233, ${0.3 + 0.3 * k})`;
+          textColor = '#0c4a6e';
+        } else if (k < 0.5) {
+          bg = `rgba(6, 182, 212, ${0.4 + 0.3 * (k - 0.25) * 2})`;
+          textColor = '#0d7377';
+        } else if (k < 0.75) {
+          bg = `rgba(34, 197, 94, ${0.4 + 0.3 * (k - 0.5) * 2})`;
+          textColor = '#15803d';
+        } else if (k < 0.9) {
+          bg = `rgba(234, 179, 8, ${0.5 + 0.3 * (k - 0.75) / 0.15})`;
+          textColor = '#78350f';
+        } else {
+          bg = `rgba(239, 68, 68, ${0.6 + 0.4 * (k - 0.9) / 0.1})`;
+          textColor = 'white';
+        }
+        td.style.background = bg;
+        td.style.color = textColor;
+        td.style.textAlign = 'center';
+        td.style.fontWeight = k > 0.6 ? '700' : k > 0.3 ? '600' : '500';
+        td.style.padding = '0.35rem 0.25rem';
+        td.style.fontSize = '0.7rem';
+      });
+
+      // Scroll a la parte superior para ver desde las 00:00
+      // Usar requestAnimationFrame para asegurar que el DOM esté completamente listo
+      requestAnimationFrame(() => {
+        const tableWrap = table.closest('.table-wrap');
+        if (tableWrap) {
           tableWrap.scrollTop = 0;
           tableWrap.scrollLeft = 0;
-        }, 50);
-        
-        // Asegurar que el wrapper ocupe todo el espacio disponible
-        tableWrap.style.height = '100%';
-        tableWrap.style.minHeight = '100%';
-        tableWrap.style.overflow = 'auto';
-      }
-    });
-  }
+          // Forzar scroll nuevamente después de un pequeño delay
+          setTimeout(() => {
+            tableWrap.scrollTop = 0;
+            tableWrap.scrollLeft = 0;
+          }, 50);
 
-  // Variable global para el mapa de Leaflet
-  let resumenMap = null;
-  let resumenMapMarkers = null;
-
-  function initializeResumenMap(data) {
-    const mapElement = document.getElementById('resumen-map');
-    if (!mapElement || typeof L === 'undefined') return;
-
-    // Destruir mapa anterior si existe
-    if (resumenMap) {
-      resumenMap.remove();
-      resumenMap = null;
+          // Asegurar que el wrapper ocupe todo el espacio disponible
+          tableWrap.style.height = '100%';
+          tableWrap.style.minHeight = '100%';
+          tableWrap.style.overflow = 'auto';
+        }
+      });
     }
 
-    // Crear nuevo mapa centrado en Perú (Lima por defecto)
-    resumenMap = L.map('resumen-map', {
-      center: [-12.0464, -77.0428],
-      zoom: 5,
-      zoomControl: true,
-      attributionControl: false
-    });
+    // Variable global para el mapa de Leaflet
+    let resumenMap = null;
+    let resumenMapMarkers = null;
 
-    // Agregar capa de OpenStreetMap
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18,
-      attribution: '© OpenStreetMap'
-    }).addTo(resumenMap);
+    function initializeResumenMap(data) {
+      const mapElement = document.getElementById('resumen-map');
+      if (!mapElement || typeof L === 'undefined') return;
 
-    // Agrupar incidentes por ubicación (usando unidad como agrupación)
-    const locationCounts = {};
-    data.forEach(d => {
-      const location = d.unidad || 'Sin ubicación';
-      if (!locationCounts[location]) {
-        locationCounts[location] = { count: 0, lat: -12.0464 + Math.random() * 10, lng: -77.0428 + Math.random() * 10 };
+      // Destruir mapa anterior si existe
+      if (resumenMap) {
+        resumenMap.remove();
+        resumenMap = null;
       }
-      locationCounts[location].count++;
-    });
 
-    // Crear markers
-    Object.entries(locationCounts).forEach(([location, data]) => {
-      const intensity = Math.min(data.count / 10, 1);
-      const markerColor = intensity > 0.7 ? '#ef4444' : intensity > 0.4 ? '#f59e0b' : '#10b981';
-      
-      const markerIcon = L.divIcon({
-        html: `<div style="
+      // Crear nuevo mapa centrado en Perú (Lima por defecto)
+      resumenMap = L.map('resumen-map', {
+        center: [-12.0464, -77.0428],
+        zoom: 5,
+        zoomControl: true,
+        attributionControl: false
+      });
+
+      // Agregar capa de OpenStreetMap
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 18,
+        attribution: '© OpenStreetMap'
+      }).addTo(resumenMap);
+
+      // Agrupar incidentes por ubicación (usando unidad como agrupación)
+      const locationCounts = {};
+      data.forEach(d => {
+        const location = d.unidad || 'Sin ubicación';
+        if (!locationCounts[location]) {
+          locationCounts[location] = { count: 0, lat: -12.0464 + Math.random() * 10, lng: -77.0428 + Math.random() * 10 };
+        }
+        locationCounts[location].count++;
+      });
+
+      // Crear markers
+      Object.entries(locationCounts).forEach(([location, data]) => {
+        const intensity = Math.min(data.count / 10, 1);
+        const markerColor = intensity > 0.7 ? '#ef4444' : intensity > 0.4 ? '#f59e0b' : '#10b981';
+
+        const markerIcon = L.divIcon({
+          html: `<div style="
           width: 36px; height: 36px; border-radius: 50%;
           background: ${markerColor}; border: 3px solid white;
           display: flex; align-items: center; justify-content: center;
@@ -2046,306 +2048,361 @@ document.addEventListener('DOMContentLoaded', () => {
           box-shadow: 0 2px 8px rgba(0,0,0,0.3);
           cursor: pointer;
         ">${data.count}</div>`,
-        iconSize: [36, 36],
-        className: 'custom-marker'
-      });
+          iconSize: [36, 36],
+          className: 'custom-marker'
+        });
 
-      const marker = L.marker([data.lat, data.lng], { icon: markerIcon })
-        .bindPopup(`
+        const marker = L.marker([data.lat, data.lng], { icon: markerIcon })
+          .bindPopup(`
           <strong>${location}</strong><br>
           Incidentes: <strong>${data.count}</strong><br>
           <small>Click para filtrar</small>
         `)
-        .on('click', () => {
-          try {
-            resumenChoices.sedes?.setChoiceByValue(location);
-            document.getElementById('resumen-btn-refresh')?.click();
-          } catch(e) { /* noop */ }
-        })
-        .addTo(resumenMap);
-    });
-
-    // Ajustar vista al mapa
-    if (Object.keys(locationCounts).length > 0) {
-      setTimeout(() => {
-        try { resumenMap.invalidateSize(); } catch(e) { /* noop */ }
-      }, 100);
-    }
-  }
-  // ============= FUNCIÓN PARA CARGAR UNIDADES POR CLIENTE (KPI DETALLE DE INCIDENTES) =============
-  async function loadDetalleUnidadesByCliente(cliente) {
-    if (!detalleChoices.unidad) return;
-    
-    console.log(`[DETALLE] Cargando unidades para cliente: ${cliente}`);
-
-    // OBTENER UNIDADES DIRECTAMENTE DE CLIENTE_UNIDAD (no de incidentes)
-    const unidades = await getUnidadesFromClienteUnidad(cliente);
-    console.log(`[DETALLE] Unidades encontradas para ${cliente}:`, unidades);
-
-    const unidadSelect = document.getElementById('detalle-filtro-unidad');
-    if (!unidadSelect) return;
-
-    // Destruir la instancia anterior de Choices
-    if (detalleChoices.unidad) {
-      detalleChoices.unidad.destroy();
-    }
-
-    if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
-      // Usuario CLIENTE con UNIDAD específica - bloquear
-      const unidadNombre = accessControl.unidadAsignada;
-      
-      unidadSelect.innerHTML = `<option value="${unidadNombre}" selected>${unidadNombre}</option>`;
-      
-      const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
-      detalleChoices.unidad = new Choices('#detalle-filtro-unidad', cfg);
-      
-      unidadSelect.disabled = true;
-      unidadSelect.style.opacity = '0.6';
-      unidadSelect.title = `Acceso restringido a: ${unidadNombre}`;
-    } else {
-      // Usuario ADMIN/SUPERVISOR o CLIENTE sin unidad específica - mostrar todas las disponibles
-      unidadSelect.innerHTML = '<option value="Todas" selected>Todas</option>' +
-        unidades.map(u => `<option value="${u}">${u}</option>`).join('');
-      
-      const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
-      detalleChoices.unidad = new Choices('#detalle-filtro-unidad', cfg);
-    }
-  }
-
-  async function initDetalleIncidentesDashboard() {
-    const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', shouldSort: false };
-    detalleChoices.cliente = new Choices('#detalle-filtro-cliente', cfg);
-    detalleChoices.unidad = new Choices('#detalle-filtro-unidad', cfg);
-    detalleChoices.year = new Choices('#detalle-filtro-year', cfg);
-
-    const currentYear = new Date().getFullYear();
-    const years = Array.from({ length: 6 }, (_, i) => ({ value: currentYear - i, label: String(currentYear - i) }));
-    detalleChoices.year.setChoices(years, 'value', 'label', true);
-
-    // Usar la función genérica para cargar Cliente/Unidad desde CLIENTE_UNIDAD
-    await loadClienteUnidadFiltersGenerico('detalle-filtro-cliente', 'detalle-filtro-unidad', true, detalleChoices);
-
-    // Agregar listener de cliente para recargar unidades
-    const clienteSelect = document.getElementById('detalle-filtro-cliente');
-    if (clienteSelect) {
-      clienteSelect.addEventListener('change', async () => {
-        const cliente = detalleChoices.cliente.getValue(true);
-        const clienteValue = Array.isArray(cliente) ? cliente[0] : cliente;
-        
-        if (clienteValue && clienteValue !== 'Todos') {
-          await loadDetalleUnidadesByCliente(clienteValue);
-        }
-        
-        queryAndRenderDetalle();
+          .on('click', () => {
+            try {
+              resumenChoices.sedes?.setChoiceByValue(location);
+              document.getElementById('resumen-btn-refresh')?.click();
+            } catch (e) { /* noop */ }
+          })
+          .addTo(resumenMap);
       });
-    }
 
-    // Configurar date pickers
-    const hoy = new Date();
-    const hace30Dias = new Date(hoy.getTime() - 30 * 24 * 60 * 60 * 1000);
-    document.getElementById('detalle-filtro-fecha-inicio').value = hace30Dias.toISOString().split('T')[0];
-    document.getElementById('detalle-filtro-fecha-fin').value = hoy.toISOString().split('T')[0];
-
-    document.getElementById('detalle-btn-refresh')?.addEventListener('click', queryAndRenderDetalle);
-    document.getElementById('detalle-btn-export')?.addEventListener('click', exportDetalleCSV);
-
-    // Cargar unidades iniciales
-    const clienteActual = accessControl && accessControl.userType === 'CLIENTE' 
-      ? accessControl.clienteAsignado 
-      : 'Todos';
-    
-    console.log('[DETALLE] Cargando unidades iniciales para:', clienteActual);
-    await loadDetalleUnidadesByCliente(clienteActual);
-
-    queryAndRenderDetalle();
-    detalleInitialized = true;
-  }
-
-  async function queryAndRenderDetalle() {
-    UI.showOverlay('Generando detalles…', 'Consultando incidencias');
-    try {
-      const cliente = detalleChoices.cliente.getValue(true) || 'Todos';
-      const unit = detalleChoices.unidad.getValue(true) || 'Todas';
-      const year = detalleChoices.year.getValue(true) || new Date().getFullYear();
-      
-      // Obtener fechas de los inputs
-      const fechaInicio = document.getElementById('detalle-filtro-fecha-inicio').value;
-      const fechaFin = document.getElementById('detalle-filtro-fecha-fin').value;
-      
-      const startDate = fechaInicio ? new Date(fechaInicio + 'T00:00:00') : new Date(year, 0, 1);
-      const endDate = fechaFin ? new Date(fechaFin + 'T23:59:59') : new Date(parseInt(year) + 1, 0, 1);
-
-      let query = getQueryWithClienteFilter(COLLECTIONS.INCIDENTS)
-        .where('timestamp', '>=', startDate)
-        .where('timestamp', '<', endDate);
-
-      if (cliente !== 'Todos') {
-        query = query.where('cliente', '==', cliente);
+      // Ajustar vista al mapa
+      if (Object.keys(locationCounts).length > 0) {
+        setTimeout(() => {
+          try { resumenMap.invalidateSize(); } catch (e) { /* noop */ }
+        }, 100);
       }
-      if (unit !== 'Todas') {
-        query = query.where('unidad', '==', unit);
+    }
+    // ============= FUNCIÓN PARA CARGAR UNIDADES POR CLIENTE (KPI DETALLE DE INCIDENTES) =============
+    async function loadDetalleUnidadesByCliente(cliente) {
+      if (!detalleChoices.unidad) return;
+
+      console.log(`[DETALLE] Cargando unidades para cliente: ${cliente}`);
+
+      // OBTENER UNIDADES DIRECTAMENTE DE CLIENTE_UNIDAD (no de incidentes)
+      const unidades = await getUnidadesFromClienteUnidad(cliente);
+      console.log(`[DETALLE] Unidades encontradas para ${cliente}:`, unidades);
+
+      const unidadSelect = document.getElementById('detalle-filtro-unidad');
+      if (!unidadSelect) return;
+
+      // Destruir la instancia anterior de Choices
+      if (detalleChoices.unidad) {
+        detalleChoices.unidad.destroy();
       }
 
-      const snapshot = await query.get();
+      if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
+        // Usuario CLIENTE con UNIDAD específica - bloquear
+        const unidadNombre = accessControl.unidadAsignada;
 
-      // Recolectar todos los tipoIncidente únicos
-      const tiposMap = {};
-      const tiposOrder = [];
-      
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        const tipo = (data.tipoIncidente || 'Sin especificar').trim();
-        if (!tiposMap[tipo]) {
-          tiposMap[tipo] = 0;
-          tiposOrder.push(tipo);
-        }
-        tiposMap[tipo]++;
-      });
+        unidadSelect.innerHTML = `<option value="${unidadNombre}" selected>${unidadNombre}</option>`;
 
-      // Regenerar tablas dinámicamente para cada tipo
-      const tables = {};
-      tiposOrder.forEach(tipo => {
-        tables[tipo] = new Map();
-      });
+        const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
+        detalleChoices.unidad = new Choices('#detalle-filtro-unidad', cfg);
 
-      // Poblar datos mensuales por tipo
-      const monthly = {};
-      tiposOrder.forEach(tipo => {
-        monthly[tipo] = Array(12).fill(0);
-      });
+        unidadSelect.disabled = true;
+        unidadSelect.style.opacity = '0.6';
+        unidadSelect.title = `Acceso restringido a: ${unidadNombre}`;
+      } else {
+        // Usuario ADMIN/SUPERVISOR o CLIENTE sin unidad específica - mostrar todas las disponibles
+        unidadSelect.innerHTML = '<option value="Todas" selected>Todas</option>' +
+          unidades.map(u => `<option value="${u}">${u}</option>`).join('');
 
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        const ts = data.timestamp?.toDate ? data.timestamp.toDate() : new Date();
-        const m = ts.getMonth();
-        const tipo = (data.tipoIncidente || 'Sin especificar').trim();
+        const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
+        detalleChoices.unidad = new Choices('#detalle-filtro-unidad', cfg);
+      }
+    }
 
-        if (monthly[tipo]) {
-          monthly[tipo][m]++;
-          const detalle = data.detalleIncidente || 'Sin Detalle';
-          if (!tables[tipo].has(detalle)) tables[tipo].set(detalle, Array(12).fill(0));
-          tables[tipo].get(detalle)[m]++;
-        }
-      });
+    async function initDetalleIncidentesDashboard() {
+      const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', shouldSort: false };
+      detalleChoices.cliente = new Choices('#detalle-filtro-cliente', cfg);
+      detalleChoices.unidad = new Choices('#detalle-filtro-unidad', cfg);
+      detalleChoices.year = new Choices('#detalle-filtro-year', cfg);
 
-      // Generar tarjetas dinámicamente
-      const sum = arr => arr.reduce((a, b) => a + b, 0);
-      const sidebar = document.getElementById('detalle-sidebar-stats');
-      sidebar.innerHTML = '';
+      const currentYear = new Date().getFullYear();
+      const years = Array.from({ length: 6 }, (_, i) => ({ value: currentYear - i, label: String(currentYear - i) }));
+      detalleChoices.year.setChoices(years, 'value', 'label', true);
 
-      // GUARDAR datos para exportación (incluyendo documentos completos con fechas)
-      const detailedRecords = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        const ts = data.timestamp?.toDate ? data.timestamp.toDate() : new Date();
-        detailedRecords.push({
-          fecha: ts.toLocaleDateString('es-PE'),
-          hora: ts.toLocaleTimeString('es-PE'),
-          cliente: data.cliente || 'N/A',
-          unidad: data.unidad || 'N/A',
-          tipoIncidente: data.tipoIncidente || 'Sin especificar',
-          detalleIncidente: data.detalleIncidente || 'Sin Detalle',
-          subCategoria: data.subCategoria || 'N/A',
-          nivelRiesgo: data.Nivelderiesgo || 'N/A',
-          estado: data.estado || 'Pendiente',
-          comentario: data.comentario || 'Sin comentarios'
+      // Usar la función genérica para cargar Cliente/Unidad desde CLIENTE_UNIDAD
+      await loadClienteUnidadFiltersGenerico('detalle-filtro-cliente', 'detalle-filtro-unidad', true, detalleChoices);
+
+      // Agregar listener de cliente para recargar unidades
+      const clienteSelect = document.getElementById('detalle-filtro-cliente');
+      if (clienteSelect) {
+        clienteSelect.addEventListener('change', async () => {
+          const cliente = detalleChoices.cliente.getValue(true);
+          const clienteValue = Array.isArray(cliente) ? cliente[0] : cliente;
+
+          if (clienteValue && clienteValue !== 'Todos') {
+            await loadDetalleUnidadesByCliente(clienteValue);
+          }
+
+          queryAndRenderDetalle();
         });
-      });
-
-      lastDetalleData = {
-        monthly,
-        tables,
-        tiposOrder,
-        detailedRecords,
-        filters: {
-          cliente: detalleChoices.cliente.getValue(true),
-          unidad: detalleChoices.unidad.getValue(true),
-          year: detalleChoices.year.getValue(true),
-          fechaInicio: document.getElementById('detalle-filtro-fecha-inicio').value,
-          fechaFin: document.getElementById('detalle-filtro-fecha-fin').value
-        }
-      };
-
-      // DEBUG: Verificar datos capturados
-      const colors = ['#7c3aed', '#2563eb', '#06b6d4', '#0ea5e9', '#f59e0b', '#ef4444', '#10b981', '#8b5cf6', '#6366f1', '#ec4899'];
-      tiposOrder.forEach((tipo, idx) => {
-        const total = sum(monthly[tipo]);
-        if (total > 0) { // Solo mostrar tarjetas con datos
-          const color = colors[idx % colors.length];
-          const card = document.createElement('div');
-          card.className = 'stat';
-          card.style.setProperty('--card-color', color);
-          card.innerHTML = `<div class="stat-value">${total}</div><div class="stat-label">${tipo}</div>`;
-          sidebar.appendChild(card);
-        }
-      });
-
-      const toMatrix = map => [...map.entries()]
-        .map(([label, arr]) => ({ label, monthly: arr, total: sum(arr) }))
-        .sort((a, b) => b.total - a.total);
-
-      // Limpiar las tablas anteriores y crear nuevas para cada tipo
-      const mainContent = document.querySelector('.kpi-tables-wrapper');
-      if (mainContent) {
-        mainContent.innerHTML = '';
-        
-        // Filtrar tipos que tengan datos
-        const tiposConDatos = tiposOrder.filter(tipo => sum(monthly[tipo]) > 0);
-        
-        if (tiposConDatos.length === 0) {
-          mainContent.innerHTML = '<div style="padding:20px; text-align:center; color:#999;"><p>No hay datos para los filtros seleccionados</p></div>';
-        } else {
-          tiposConDatos.forEach(tipo => {
-            const tableItem = document.createElement('div');
-            tableItem.className = 'kpi-table-item';
-            tableItem.innerHTML = `<h3>${tipo}</h3><div class="table-wrap"><table data-tipo="${tipo}"></table></div>`;
-            mainContent.appendChild(tableItem);
-            const tableEl = tableItem.querySelector('table');
-            renderDetalleTable(tableEl, toMatrix(tables[tipo]));
-          });
-        }
       }
 
-      drawDetalleAreaChart(monthly);
+      // Configurar date pickers
+      const hoy = new Date();
+      const hace30Dias = new Date(hoy.getTime() - 30 * 24 * 60 * 60 * 1000);
+      document.getElementById('detalle-filtro-fecha-inicio').value = hace30Dias.toISOString().split('T')[0];
+      document.getElementById('detalle-filtro-fecha-fin').value = hoy.toISOString().split('T')[0];
 
-      applyKpiUnifiedHeights();
+      document.getElementById('detalle-btn-refresh')?.addEventListener('click', queryAndRenderDetalle);
+      document.getElementById('detalle-btn-export')?.addEventListener('click', exportDetalleCSV);
 
-    } catch (e) {
-      UI.toast('Error al cargar los detalles.');
-    } finally {
-      UI.hideOverlay();
+      // Cargar unidades iniciales
+      const clienteActual = accessControl && accessControl.userType === 'CLIENTE'
+        ? accessControl.clienteAsignado
+        : 'Todos';
+
+      console.log('[DETALLE] Cargando unidades iniciales para:', clienteActual);
+      await loadDetalleUnidadesByCliente(clienteActual);
+
+      queryAndRenderDetalle();
+      detalleInitialized = true;
     }
-  }
 
-  function renderDetalleTable(tableEl, matrix) {
-    if (!tableEl) return;
-    const headTitle = tableEl.dataset.head || 'Concepto';
-    const head = `<thead><tr><th>${headTitle}</th>${months.map(m => `<th>${m}</th>`).join('')}<th>Total</th></tr></thead>`;
-    let body = matrix.map(r => `<tr><td>${r.label}</td>${r.monthly.map(v => `<td>${v || 0}</td>`).join('')}<td><b>${r.total || 0}</b></td></tr>`).join('');
-    const monthlyTotals = months.map((_, i) => `<td><b>${matrix.reduce((a, c) => a + (c.monthly[i] || 0), 0)}</b></td>`).join('');
-    body += `<tr style="background:rgba(255,255,255,0.05)"><td><b>Total</b></td>${monthlyTotals}<td><b>${matrix.reduce((a, c) => a + (c.total || 0), 0)}</b></td></tr>`;
-    tableEl.innerHTML = head + `<tbody>${body}</tbody>`;
-  }
+    async function queryAndRenderDetalle() {
+      UI.showOverlay('Generando detalles…', 'Consultando incidencias');
+      try {
+        const cliente = detalleChoices.cliente.getValue(true) || 'Todos';
+        const unit = detalleChoices.unidad.getValue(true) || 'Todas';
+        const year = detalleChoices.year.getValue(true) || new Date().getFullYear();
 
-  function drawDetalleAreaChart(series) {
-    const canvas = document.getElementById('detalle-chart-area');
-    if (!canvas) return;
+        // Obtener fechas de los inputs
+        const fechaInicio = document.getElementById('detalle-filtro-fecha-inicio').value;
+        const fechaFin = document.getElementById('detalle-filtro-fecha-fin').value;
 
-    // Verificar si hay datos válidos
-    const hasData = Object.values(series).some(data => {
-      if (Array.isArray(data)) {
-        return data.some(v => v > 0);
+        const startDate = fechaInicio ? new Date(fechaInicio + 'T00:00:00') : new Date(year, 0, 1);
+        const endDate = fechaFin ? new Date(fechaFin + 'T23:59:59') : new Date(parseInt(year) + 1, 0, 1);
+
+        let query = getQueryWithClienteFilter(COLLECTIONS.INCIDENTS)
+          .where('timestamp', '>=', startDate)
+          .where('timestamp', '<', endDate);
+
+        if (cliente !== 'Todos') {
+          query = query.where('cliente', '==', cliente);
+        }
+        if (unit !== 'Todas') {
+          query = query.where('unidad', '==', unit);
+        }
+
+        // Agregar ordenamiento y límite para mejor rendimiento
+        query = query.orderBy('timestamp', 'desc').limit(1000);
+
+        const snapshot = await query.get();
+
+        // Validación defensiva del snapshot
+        if (!snapshot || !snapshot.docs) {
+          console.error('[DETALLE] snapshot o snapshot.docs es undefined');
+          UI.toast('No se pudo cargar los detalles. Intenta de nuevo.');
+          UI.hideOverlay();
+          return;
+        }
+
+        console.log(`[DETALLE] Registros descargados: ${snapshot.docs.length}`);
+
+        // Recolectar todos los tipoIncidente únicos
+        const tiposMap = {};
+        const tiposOrder = [];
+
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          const tipo = (data.tipoIncidente || 'Sin especificar').trim();
+          if (!tiposMap[tipo]) {
+            tiposMap[tipo] = 0;
+            tiposOrder.push(tipo);
+          }
+          tiposMap[tipo]++;
+        });
+
+        // Regenerar tablas dinámicamente para cada tipo
+        const tables = {};
+        tiposOrder.forEach(tipo => {
+          tables[tipo] = new Map();
+        });
+
+        // Poblar datos mensuales por tipo
+        const monthly = {};
+        tiposOrder.forEach(tipo => {
+          monthly[tipo] = Array(12).fill(0);
+        });
+
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          const ts = data.timestamp?.toDate ? data.timestamp.toDate() : new Date();
+          const m = ts.getMonth();
+          const tipo = (data.tipoIncidente || 'Sin especificar').trim();
+
+          if (monthly[tipo]) {
+            monthly[tipo][m]++;
+            const detalle = data.detalleIncidente || 'Sin Detalle';
+            if (!tables[tipo].has(detalle)) tables[tipo].set(detalle, Array(12).fill(0));
+            tables[tipo].get(detalle)[m]++;
+          }
+        });
+
+        // Generar tarjetas dinámicamente
+        const sum = arr => arr.reduce((a, b) => a + b, 0);
+        const sidebar = document.getElementById('detalle-sidebar-stats');
+        sidebar.innerHTML = '';
+
+        // GUARDAR datos para exportación (incluyendo documentos completos con fechas)
+        const detailedRecords = [];
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          const ts = data.timestamp?.toDate ? data.timestamp.toDate() : new Date();
+          detailedRecords.push({
+            fecha: ts.toLocaleDateString('es-PE'),
+            hora: ts.toLocaleTimeString('es-PE'),
+            cliente: data.cliente || 'N/A',
+            unidad: data.unidad || 'N/A',
+            tipoIncidente: data.tipoIncidente || 'Sin especificar',
+            detalleIncidente: data.detalleIncidente || 'Sin Detalle',
+            subCategoria: data.subCategoria || 'N/A',
+            nivelRiesgo: data.Nivelderiesgo || 'N/A',
+            estado: data.estado || 'Pendiente',
+            comentario: data.comentario || 'Sin comentarios'
+          });
+        });
+
+        lastDetalleData = {
+          monthly,
+          tables,
+          tiposOrder,
+          detailedRecords,
+          filters: {
+            cliente: detalleChoices.cliente.getValue(true),
+            unidad: detalleChoices.unidad.getValue(true),
+            year: detalleChoices.year.getValue(true),
+            fechaInicio: document.getElementById('detalle-filtro-fecha-inicio').value,
+            fechaFin: document.getElementById('detalle-filtro-fecha-fin').value
+          }
+        };
+
+        // DEBUG: Verificar datos capturados
+        const colors = ['#7c3aed', '#2563eb', '#06b6d4', '#0ea5e9', '#f59e0b', '#ef4444', '#10b981', '#8b5cf6', '#6366f1', '#ec4899'];
+        tiposOrder.forEach((tipo, idx) => {
+          const total = sum(monthly[tipo]);
+          if (total > 0) { // Solo mostrar tarjetas con datos
+            const color = colors[idx % colors.length];
+            const card = document.createElement('div');
+            card.className = 'stat';
+            card.style.setProperty('--card-color', color);
+            card.innerHTML = `<div class="stat-value">${total}</div><div class="stat-label">${tipo}</div>`;
+            sidebar.appendChild(card);
+          }
+        });
+
+        const toMatrix = map => [...map.entries()]
+          .map(([label, arr]) => ({ label, monthly: arr, total: sum(arr) }))
+          .sort((a, b) => b.total - a.total);
+
+        // Limpiar las tablas anteriores y crear nuevas para cada tipo
+        const mainContent = document.querySelector('.kpi-tables-wrapper');
+        if (mainContent) {
+          mainContent.innerHTML = '';
+
+          // Filtrar tipos que tengan datos
+          const tiposConDatos = tiposOrder.filter(tipo => sum(monthly[tipo]) > 0);
+
+          if (tiposConDatos.length === 0) {
+            mainContent.innerHTML = '<div style="padding:20px; text-align:center; color:#999;"><p>No hay datos para los filtros seleccionados</p></div>';
+          } else {
+            tiposConDatos.forEach(tipo => {
+              const tableItem = document.createElement('div');
+              tableItem.className = 'kpi-table-item';
+              tableItem.innerHTML = `<h3>${tipo}</h3><div class="table-wrap"><table data-tipo="${tipo}"></table></div>`;
+              mainContent.appendChild(tableItem);
+              const tableEl = tableItem.querySelector('table');
+              renderDetalleTable(tableEl, toMatrix(tables[tipo]));
+            });
+          }
+        }
+
+        drawDetalleAreaChart(monthly);
+
+        applyKpiUnifiedHeights();
+
+      } catch (e) {
+        console.error('[queryAndRenderDetalle] Error completo:', e);
+        console.error('Error message:', e.message);
+        console.error('Error stack:', e.stack);
+        UI.toast('Error al cargar los detalles: ' + e.message);
+      } finally {
+        UI.hideOverlay();
       }
-      return false;
-    });
+    }
 
-    if (detalleChart) detalleChart.destroy();
+    function renderDetalleTable(tableEl, matrix) {
+      if (!tableEl) return;
+      const headTitle = tableEl.dataset.head || 'Concepto';
+      const head = `<thead><tr><th>${headTitle}</th>${months.map(m => `<th>${m}</th>`).join('')}<th>Total</th></tr></thead>`;
+      let body = matrix.map(r => `<tr><td>${r.label}</td>${r.monthly.map(v => `<td>${v || 0}</td>`).join('')}<td><b>${r.total || 0}</b></td></tr>`).join('');
+      const monthlyTotals = months.map((_, i) => `<td><b>${matrix.reduce((a, c) => a + (c.monthly[i] || 0), 0)}</b></td>`).join('');
+      body += `<tr style="background:rgba(255,255,255,0.05)"><td><b>Total</b></td>${monthlyTotals}<td><b>${matrix.reduce((a, c) => a + (c.total || 0), 0)}</b></td></tr>`;
+      tableEl.innerHTML = head + `<tbody>${body}</tbody>`;
+    }
 
-    // Si no hay datos, mostrar gráfico vacío
-    if (!hasData) {
+    function drawDetalleAreaChart(series) {
+      const canvas = document.getElementById('detalle-chart-area');
+      if (!canvas) return;
+
+      // Verificar si hay datos válidos
+      const hasData = Object.values(series).some(data => {
+        if (Array.isArray(data)) {
+          return data.some(v => v > 0);
+        }
+        return false;
+      });
+
+      if (detalleChart) detalleChart.destroy();
+
+      // Si no hay datos, mostrar gráfico vacío
+      if (!hasData) {
+        detalleChart = new Chart(canvas, {
+          type: 'line',
+          data: { labels: months, datasets: [] },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: { color: themeInk() }
+              },
+              tooltip: { enabled: false }
+            },
+            scales: {
+              y: { ticks: { color: themeInk() } },
+              x: { ticks: { color: themeInk() } }
+            }
+          }
+        });
+        return;
+      }
+
+      // Construir dinámicamente los datasets según los tipos disponibles
+      const colors = ['#7c3aed', '#2563eb', '#06b6d4', '#0ea5e9', '#f59e0b', '#ef4444', '#10b981', '#8b5cf6', '#6366f1', '#ec4899'];
+      const datasets = Object.entries(series).map(([label, data], idx) => {
+        const color = colors[idx % colors.length];
+        const rgbaColor = color.replace('#', '').match(/.{2}/g).map(x => parseInt(x, 16)).join(',');
+        return {
+          label,
+          data,
+          fill: true,
+          tension: 0.35,
+          pointRadius: 1,
+          borderWidth: 2,
+          borderColor: color,
+          backgroundColor: `rgba(${rgbaColor}, 0.2)`
+        };
+      });
+
       detalleChart = new Chart(canvas, {
         type: 'line',
-        data: { labels: months, datasets: [] },
+        data: { labels: months, datasets },
         options: {
           responsive: true,
           maintainAspectRatio: false,
@@ -2353,8 +2410,7 @@ document.addEventListener('DOMContentLoaded', () => {
             legend: {
               position: 'bottom',
               labels: { color: themeInk() }
-            },
-            tooltip: { enabled: false }
+            }
           },
           scales: {
             y: { ticks: { color: themeInk() } },
@@ -2362,1429 +2418,1391 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
       });
-      return;
     }
 
-    // Construir dinámicamente los datasets según los tipos disponibles
-    const colors = ['#7c3aed', '#2563eb', '#06b6d4', '#0ea5e9', '#f59e0b', '#ef4444', '#10b981', '#8b5cf6', '#6366f1', '#ec4899'];
-    const datasets = Object.entries(series).map(([label, data], idx) => {
-      const color = colors[idx % colors.length];
-      const rgbaColor = color.replace('#', '').match(/.{2}/g).map(x => parseInt(x, 16)).join(',');
-      return {
-        label,
-        data,
-        fill: true,
-        tension: 0.35,
-        pointRadius: 1,
-        borderWidth: 2,
-        borderColor: color,
-        backgroundColor: `rgba(${rgbaColor}, 0.2)`
-      };
-    });
+    function exportDetalleCSV() {
+      // Redirigir a la función de Excel
+      exportDetalleExcel();
+    }
 
-    detalleChart = new Chart(canvas, {
-      type: 'line',
-      data: { labels: months, datasets },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: {
-            position: 'bottom',
-            labels: { color: themeInk() }
-          }
-        },
-        scales: {
-          y: { ticks: { color: themeInk() } },
-          x: { ticks: { color: themeInk() } }
+    function exportDetalleExcel() {
+      try {
+        if (!window.XLSX) {
+          UI.toast('Librería XLSX no disponible');
+          return;
         }
-      }
-    });
-  }
 
-  function exportDetalleCSV() {
-    // Redirigir a la función de Excel
-    exportDetalleExcel();
-  }
+        if (!lastDetalleData || !lastDetalleData.detailedRecords || lastDetalleData.detailedRecords.length === 0) {
+          UI.toast('Primero genera un reporte con filtros y datos disponibles');
+          return;
+        }
 
-  function exportDetalleExcel() {
-    try {
-      if (!window.XLSX) {
-        UI.toast('Librería XLSX no disponible');
-        return;
-      }
+        const wb = XLSX.utils.book_new();
+        const timestamp = new Date().toLocaleString('es-PE');
+        const { detailedRecords, monthly, tiposOrder } = lastDetalleData;
+        const sum = arr => arr.reduce((a, b) => a + b, 0);
 
-      if (!lastDetalleData || !lastDetalleData.detailedRecords || lastDetalleData.detailedRecords.length === 0) {
-        UI.toast('Primero genera un reporte con filtros y datos disponibles');
-        return;
-      }
+        // ===== HOJA 1: DETALLE COMPLETO CON FECHA Y HORA =====
+        const detailData = [];
 
-      const wb = XLSX.utils.book_new();
-      const timestamp = new Date().toLocaleString('es-PE');
-      const { detailedRecords, monthly, tiposOrder } = lastDetalleData;
-      const sum = arr => arr.reduce((a, b) => a + b, 0);
+        // Título y fecha de exportación
+        detailData.push(['REGISTRO DETALLADO DE INCIDENCIAS']);
+        detailData.push(['Fecha de Exportación:', timestamp]);
+        detailData.push(['Total de Registros:', detailedRecords.length]);
+        detailData.push([]); // Fila vacía
 
-      // ===== HOJA 1: DETALLE COMPLETO CON FECHA Y HORA =====
-      const detailData = [];
-      
-      // Título y fecha de exportación
-      detailData.push(['REGISTRO DETALLADO DE INCIDENCIAS']);
-      detailData.push(['Fecha de Exportación:', timestamp]);
-      detailData.push(['Total de Registros:', detailedRecords.length]);
-      detailData.push([]); // Fila vacía
-      
-      // Encabezados
-      detailData.push([
-        'FECHA',
-        'HORA',
-        'CLIENTE',
-        'UNIDAD',
-        'TIPO DE INCIDENTE',
-        'DETALLE',
-        'SUB CATEGORÍA',
-        'NIVEL RIESGO',
-        'ESTADO',
-        'COMENTARIO'
-      ]);
-
-      // Agregar todos los registros
-      detailedRecords.forEach(record => {
+        // Encabezados
         detailData.push([
-          record.fecha || 'N/A',
-          record.hora || 'N/A',
-          record.cliente || 'N/A',
-          record.unidad || 'N/A',
-          record.tipoIncidente || 'N/A',
-          record.detalleIncidente || 'N/A',
-          record.subCategoria || 'N/A',
-          record.nivelRiesgo || 'N/A',
-          record.estado || 'N/A',
-          record.comentario || 'N/A'
+          'FECHA',
+          'HORA',
+          'CLIENTE',
+          'UNIDAD',
+          'TIPO DE INCIDENTE',
+          'DETALLE',
+          'SUB CATEGORÍA',
+          'NIVEL RIESGO',
+          'ESTADO',
+          'COMENTARIO'
         ]);
-      });
 
-      const detailWs = XLSX.utils.aoa_to_sheet(detailData);
-      
-      // Configurar ancho de columnas
-      detailWs['!cols'] = [
-        { wch: 13 },  // Fecha
-        { wch: 13 },  // Hora
-        { wch: 16 },  // Cliente
-        { wch: 16 },  // Unidad
-        { wch: 28 },  // Tipo
-        { wch: 40 },  // Detalle
-        { wch: 28 },  // Sub Categoría
-        { wch: 15 },  // Nivel
-        { wch: 13 },  // Estado
-        { wch: 35 }   // Comentario
-      ];
+        // Agregar todos los registros
+        detailedRecords.forEach(record => {
+          detailData.push([
+            record.fecha || 'N/A',
+            record.hora || 'N/A',
+            record.cliente || 'N/A',
+            record.unidad || 'N/A',
+            record.tipoIncidente || 'N/A',
+            record.detalleIncidente || 'N/A',
+            record.subCategoria || 'N/A',
+            record.nivelRiesgo || 'N/A',
+            record.estado || 'N/A',
+            record.comentario || 'N/A'
+          ]);
+        });
 
-      // Estilos para encabezado de tabla
-      const headerStyle = {
-        font: { bold: true, color: { rgb: 'FFFFFF' }, size: 11 },
-        fill: { fgColor: { rgb: 'FF2F5496' } },
-        alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-        border: { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } }
-      };
+        const detailWs = XLSX.utils.aoa_to_sheet(detailData);
 
-      // Aplicar estilos al encabezado de tabla (fila 1)
-      for (let i = 0; i < 10; i++) {
-        const cell = XLSX.utils.encode_cell({ r: 0, c: i });
-        if (detailWs[cell]) detailWs[cell].s = headerStyle;
-      }
+        // Configurar ancho de columnas
+        detailWs['!cols'] = [
+          { wch: 13 },  // Fecha
+          { wch: 13 },  // Hora
+          { wch: 16 },  // Cliente
+          { wch: 16 },  // Unidad
+          { wch: 28 },  // Tipo
+          { wch: 40 },  // Detalle
+          { wch: 28 },  // Sub Categoría
+          { wch: 15 },  // Nivel
+          { wch: 13 },  // Estado
+          { wch: 35 }   // Comentario
+        ];
 
-      // Aplicar bordes y alineación a datos
-      for (let r = 1; r < detailData.length; r++) {
-        for (let c = 0; c < 10; c++) {
-          const cell = XLSX.utils.encode_cell({ r, c });
-          if (detailWs[cell]) {
-            const borderColor = (r % 2 === 0) ? 'FFE7E6E6' : 'FFFFFFFF';
-            detailWs[cell].s = {
-              border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } },
-              fill: { fgColor: { rgb: borderColor } },
-              alignment: { vertical: 'top', wrapText: true, horizontal: 'left' }
-            };
-          }
-        }
-      }
-
-      // Congelar filas de encabezado
-      detailWs['!freeze'] = { xSplit: 0, ySplit: 1 };
-
-      XLSX.utils.book_append_sheet(wb, detailWs, 'Detalle Completo');
-
-      // ===== HOJA 2: RESUMEN POR TIPO DE INCIDENTE =====
-      const summaryData = [];
-      
-      // Encabezados
-      const summaryHeader = ['Mes', ...tiposOrder, 'TOTAL MENSUAL'];
-      summaryData.push(summaryHeader);
-
-      const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-      let totalGranGeneral = 0;
-      for (let i = 0; i < 12; i++) {
-        const monthData = tiposOrder.map(tipo => monthly[tipo][i] || 0);
-        const monthTotal = sum(monthData);
-        totalGranGeneral += monthTotal;
-        summaryData.push([months[i], ...monthData, monthTotal]);
-      }
-
-      // Fila de totales anuales
-      const totalesAnuales = tiposOrder.map(tipo => sum(monthly[tipo]));
-      summaryData.push(['TOTAL ANUAL', ...totalesAnuales, totalGranGeneral]);
-
-      const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
-      summaryWs['!cols'] = new Array(tiposOrder.length + 2).fill(0).map(() => ({ wch: 18 }));
-
-      // Estilo para encabezado de tabla
-      const summaryHeaderStyle = {
-        font: { bold: true, color: { rgb: 'FFFFFF' }, size: 11 },
-        fill: { fgColor: { rgb: 'FF548235' } },
-        alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-        border: { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } }
-      };
-
-      for (let i = 0; i <= tiposOrder.length; i++) {
-        const cell = XLSX.utils.encode_cell({ r: 0, c: i });
-        if (summaryWs[cell]) summaryWs[cell].s = summaryHeaderStyle;
-      }
-
-      const totalRowStyle = {
-        font: { bold: true, size: 11 },
-        fill: { fgColor: { rgb: 'FFFFC7CE' } },
-        alignment: { horizontal: 'center', vertical: 'center' },
-        border: { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } },
-        numFmt: '0'
-      };
-
-      // Estilo a fila de totales
-      for (let i = 0; i <= tiposOrder.length; i++) {
-        const cell = XLSX.utils.encode_cell({ r: summaryData.length - 1, c: i });
-        if (summaryWs[cell]) summaryWs[cell].s = totalRowStyle;
-      }
-
-      // Bordes a datos intermedios
-      for (let r = 1; r < summaryData.length - 1; r++) {
-        for (let c = 0; c <= tiposOrder.length; c++) {
-          const cell = XLSX.utils.encode_cell({ r, c });
-          if (summaryWs[cell]) {
-            const borderColor = (r % 2 === 0) ? 'FFE7E6E6' : 'FFFFFFFF';
-            summaryWs[cell].s = {
-              border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } },
-              alignment: { horizontal: 'center' },
-              fill: { fgColor: { rgb: borderColor } },
-              numFmt: '0'
-            };
-          }
-        }
-      }
-
-      summaryWs['!freeze'] = { xSplit: 1, ySplit: 1 };
-      XLSX.utils.book_append_sheet(wb, summaryWs, 'Resumen Mensual');
-
-      // ===== HOJA 3: INFORMACIÓN Y ANÁLISIS =====
-      const analysisData = [
-        ['INFORMACIÓN DEL REPORTE'],
-        ['Fecha y Hora de Exportación', timestamp],
-        ['Total de Registros Exportados', detailedRecords.length],
-        [],
-        ['FILTROS APLICADOS'],
-        ['Cliente', lastDetalleData.filters.cliente || 'Todos'],
-        ['Unidad', lastDetalleData.filters.unidad || 'Todas'],
-        ['Año', lastDetalleData.filters.year || 'N/A'],
-        ['Desde (Fecha Inicio)', lastDetalleData.filters.fechaInicio || 'N/A'],
-        ['Hasta (Fecha Fin)', lastDetalleData.filters.fechaFin || 'N/A'],
-        [],
-        ['ANÁLISIS POR TIPO DE INCIDENTE'],
-        ['Tipo', 'Cantidad', '% del Total']
-      ];
-
-      const total = sum(tiposOrder.map(tipo => sum(monthly[tipo])));
-      tiposOrder.forEach(tipo => {
-        const cantidad = sum(monthly[tipo]);
-        const porcentaje = total > 0 ? ((cantidad / total) * 100).toFixed(2) : '0.00';
-        analysisData.push([tipo, cantidad, porcentaje + '%']);
-      });
-
-      const analysisWs = XLSX.utils.aoa_to_sheet(analysisData);
-      analysisWs['!cols'] = [{ wch: 35 }, { wch: 25 }, { wch: 15 }];
-
-      // Estilos para encabezado de tabla de análisis
-      const analysisHeaderStyle = {
-        font: { bold: true, color: { rgb: 'FFFFFF' }, size: 11 },
-        fill: { fgColor: { rgb: 'FF2F5496' } },
-        alignment: { horizontal: 'center', vertical: 'center' },
-        border: { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } }
-      };
-
-      for (let i = 0; i < 3; i++) {
-        const cell = XLSX.utils.encode_cell({ r: 12, c: i });
-        if (analysisWs[cell]) analysisWs[cell].s = analysisHeaderStyle;
-      }
-
-      // Bordes a filas de análisis
-      for (let r = 13; r < analysisData.length; r++) {
-        for (let c = 0; c < 3; c++) {
-          const cell = XLSX.utils.encode_cell({ r, c });
-          if (analysisWs[cell]) {
-            const borderColor = (r % 2 === 0) ? 'FFE7E6E6' : 'FFFFFFFF';
-            analysisWs[cell].s = {
-              border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } },
-              fill: { fgColor: { rgb: borderColor } },
-              alignment: { horizontal: c === 0 ? 'left' : 'center', vertical: 'center' }
-            };
-          }
-        }
-      }
-
-      analysisWs['!freeze'] = { xSplit: 0, ySplit: 13 };
-      XLSX.utils.book_append_sheet(wb, analysisWs, 'Información');
-
-      // Descargar archivo
-      const filename = `Incidencias_${new Date().toISOString().split('T')[0]}.xlsx`;
-      XLSX.writeFile(wb, filename);
-      UI.toast('✓ Exportado a Excel con ' + detailedRecords.length + ' registros');
-    } catch (e) {
-      UI.toast('Error al exportar a Excel: ' + e.message);
-    }
-  }
-
-  // ============================================================================
-  // 5C) KPI — ACCESO PEATONAL
-  // ============================================================================
-  let apCliente, apSedes, apTipo, apFecha, apApply;
-  let apCardTotal, apCardVisita, apCardProveedor, apCardContratista, apCardEmpleado;
-
-  let apCharts = {};
-  let apChoices = {};
-  let apInitialized = false;
-  let apCache = [];
-
-  function initAccesoPeatonalDashboard(){
-    // Seleccionar elementos HTML cuando el tab está disponible
-    apCliente = document.getElementById('ap-filtro-cliente');
-    apSedes   = document.getElementById('ap-filtro-sede');
-    apTipo    = document.getElementById('ap-filtro-tipo');
-    apFecha   = document.getElementById('ap-filtro-fecha');
-    apApply   = document.getElementById('ap-btn-aplicar');
-
-    apCardTotal       = document.getElementById('ap-total');
-    apCardVisita      = document.getElementById('ap-visita');
-    apCardProveedor   = document.getElementById('ap-proveedor');
-    apCardContratista = document.getElementById('ap-contratista');
-    apCardEmpleado    = document.getElementById('ap-empleado');
-    const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, shouldSort: true };
-    if (window.Choices) {
-      if (apCliente) apChoices.cliente = new Choices(apCliente, cfg);
-      if (apSedes)   apChoices.sedes   = new Choices(apSedes,   cfg);
-      if (apTipo)    apChoices.tipo    = new Choices(apTipo,    cfg);
-    }
-
-    if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined' && apFecha) {
-      const start = moment().subtract(29,'days'), end = moment();
-      $(apFecha).daterangepicker({
-        opens: 'left',
-        startDate: start, endDate: end,
-        locale: { format: 'DD/MM/YYYY', applyLabel:'Aplicar', cancelLabel:'Cancelar' }
-      });
-    }
-
-    queryAccesoPeatonal()
-      .then(() => {
-        if (apCache.length === 0) {
-        }
-        populateAccesoPeatonalFilters(apCache);
-        renderAccesoPeatonal();
-      })
-      .catch(e => {
-        UI.toast('No se pudo cargar Acceso Peatonal: ' + e.message);
-      });
-
-    apApply?.addEventListener('click', renderAccesoPeatonal);
-  }
-
-  function queryAccesoPeatonalDateParse(s){
-    if (!s) return null;
-    const m = moment(
-      s,
-      ['YYYY-MM-DD HH:mm:ss','YYYY-MM-DD HH:mm','YYYY-MM-DD',
-       'DD/MM/YYYY HH:mm:ss','DD/MM/YYYY HH:mm','DD/MM/YYYY'],
-      false
-    );
-    return m.isValid() ? m.toDate() : null;
-  }
-
-  async function queryAccesoPeatonal(){
-    UI.showOverlay('Cargando accesos…', 'Consultando ACCESO_PEATONAL (últimos 5000)');
-    try {
-      // Límite de 5000 para mejor rendimiento
-      const snap = await getQueryWithClienteFilter('ACCESO_PEATONAL')
-        .orderBy('__name__', 'desc')
-        .limit(5000)
-        .get();
-      apCache = snap.docs.map(d=>{
-        const x = d.data();
-        const inStr  = `${x.FECHA_INGRESO ?? ''} ${x.HORA_INGRESO ?? ''}`.trim();
-        const outStr = `${x.FECHA_SALIDA  ?? ''} ${x.HORA_FIN      ?? ''}`.trim();
-        const tsIn  = queryAccesoPeatonalDateParse(inStr);
-        const tsOut = queryAccesoPeatonalDateParse(outStr);
-        const ts    = tsIn || tsOut || null;
-        return {
-          id: d.id,
-          CLIENTE:     (x.CLIENTE     || '').toString(),
-          UNIDAD:      (x.UNIDAD      || '').toString(),
-          TIPO_ACCESO: (x.TIPO_ACCESO || '').toString(),
-          ESTADO:      (x.ESTADO      || '').toString(),
-          EMPRESA:     (x.EMPRESA     || '').toString(),
-          _ts: ts
+        // Estilos para encabezado de tabla
+        const headerStyle = {
+          font: { bold: true, color: { rgb: 'FFFFFF' }, size: 11 },
+          fill: { fgColor: { rgb: 'FF2F5496' } },
+          alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+          border: { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } }
         };
-      });
-    } finally {
-      UI.hideOverlay();
-    }
-  }
 
-  function populateAccesoPeatonalFilters(rows){
-    // Obtener filtros del usuario PRIMERO
-    const clienteDelUsuario = accessControl?.getClienteFilter();
-    const unidadDelUsuario = accessControl?.getUnidadFilter?.();
-    const esCliente = !!clienteDelUsuario; // Si hay clienteFiltro, es CLIENTE; si no, es ADMIN
-
-    // Los datos ya vienen filtrados por cliente desde getQueryWithClienteFilter()
-    // Extraemos valores únicos para los dropdowns
-    let clientes = [...new Set(rows.map(r=>r.CLIENTE).filter(Boolean))].sort();
-    
-    // CORRECCIÓN: Si es CLIENTE, filtrar SEDES solo por sus datos
-    let sedes = [...new Set(rows.map(r=>r.UNIDAD).filter(Boolean))].sort();
-    if (esCliente) {
-      // Si es CLIENTE, mostrar solo las sedes que aparecen en sus registros
-      sedes = [...new Set(rows.filter(r => r.CLIENTE === clienteDelUsuario).map(r=>r.UNIDAD).filter(Boolean))].sort();
-    }
-    
-      const tipos    = [...new Set(rows.map(r=>r.TIPO_ACCESO).filter(Boolean))].sort();    const setChoices = (inst, values, selectedValue = null, disabled = false) => {
-      if (!inst) return;
-      inst.clearChoices();
-      let choices;
-      if (disabled) {
-        // Si está deshabilitado, mostrar solo el valor seleccionado
-        choices = selectedValue ? [{value:selectedValue, label:selectedValue, selected:true, disabled:true}] : [];
-      } else if (selectedValue && values.includes(selectedValue)) {
-        // Pre-seleccionar el valor del usuario
-        choices = values.map(v=>({value:v, label:v, selected: v === selectedValue}));
-      } else {
-        // Mostrar opción "Todos" como predeterminado
-        choices = [{value:'__ALL__', label:'Todos', selected:true}, ...values.map(v=>({value:v, label:v}))];
-      }
-      inst.setChoices(choices, 'value','label', false);
-    };
-
-    // Si es CLIENTE: Cliente bloqueado, Sedes libre (mostrando SOLO sus sedes), Tipo libre
-    // Si es ADMIN: Todo libre
-    if (apChoices.cliente) setChoices(apChoices.cliente, clientes, clienteDelUsuario, esCliente);
-    if (apChoices.sedes)   setChoices(apChoices.sedes,   sedes, unidadDelUsuario, false);
-    if (apChoices.tipo)    setChoices(apChoices.tipo,    tipos, null, false);
-
-    if (!window.Choices) {
-      const fillAPSelect = (el, values, preselectedValue = null, disabled = false) => {
-        if (!el) return;
-        el.disabled = disabled;
-        let html = '';
-        if (disabled && preselectedValue) {
-          html = `<option value="${preselectedValue}" selected disabled>${preselectedValue}</option>`;
-        } else {
-          if (!preselectedValue || !values.includes(preselectedValue)) {
-            html = '<option value="__ALL__" selected>Todos</option>';
-          }
-          html += values.map(v=>{
-            const selected = preselectedValue && v === preselectedValue ? ' selected' : '';
-            return `<option value="${v}"${selected}>${v}</option>`;
-          }).join('');
+        // Aplicar estilos al encabezado de tabla (fila 1)
+        for (let i = 0; i < 10; i++) {
+          const cell = XLSX.utils.encode_cell({ r: 0, c: i });
+          if (detailWs[cell]) detailWs[cell].s = headerStyle;
         }
-        el.innerHTML = html;
-      };
-      fillAPSelect(apCliente, clientes, clienteDelUsuario, esCliente);
-      fillAPSelect(apSedes, sedes, unidadDelUsuario, false);
-      fillAPSelect(apTipo, tipos, null, false);
-    }
-  }
 
-  function getAPFilters(){
-    let start = moment().subtract(29,'days').startOf('day');
-    let end   = moment().endOf('day');
-    if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined' && apFecha) {
-      const v = $(apFecha).val();
-      if (v && v.includes(' - ')) {
-        const [a,b] = v.split(' - ');
-        start = moment(a,'DD/MM/YYYY').startOf('day');
-        end   = moment(b,'DD/MM/YYYY').endOf('day');
-      }
-    }
-    const cliente = apChoices.cliente ? apChoices.cliente.getValue(true) : (apCliente?.value || '__ALL__');
-    const sede    = apChoices.sedes   ? apChoices.sedes.getValue(true)   : (apSedes?.value   || '__ALL__');
-    const tipo    = apChoices.tipo    ? apChoices.tipo.getValue(true)    : (apTipo?.value    || '__ALL__');
-    return { start, end, cliente, sede, tipo };
-  }
-
-  const normTxt = s => (s||'').toString().trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
-
-  function renderAccesoPeatonal(){
-    const { start, end, cliente, sede, tipo } = getAPFilters();
-
-    // Los datos en apCache ya vienen filtrados por cliente desde la BD
-    // Solo aplicamos los filtros de rango de fecha y filtros de UI
-    const filtered = apCache.filter(r=>{
-      const inRange = r._ts ? moment(r._ts).isBetween(start, end, undefined, '[]') : false;
-      const inCliente = (cliente==='__ALL__') || (r.CLIENTE===cliente);
-      const inSede    = (sede==='__ALL__')    || (r.UNIDAD===sede);
-      const inTipo    = (tipo==='__ALL__')    || (r.TIPO_ACCESO===tipo);
-      return inRange && inCliente && inSede && inTipo;
-    });
-
-    const total = filtered.length;
-    const countByTipo = key => filtered.reduce((a,c)=> a + (normTxt(c.TIPO_ACCESO)===key ? 1:0), 0);
-    setCard(apCardTotal,       total);
-    setCard(apCardVisita,      countByTipo('VISITA'));
-    setCard(apCardProveedor,   countByTipo('PROVEEDOR'));
-    setCard(apCardContratista, countByTipo('CONTRATISTA'));
-
-    // Línea por fecha
-    {
-      const labels = [];
-      const map = new Map();
-      for (let m = start.clone(); m.isSameOrBefore(end, 'day'); m.add(1,'day')) {
-        const key = m.format('DD/MM'); labels.push(key); map.set(key,0);
-      }
-      filtered.forEach(r=>{
-        const key = moment(r._ts).format('DD/MM');
-        if (map.has(key)) map.set(key, map.get(key)+1);
-      });
-      const dataValues = labels.map(l=>map.get(l)||0);
-      const totalAccesos = dataValues.reduce((a,b)=>a+b,0)||1;
-      
-      // Crear dataset con labels de cantidad
-      const datasetConfig = {
-        label:'Accesos', 
-        data: dataValues,
-        borderColor: PALETTE.blue, 
-        backgroundColor:'rgba(59,130,246,.12)',
-        fill:true, 
-        tension:.33, 
-        pointRadius:5, 
-        pointHoverRadius:7, 
-        pointBorderWidth:2, 
-        pointBorderColor:'#fff',
-        pointBackgroundColor: PALETTE.blue
-      };
-      
-      drawAPChart('ap-chart-fecha', {
-        type:'line',
-        data:{ labels, datasets:[datasetConfig]},
-        options:{ 
-          responsive:true, 
-          maintainAspectRatio:false,
-          plugins:{ 
-            legend:{ 
-              display:true, 
-              position:'bottom',
-              labels:{ 
-                font:{size:11, weight:'bold'}, 
-                color:themeInk(),
-                padding:12,
-                usePointStyle:true
-              }
-            },
-            tooltip:{ 
-              backgroundColor: 'rgba(0,0,0,0.8)',
-              padding: 10,
-              cornerRadius: 6,
-              titleFont: { size: 12, weight: 'bold' },
-              bodyFont: { size: 11 },
-              callbacks:{ 
-                label:(c)=> `${c.dataset.label}: ${nf.format(c.raw)} (${pf(c.raw,totalAccesos)}%)`
-              }
-            },
-            datalabels:{ 
-              display: true,
-              formatter:(v, ctx)=> v > 0 ? nf.format(v) : '', 
-              anchor:'end', 
-              align:'top', 
-              offset:10, 
-              font:{weight:'bold', size:11}, 
-              color:'#1f2937',
-              backgroundColor:'rgba(255,255,255,0.9)',
-              borderRadius:4,
-              padding:3
+        // Aplicar bordes y alineación a datos
+        for (let r = 1; r < detailData.length; r++) {
+          for (let c = 0; c < 10; c++) {
+            const cell = XLSX.utils.encode_cell({ r, c });
+            if (detailWs[cell]) {
+              const borderColor = (r % 2 === 0) ? 'FFE7E6E6' : 'FFFFFFFF';
+              detailWs[cell].s = {
+                border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } },
+                fill: { fgColor: { rgb: borderColor } },
+                alignment: { vertical: 'top', wrapText: true, horizontal: 'left' }
+              };
             }
-          },
-          scales:{ 
-            y:{ 
-              ticks:{ color:themeInk() },
-              grid:{ color:'rgba(0,0,0,0.05)' }
-            }, 
-            x:{ 
-              ticks:{ color:themeInk() },
-              grid:{ display:false }
-            } 
-          } 
+          }
         }
-      });
+
+        // Congelar filas de encabezado
+        detailWs['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+        XLSX.utils.book_append_sheet(wb, detailWs, 'Detalle Completo');
+
+        // ===== HOJA 2: RESUMEN POR TIPO DE INCIDENTE =====
+        const summaryData = [];
+
+        // Encabezados
+        const summaryHeader = ['Mes', ...tiposOrder, 'TOTAL MENSUAL'];
+        summaryData.push(summaryHeader);
+
+        const months = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+        let totalGranGeneral = 0;
+        for (let i = 0; i < 12; i++) {
+          const monthData = tiposOrder.map(tipo => monthly[tipo][i] || 0);
+          const monthTotal = sum(monthData);
+          totalGranGeneral += monthTotal;
+          summaryData.push([months[i], ...monthData, monthTotal]);
+        }
+
+        // Fila de totales anuales
+        const totalesAnuales = tiposOrder.map(tipo => sum(monthly[tipo]));
+        summaryData.push(['TOTAL ANUAL', ...totalesAnuales, totalGranGeneral]);
+
+        const summaryWs = XLSX.utils.aoa_to_sheet(summaryData);
+        summaryWs['!cols'] = new Array(tiposOrder.length + 2).fill(0).map(() => ({ wch: 18 }));
+
+        // Estilo para encabezado de tabla
+        const summaryHeaderStyle = {
+          font: { bold: true, color: { rgb: 'FFFFFF' }, size: 11 },
+          fill: { fgColor: { rgb: 'FF548235' } },
+          alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+          border: { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } }
+        };
+
+        for (let i = 0; i <= tiposOrder.length; i++) {
+          const cell = XLSX.utils.encode_cell({ r: 0, c: i });
+          if (summaryWs[cell]) summaryWs[cell].s = summaryHeaderStyle;
+        }
+
+        const totalRowStyle = {
+          font: { bold: true, size: 11 },
+          fill: { fgColor: { rgb: 'FFFFC7CE' } },
+          alignment: { horizontal: 'center', vertical: 'center' },
+          border: { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } },
+          numFmt: '0'
+        };
+
+        // Estilo a fila de totales
+        for (let i = 0; i <= tiposOrder.length; i++) {
+          const cell = XLSX.utils.encode_cell({ r: summaryData.length - 1, c: i });
+          if (summaryWs[cell]) summaryWs[cell].s = totalRowStyle;
+        }
+
+        // Bordes a datos intermedios
+        for (let r = 1; r < summaryData.length - 1; r++) {
+          for (let c = 0; c <= tiposOrder.length; c++) {
+            const cell = XLSX.utils.encode_cell({ r, c });
+            if (summaryWs[cell]) {
+              const borderColor = (r % 2 === 0) ? 'FFE7E6E6' : 'FFFFFFFF';
+              summaryWs[cell].s = {
+                border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } },
+                alignment: { horizontal: 'center' },
+                fill: { fgColor: { rgb: borderColor } },
+                numFmt: '0'
+              };
+            }
+          }
+        }
+
+        summaryWs['!freeze'] = { xSplit: 1, ySplit: 1 };
+        XLSX.utils.book_append_sheet(wb, summaryWs, 'Resumen Mensual');
+
+        // ===== HOJA 3: INFORMACIÓN Y ANÁLISIS =====
+        const analysisData = [
+          ['INFORMACIÓN DEL REPORTE'],
+          ['Fecha y Hora de Exportación', timestamp],
+          ['Total de Registros Exportados', detailedRecords.length],
+          [],
+          ['FILTROS APLICADOS'],
+          ['Cliente', lastDetalleData.filters.cliente || 'Todos'],
+          ['Unidad', lastDetalleData.filters.unidad || 'Todas'],
+          ['Año', lastDetalleData.filters.year || 'N/A'],
+          ['Desde (Fecha Inicio)', lastDetalleData.filters.fechaInicio || 'N/A'],
+          ['Hasta (Fecha Fin)', lastDetalleData.filters.fechaFin || 'N/A'],
+          [],
+          ['ANÁLISIS POR TIPO DE INCIDENTE'],
+          ['Tipo', 'Cantidad', '% del Total']
+        ];
+
+        const total = sum(tiposOrder.map(tipo => sum(monthly[tipo])));
+        tiposOrder.forEach(tipo => {
+          const cantidad = sum(monthly[tipo]);
+          const porcentaje = total > 0 ? ((cantidad / total) * 100).toFixed(2) : '0.00';
+          analysisData.push([tipo, cantidad, porcentaje + '%']);
+        });
+
+        const analysisWs = XLSX.utils.aoa_to_sheet(analysisData);
+        analysisWs['!cols'] = [{ wch: 35 }, { wch: 25 }, { wch: 15 }];
+
+        // Estilos para encabezado de tabla de análisis
+        const analysisHeaderStyle = {
+          font: { bold: true, color: { rgb: 'FFFFFF' }, size: 11 },
+          fill: { fgColor: { rgb: 'FF2F5496' } },
+          alignment: { horizontal: 'center', vertical: 'center' },
+          border: { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } }
+        };
+
+        for (let i = 0; i < 3; i++) {
+          const cell = XLSX.utils.encode_cell({ r: 12, c: i });
+          if (analysisWs[cell]) analysisWs[cell].s = analysisHeaderStyle;
+        }
+
+        // Bordes a filas de análisis
+        for (let r = 13; r < analysisData.length; r++) {
+          for (let c = 0; c < 3; c++) {
+            const cell = XLSX.utils.encode_cell({ r, c });
+            if (analysisWs[cell]) {
+              const borderColor = (r % 2 === 0) ? 'FFE7E6E6' : 'FFFFFFFF';
+              analysisWs[cell].s = {
+                border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } },
+                fill: { fgColor: { rgb: borderColor } },
+                alignment: { horizontal: c === 0 ? 'left' : 'center', vertical: 'center' }
+              };
+            }
+          }
+        }
+
+        analysisWs['!freeze'] = { xSplit: 0, ySplit: 13 };
+        XLSX.utils.book_append_sheet(wb, analysisWs, 'Información');
+
+        // Descargar archivo
+        const filename = `Incidencias_${new Date().toISOString().split('T')[0]}.xlsx`;
+        XLSX.writeFile(wb, filename);
+        UI.toast('✓ Exportado a Excel con ' + detailedRecords.length + ' registros');
+      } catch (e) {
+        UI.toast('Error al exportar a Excel: ' + e.message);
+      }
     }
 
-    // Donut estado
-    {
-      const counts = filtered.reduce((a,c)=>{ const k=c.ESTADO||'SIN ESTADO'; a[k]=(a[k]||0)+1; return a; },{});
-      const labels = Object.keys(counts);
-      const values = Object.values(counts);
-      const sum = values.reduce((x,y)=>x+y,0)||1;
-      
-      drawAPChart('ap-chart-estado', {
-        type:'doughnut',
-        data:{ 
-          labels, 
-          datasets:[{ 
-            data:values, 
-            backgroundColor:[PALETTE.blue, PALETTE.amber, PALETTE.red, PALETTE.gray]
-          }]
-        },
-        options:{ 
-          responsive:true, 
-          maintainAspectRatio:false, 
-          cutout:'58%',
-          plugins:{ 
-            legend:{ 
-              position:'bottom', 
-              labels:{ 
-                font:{size:11, weight:'bold'},
-                color:themeInk(),
-                padding:12,
-                generateLabels:(chart)=>{
-                  const data = chart.data;
-                  return data.labels.map((label, i)=>{
-                    const value = data.datasets[0].data[i];
-                    const pct = ((value/sum)*100).toFixed(1);
-                    return {
-                      text: `${label}: ${nf.format(value)} (${pct}%)`,
-                      fillStyle: data.datasets[0].backgroundColor[i],
-                      hidden: false,
-                      index: i,
-                      pointStyle: 'circle'
-                    };
-                  });
+    // ============================================================================
+    // 5C) KPI — ACCESO PEATONAL
+    // ============================================================================
+    let apCliente, apSedes, apTipo, apFecha, apApply;
+    let apCardTotal, apCardVisita, apCardProveedor, apCardContratista, apCardEmpleado;
+
+    let apCharts = {};
+    let apChoices = {};
+    let apInitialized = false;
+    let apCache = [];
+
+    function initAccesoPeatonalDashboard() {
+      // Seleccionar elementos HTML cuando el tab está disponible
+      apCliente = document.getElementById('ap-filtro-cliente');
+      apSedes = document.getElementById('ap-filtro-sede');
+      apTipo = document.getElementById('ap-filtro-tipo');
+      apFecha = document.getElementById('ap-filtro-fecha');
+      apApply = document.getElementById('ap-btn-aplicar');
+
+      apCardTotal = document.getElementById('ap-total');
+      apCardVisita = document.getElementById('ap-visita');
+      apCardProveedor = document.getElementById('ap-proveedor');
+      apCardContratista = document.getElementById('ap-contratista');
+      apCardEmpleado = document.getElementById('ap-empleado');
+      const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, shouldSort: true };
+      if (window.Choices) {
+        if (apCliente) apChoices.cliente = new Choices(apCliente, cfg);
+        if (apSedes) apChoices.sedes = new Choices(apSedes, cfg);
+        if (apTipo) apChoices.tipo = new Choices(apTipo, cfg);
+      }
+
+      if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined' && apFecha) {
+        const start = moment().subtract(29, 'days'), end = moment();
+        $(apFecha).daterangepicker({
+          opens: 'left',
+          startDate: start, endDate: end,
+          locale: { format: 'DD/MM/YYYY', applyLabel: 'Aplicar', cancelLabel: 'Cancelar' }
+        });
+      }
+
+      queryAccesoPeatonal()
+        .then(() => {
+          if (apCache.length === 0) {
+          }
+          populateAccesoPeatonalFilters(apCache);
+          renderAccesoPeatonal();
+        })
+        .catch(e => {
+          UI.toast('No se pudo cargar Acceso Peatonal: ' + e.message);
+        });
+
+      apApply?.addEventListener('click', renderAccesoPeatonal);
+    }
+
+    function queryAccesoPeatonalDateParse(s) {
+      if (!s) return null;
+      const m = moment(
+        s,
+        ['YYYY-MM-DD HH:mm:ss', 'YYYY-MM-DD HH:mm', 'YYYY-MM-DD',
+          'DD/MM/YYYY HH:mm:ss', 'DD/MM/YYYY HH:mm', 'DD/MM/YYYY'],
+        false
+      );
+      return m.isValid() ? m.toDate() : null;
+    }
+
+    async function queryAccesoPeatonal() {
+      UI.showOverlay('Cargando accesos…', 'Consultando ACCESO_PEATONAL (últimos 5000)');
+      try {
+        // Límite de 5000 para mejor rendimiento
+        const snap = await getQueryWithClienteFilter('ACCESO_PEATONAL')
+          .orderBy('__name__', 'desc')
+          .limit(5000)
+          .get();
+        apCache = snap.docs.map(d => {
+          const x = d.data();
+          const inStr = `${x.FECHA_INGRESO ?? ''} ${x.HORA_INGRESO ?? ''}`.trim();
+          const outStr = `${x.FECHA_SALIDA ?? ''} ${x.HORA_FIN ?? ''}`.trim();
+          const tsIn = queryAccesoPeatonalDateParse(inStr);
+          const tsOut = queryAccesoPeatonalDateParse(outStr);
+          const ts = tsIn || tsOut || null;
+          return {
+            id: d.id,
+            CLIENTE: (x.CLIENTE || '').toString(),
+            UNIDAD: (x.UNIDAD || '').toString(),
+            TIPO_ACCESO: (x.TIPO_ACCESO || '').toString(),
+            ESTADO: (x.ESTADO || '').toString(),
+            EMPRESA: (x.EMPRESA || '').toString(),
+            _ts: ts
+          };
+        });
+      } finally {
+        UI.hideOverlay();
+      }
+    }
+
+    function populateAccesoPeatonalFilters(rows) {
+      // Obtener filtros del usuario PRIMERO
+      const clienteDelUsuario = accessControl?.getClienteFilter();
+      const unidadDelUsuario = accessControl?.getUnidadFilter?.();
+      const esCliente = !!clienteDelUsuario; // Si hay clienteFiltro, es CLIENTE; si no, es ADMIN
+
+      // Los datos ya vienen filtrados por cliente desde getQueryWithClienteFilter()
+      // Extraemos valores únicos para los dropdowns
+      let clientes = [...new Set(rows.map(r => r.CLIENTE).filter(Boolean))].sort();
+
+      // CORRECCIÓN: Si es CLIENTE, filtrar SEDES solo por sus datos
+      let sedes = [...new Set(rows.map(r => r.UNIDAD).filter(Boolean))].sort();
+      if (esCliente) {
+        // Si es CLIENTE, mostrar solo las sedes que aparecen en sus registros
+        sedes = [...new Set(rows.filter(r => r.CLIENTE === clienteDelUsuario).map(r => r.UNIDAD).filter(Boolean))].sort();
+      }
+
+      const tipos = [...new Set(rows.map(r => r.TIPO_ACCESO).filter(Boolean))].sort(); const setChoices = (inst, values, selectedValue = null, disabled = false) => {
+        if (!inst) return;
+        inst.clearChoices();
+        let choices;
+        if (disabled) {
+          // Si está deshabilitado, mostrar solo el valor seleccionado
+          choices = selectedValue ? [{ value: selectedValue, label: selectedValue, selected: true, disabled: true }] : [];
+        } else if (selectedValue && values.includes(selectedValue)) {
+          // Pre-seleccionar el valor del usuario
+          choices = values.map(v => ({ value: v, label: v, selected: v === selectedValue }));
+        } else {
+          // Mostrar opción "Todos" como predeterminado
+          choices = [{ value: '__ALL__', label: 'Todos', selected: true }, ...values.map(v => ({ value: v, label: v }))];
+        }
+        inst.setChoices(choices, 'value', 'label', false);
+      };
+
+      // Si es CLIENTE: Cliente bloqueado, Sedes libre (mostrando SOLO sus sedes), Tipo libre
+      // Si es ADMIN: Todo libre
+      if (apChoices.cliente) setChoices(apChoices.cliente, clientes, clienteDelUsuario, esCliente);
+      if (apChoices.sedes) setChoices(apChoices.sedes, sedes, unidadDelUsuario, false);
+      if (apChoices.tipo) setChoices(apChoices.tipo, tipos, null, false);
+
+      if (!window.Choices) {
+        const fillAPSelect = (el, values, preselectedValue = null, disabled = false) => {
+          if (!el) return;
+          el.disabled = disabled;
+          let html = '';
+          if (disabled && preselectedValue) {
+            html = `<option value="${preselectedValue}" selected disabled>${preselectedValue}</option>`;
+          } else {
+            if (!preselectedValue || !values.includes(preselectedValue)) {
+              html = '<option value="__ALL__" selected>Todos</option>';
+            }
+            html += values.map(v => {
+              const selected = preselectedValue && v === preselectedValue ? ' selected' : '';
+              return `<option value="${v}"${selected}>${v}</option>`;
+            }).join('');
+          }
+          el.innerHTML = html;
+        };
+        fillAPSelect(apCliente, clientes, clienteDelUsuario, esCliente);
+        fillAPSelect(apSedes, sedes, unidadDelUsuario, false);
+        fillAPSelect(apTipo, tipos, null, false);
+      }
+    }
+
+    function getAPFilters() {
+      let start = moment().subtract(29, 'days').startOf('day');
+      let end = moment().endOf('day');
+      if (typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined' && apFecha) {
+        const v = $(apFecha).val();
+        if (v && v.includes(' - ')) {
+          const [a, b] = v.split(' - ');
+          start = moment(a, 'DD/MM/YYYY').startOf('day');
+          end = moment(b, 'DD/MM/YYYY').endOf('day');
+        }
+      }
+      const cliente = apChoices.cliente ? apChoices.cliente.getValue(true) : (apCliente?.value || '__ALL__');
+      const sede = apChoices.sedes ? apChoices.sedes.getValue(true) : (apSedes?.value || '__ALL__');
+      const tipo = apChoices.tipo ? apChoices.tipo.getValue(true) : (apTipo?.value || '__ALL__');
+      return { start, end, cliente, sede, tipo };
+    }
+
+    const normTxt = s => (s || '').toString().trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    function renderAccesoPeatonal() {
+      const { start, end, cliente, sede, tipo } = getAPFilters();
+
+      // Los datos en apCache ya vienen filtrados por cliente desde la BD
+      // Solo aplicamos los filtros de rango de fecha y filtros de UI
+      const filtered = apCache.filter(r => {
+        const inRange = r._ts ? moment(r._ts).isBetween(start, end, undefined, '[]') : false;
+        const inCliente = (cliente === '__ALL__') || (r.CLIENTE === cliente);
+        const inSede = (sede === '__ALL__') || (r.UNIDAD === sede);
+        const inTipo = (tipo === '__ALL__') || (r.TIPO_ACCESO === tipo);
+        return inRange && inCliente && inSede && inTipo;
+      });
+
+      const total = filtered.length;
+      const countByTipo = key => filtered.reduce((a, c) => a + (normTxt(c.TIPO_ACCESO) === key ? 1 : 0), 0);
+      setCard(apCardTotal, total);
+      setCard(apCardVisita, countByTipo('VISITA'));
+      setCard(apCardProveedor, countByTipo('PROVEEDOR'));
+      setCard(apCardContratista, countByTipo('CONTRATISTA'));
+
+      // Línea por fecha
+      {
+        const labels = [];
+        const map = new Map();
+        for (let m = start.clone(); m.isSameOrBefore(end, 'day'); m.add(1, 'day')) {
+          const key = m.format('DD/MM'); labels.push(key); map.set(key, 0);
+        }
+        filtered.forEach(r => {
+          const key = moment(r._ts).format('DD/MM');
+          if (map.has(key)) map.set(key, map.get(key) + 1);
+        });
+        const dataValues = labels.map(l => map.get(l) || 0);
+        const totalAccesos = dataValues.reduce((a, b) => a + b, 0) || 1;
+
+        // Crear dataset con labels de cantidad
+        const datasetConfig = {
+          label: 'Accesos',
+          data: dataValues,
+          borderColor: PALETTE.blue,
+          backgroundColor: 'rgba(59,130,246,.12)',
+          fill: true,
+          tension: .33,
+          pointRadius: 5,
+          pointHoverRadius: 7,
+          pointBorderWidth: 2,
+          pointBorderColor: '#fff',
+          pointBackgroundColor: PALETTE.blue
+        };
+
+        drawAPChart('ap-chart-fecha', {
+          type: 'line',
+          data: { labels, datasets: [datasetConfig] },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                display: true,
+                position: 'bottom',
+                labels: {
+                  font: { size: 11, weight: 'bold' },
+                  color: themeInk(),
+                  padding: 12,
+                  usePointStyle: true
+                }
+              },
+              tooltip: {
+                backgroundColor: 'rgba(0,0,0,0.8)',
+                padding: 10,
+                cornerRadius: 6,
+                titleFont: { size: 12, weight: 'bold' },
+                bodyFont: { size: 11 },
+                callbacks: {
+                  label: (c) => `${c.dataset.label}: ${nf.format(c.raw)} (${pf(c.raw, totalAccesos)}%)`
+                }
+              },
+              datalabels: {
+                display: true,
+                formatter: (v, ctx) => v > 0 ? nf.format(v) : '',
+                anchor: 'end',
+                align: 'top',
+                offset: 10,
+                font: { weight: 'bold', size: 11 },
+                color: '#1f2937',
+                backgroundColor: 'rgba(255,255,255,0.9)',
+                borderRadius: 4,
+                padding: 3
+              }
+            },
+            scales: {
+              y: {
+                ticks: { color: themeInk() },
+                grid: { color: 'rgba(0,0,0,0.05)' }
+              },
+              x: {
+                ticks: { color: themeInk() },
+                grid: { display: false }
+              }
+            }
+          }
+        });
+      }
+
+      // Donut estado
+      {
+        const counts = filtered.reduce((a, c) => { const k = c.ESTADO || 'SIN ESTADO'; a[k] = (a[k] || 0) + 1; return a; }, {});
+        const labels = Object.keys(counts);
+        const values = Object.values(counts);
+        const sum = values.reduce((x, y) => x + y, 0) || 1;
+
+        drawAPChart('ap-chart-estado', {
+          type: 'doughnut',
+          data: {
+            labels,
+            datasets: [{
+              data: values,
+              backgroundColor: [PALETTE.blue, PALETTE.amber, PALETTE.red, PALETTE.gray]
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '58%',
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: {
+                  font: { size: 11, weight: 'bold' },
+                  color: themeInk(),
+                  padding: 12,
+                  generateLabels: (chart) => {
+                    const data = chart.data;
+                    return data.labels.map((label, i) => {
+                      const value = data.datasets[0].data[i];
+                      const pct = ((value / sum) * 100).toFixed(1);
+                      return {
+                        text: `${label}: ${nf.format(value)} (${pct}%)`,
+                        fillStyle: data.datasets[0].backgroundColor[i],
+                        hidden: false,
+                        index: i,
+                        pointStyle: 'circle'
+                      };
+                    });
+                  }
+                }
+              },
+              datalabels: {
+                formatter: (v) => `${pf(v, sum)}%`,
+                anchor: 'center',
+                align: 'center',
+                font: { weight: '700', size: 14 },
+                color: '#fff'
+              },
+              tooltip: {
+                callbacks: {
+                  label: (c) => `${c.label}: ${nf.format(c.raw)} (${pf(c.raw, sum)}%)`
+                }
+              }
+            }
+          }
+        });
+      }
+
+      // Barras por empresa
+      {
+        const map = filtered.reduce((a, c) => { const k = c.EMPRESA || 'SIN EMPRESA'; a[k] = (a[k] || 0) + 1; return a; }, {});
+        const arr = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 20);
+        const labels = arr.map(x => x[0]);
+        const values = arr.map(x => x[1]);
+        const total = values.reduce((a, b) => a + b, 0) || 1;
+
+        drawAPChart('ap-chart-empresa', {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Accesos',
+              data: values,
+              backgroundColor: PALETTE.blue,
+              borderRadius: 6,
+              borderSkipped: false
+            }]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                backgroundColor: 'rgba(0,0,0,0.8)',
+                padding: 10,
+                cornerRadius: 6,
+                titleFont: { size: 12, weight: 'bold' },
+                bodyFont: { size: 11 },
+                callbacks: {
+                  label: (c) => `${c.dataset.label}: ${nf.format(c.raw)} (${pf(c.raw, total)}%)`
+                }
+              },
+              datalabels: {
+                display: true,
+                formatter: (v) => `${nf.format(v)} (${pf(v, total)}%)`,
+                anchor: 'end',
+                align: 'right',
+                offset: 10,
+                font: { weight: 'bold', size: 10 },
+                color: '#1f2937'
+              }
+            },
+            scales: {
+              y: {
+                ticks: {
+                  color: themeInk(),
+                  autoSkip: false,
+                  font: { size: 11 }
+                },
+                grid: { display: false }
+              },
+              x: {
+                ticks: { color: themeInk() },
+                grid: { color: 'rgba(0,0,0,0.05)' }
+              }
+            }
+          }
+        });
+      }
+
+      // Heatmap 2h x día
+      {
+        const bins = Array(12).fill(0).map(() => Array(7).fill(0));
+        filtered.forEach(r => {
+          const m = moment(r._ts);
+          const slot = Math.floor(m.hour() / 2);
+          const dow = m.day();
+          if (slot >= 0 && slot < 12 && dow >= 0 && dow < 7) bins[slot][dow] += 1;
+        });
+
+        const table = document.getElementById('ap-tabla-heatmap');
+        if (table) {
+          const dayHdr = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado']
+            .map(d => d[0].toUpperCase() + d.slice(1, 3));
+          const range = i => `${String(i * 2).padStart(2, '0')}:00 - ${String(i * 2 + 2).padStart(2, '0')}:00`;
+          let html = `<thead><tr><th>rango_horario</th>${dayHdr.map(d => `<th>${d}</th>`).join('')}<th>Total</th></tr></thead><tbody>`;
+          const colTotals = Array(7).fill(0);
+          let max = 0, grand = 0;
+
+          for (let i = 0; i < 12; i++) {
+            const row = bins[i];
+            const sum = row.reduce((a, b) => a + b, 0); grand += sum;
+            html += `<tr><td>${range(i)}</td>`;
+            for (let d = 0; d < 7; d++) { max = Math.max(max, row[d]); colTotals[d] += row[d]; html += `<td data-v="${row[d]}">${row[d]}</td>`; }
+            html += `<td><b>${sum}</b></td></tr>`;
+          }
+          html += `</tbody><tfoot><tr><th>Total</th>${colTotals.map(v => `<th><b>${v}</b></th>`).join('')}<th><b>${grand}</b></th></tr></tfoot>`;
+          table.innerHTML = html;
+
+          table.querySelectorAll('tbody td[data-v]').forEach(td => {
+            const v = +td.dataset.v || 0;
+            const k = max ? v / max : 0;
+            td.style.background = `rgba(14,165,233,${0.15 + 0.55 * k})`;
+            td.style.color = k > .55 ? '#fff' : themeInk();
+            td.style.textAlign = 'center';
+            td.style.fontWeight = k > .8 ? '700' : '500';
+          });
+        }
+      }
+
+      // Barras por unidad
+      {
+        const map = filtered.reduce((a, c) => { const k = c.UNIDAD || 'SIN UNIDAD'; a[k] = (a[k] || 0) + 1; return a; }, {});
+        const arr = Object.entries(map).sort((a, b) => b[1] - a[1]);
+        const labels = arr.map(x => x[0]);
+        const values = arr.map(x => x[1]);
+        const total = values.reduce((a, b) => a + b, 0) || 1;
+
+        drawAPChart('ap-chart-unidad', {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Accesos',
+              data: values,
+              backgroundColor: PALETTE.blueLt,
+              borderRadius: 6,
+              borderSkipped: false
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                display: true,
+                position: 'bottom',
+                labels: {
+                  font: { size: 11, weight: 'bold' },
+                  color: themeInk(),
+                  padding: 12
+                }
+              },
+              datalabels: {
+                formatter: (v) => `${nf.format(v)}\n(${pf(v, total)}%)`,
+                anchor: 'end',
+                align: 'top',
+                offset: 8,
+                font: { weight: 'bold', size: 10 },
+                color: '#1f2937'
+              },
+              tooltip: {
+                callbacks: {
+                  label: (c) => `${c.dataset.label}: ${nf.format(c.raw)} (${pf(c.raw, total)}%)`
                 }
               }
             },
-            datalabels:{ 
-              formatter:(v)=> `${pf(v,sum)}%`, 
-              anchor:'center', 
-              align:'center', 
-              font:{weight:'700', size:14},
-              color:'#fff'
-            },
-            tooltip:{ 
-              callbacks:{ 
-                label:(c)=> `${c.label}: ${nf.format(c.raw)} (${pf(c.raw,sum)}%)`
-              }
-            }
-          }
-        }
-      });
-    }
-
-    // Barras por empresa
-    {
-      const map = filtered.reduce((a,c)=>{ const k=c.EMPRESA||'SIN EMPRESA'; a[k]=(a[k]||0)+1; return a; },{});
-      const arr = Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,20);
-      const labels = arr.map(x=>x[0]);
-      const values = arr.map(x=>x[1]);
-      const total = values.reduce((a,b)=>a+b,0)||1;
-      
-      drawAPChart('ap-chart-empresa', {
-        type:'bar',
-        data:{ 
-          labels, 
-          datasets:[{ 
-            label:'Accesos', 
-            data:values, 
-            backgroundColor: PALETTE.blue,
-            borderRadius: 6,
-            borderSkipped: false
-          }]
-        },
-        options:{ 
-          indexAxis:'y', 
-          responsive:true, 
-          maintainAspectRatio:false,
-          plugins:{ 
-            legend:{ display:false },
-            tooltip:{ 
-              backgroundColor: 'rgba(0,0,0,0.8)',
-              padding: 10,
-              cornerRadius: 6,
-              titleFont: { size: 12, weight: 'bold' },
-              bodyFont: { size: 11 },
-              callbacks:{ 
-                label:(c)=> `${c.dataset.label}: ${nf.format(c.raw)} (${pf(c.raw,total)}%)`
-              }
-            },
-            datalabels:{ 
-              display: true,
-              formatter:(v)=> `${nf.format(v)} (${pf(v,total)}%)`, 
-              anchor:'end', 
-              align:'right', 
-              offset:10, 
-              font:{weight:'bold', size:10},
-              color:'#1f2937'
-            }
-          },
-          scales:{ 
-            y:{ 
-              ticks:{ 
-                color:themeInk(), 
-                autoSkip:false,
-                font: { size: 11 }
+            scales: {
+              y: {
+                ticks: { color: themeInk() },
+                grid: { color: 'rgba(0,0,0,0.05)' }
               },
-              grid:{ display:false }
-            }, 
-            x:{ 
-              ticks:{ color:themeInk() },
-              grid:{ color:'rgba(0,0,0,0.05)' }
+              x: {
+                ticks: {
+                  color: themeInk(),
+                  autoSkip: false,
+                  maxRotation: 45,
+                  minRotation: 0,
+                  font: { size: 10 }
+                },
+                grid: { display: false }
+              }
             }
           }
-        }
-      });
+        });
+      }
+
+      applyKpiUnifiedHeights();
     }
 
-    // Heatmap 2h x día
-    {
-      const bins = Array(12).fill(0).map(()=>Array(7).fill(0));
-      filtered.forEach(r=>{
-        const m = moment(r._ts);
-        const slot = Math.floor(m.hour()/2);
-        const dow  = m.day();
-        if (slot>=0 && slot<12 && dow>=0 && dow<7) bins[slot][dow] += 1;
+    function drawAPChart(canvasId, config) {
+      const el = document.getElementById(canvasId);
+      if (!el) return;
+      if (apCharts[canvasId]) apCharts[canvasId].destroy();
+      apCharts[canvasId] = new Chart(el, config);
+    }
+
+    function setCard(el, value) {
+      if (!el) return;
+      const n = (typeof value === 'number' && isFinite(value)) ? value : 0;
+      el.textContent = n.toLocaleString('es-PE');
+    }
+
+    // ============================================================================
+    // 5D) KPI — RONDA GENERAL (FILTROS Y ESTADÍSTICAS)
+    // ============================================================================
+    let kpiRondaFilters = {
+      cliente: '',
+      unidad: '',
+      fechaInicio: '',
+      fechaFin: ''
+    };
+
+    function initKpiRondaGeneral() {
+
+      // Cargar opciones de Cliente y Unidad
+      loadKpiRondaClientesUnidades();
+
+      // Event listeners de botones
+      document.getElementById('kpi-ronda-aplicar')?.addEventListener('click', () => {
+        loadKpiRondaData();
       });
 
-      const table = document.getElementById('ap-tabla-heatmap'); 
-      if (table){
-        const dayHdr = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado']
-          .map(d=>d[0].toUpperCase()+d.slice(1,3));
-        const range = i => `${String(i*2).padStart(2,'0')}:00 - ${String(i*2+2).padStart(2,'0')}:00`;
-        let html = `<thead><tr><th>rango_horario</th>${dayHdr.map(d=>`<th>${d}</th>`).join('')}<th>Total</th></tr></thead><tbody>`;
-        const colTotals = Array(7).fill(0);
-        let max = 0, grand = 0;
+      document.getElementById('kpi-ronda-limpiar')?.addEventListener('click', () => {
+        // Limpiar filtros
+        kpiRondaFilters = {
+          cliente: '',
+          unidad: '',
+          fechaInicio: '',
+          fechaFin: ''
+        };
+        document.getElementById('kpi-ronda-cliente').value = '';
+        document.getElementById('kpi-ronda-unidad').value = '';
+        document.getElementById('ronda-general-fecha-inicio').value = '';
+        document.getElementById('ronda-general-fecha-fin').value = '';
 
-        for (let i=0;i<12;i++){
-          const row = bins[i];
-          const sum = row.reduce((a,b)=>a+b,0); grand += sum;
-          html += `<tr><td>${range(i)}</td>`;
-          for (let d=0; d<7; d++){ max = Math.max(max, row[d]); colTotals[d]+=row[d]; html += `<td data-v="${row[d]}">${row[d]}</td>`; }
-          html += `<td><b>${sum}</b></td></tr>`;
+        // Recargar con filtros vacíos
+        loadKpiRondaData();
+      });
+
+      // Event listener para cambio de Cliente (actualiza Unidades)
+      document.getElementById('kpi-ronda-cliente')?.addEventListener('change', async () => {
+        const clienteSelect = document.getElementById('kpi-ronda-cliente');
+        const cliente = clienteSelect?.value || '';
+
+        if (cliente) {
+          console.log('[RONDA GENERAL] Cliente cambió a:', cliente);
+          await loadRondaGeneralUnidadesByCliente(cliente);
         }
-        html += `</tbody><tfoot><tr><th>Total</th>${colTotals.map(v=>`<th><b>${v}</b></th>`).join('')}<th><b>${grand}</b></th></tr></tfoot>`;
-        table.innerHTML = html;
+      });
 
-        table.querySelectorAll('tbody td[data-v]').forEach(td=>{
-          const v = +td.dataset.v || 0;
-          const k = max ? v/max : 0;
-          td.style.background = `rgba(14,165,233,${0.15 + 0.55*k})`;
-          td.style.color = k>.55 ? '#fff' : themeInk();
-          td.style.textAlign='center';
-          td.style.fontWeight = k>.8 ? '700':'500';
-        });
+      // Event listeners para filtros de fecha
+      document.getElementById('ronda-general-fecha-inicio')?.addEventListener('change', () => {
+        kpiRondaFilters.fechaInicio = document.getElementById('ronda-general-fecha-inicio').value;
+      });
+
+      document.getElementById('ronda-general-fecha-fin')?.addEventListener('change', () => {
+        kpiRondaFilters.fechaFin = document.getElementById('ronda-general-fecha-fin').value;
+      });
+
+      // Cargar datos iniciales con pequeño delay para asegurar que TODO está inicializado
+      setTimeout(() => {
+        loadKpiRondaData();
+      }, 500);
+    }
+
+    async function loadKpiRondaClientesUnidades() {
+      try {
+        const clienteSelect = document.getElementById('kpi-ronda-cliente');
+        if (!clienteSelect) return;
+
+        // Si es usuario CLIENTE, mostrar SOLO su cliente
+        if (accessControl && accessControl.userType === 'CLIENTE') {
+          const clienteAsignado = accessControl.clienteAsignado;
+          clienteSelect.innerHTML = `<option value="${clienteAsignado}">${clienteAsignado}</option>`;
+          clienteSelect.disabled = true;
+          clienteSelect.style.opacity = '0.6';
+          clienteSelect.title = `Acceso restringido a: ${clienteAsignado}`;
+
+          // Cargar unidades iniciales para CLIENTE
+          await loadRondaGeneralUnidadesByCliente(clienteAsignado);
+        } else {
+          // ADMIN/SUPERVISOR: mostrar todos los clientes
+          const snapshot = await db.collection('CLIENTE_UNIDAD').get();
+          const clientes = [];
+
+          snapshot.docs.forEach(doc => {
+            clientes.push(doc.id);
+          });
+
+          clientes.sort((a, b) => a.localeCompare(b, 'es'));
+
+          clienteSelect.innerHTML = '<option value="">Todos</option>';
+          clientes.forEach(cliente => {
+            const option = document.createElement('option');
+            option.value = cliente;
+            option.textContent = cliente;
+            clienteSelect.appendChild(option);
+          });
+        }
+      } catch (error) {
+        console.error('Error al cargar clientes KPI:', error);
       }
     }
 
-    // Barras por unidad
-    {
-      const map = filtered.reduce((a,c)=>{ const k=c.UNIDAD||'SIN UNIDAD'; a[k]=(a[k]||0)+1; return a; },{});
-      const arr = Object.entries(map).sort((a,b)=>b[1]-a[1]);
-      const labels = arr.map(x=>x[0]);
-      const values = arr.map(x=>x[1]);
-      const total = values.reduce((a,b)=>a+b,0)||1;
-      
-      drawAPChart('ap-chart-unidad', {
-        type:'bar',
-        data:{ 
-          labels, 
-          datasets:[{ 
-            label:'Accesos', 
-            data:values, 
-            backgroundColor: PALETTE.blueLt,
-            borderRadius: 6,
-            borderSkipped: false
-          }]
-        },
-        options:{ 
-          responsive:true, 
-          maintainAspectRatio:false,
-          plugins:{ 
-            legend:{ 
-              display:true,
-              position:'bottom',
-              labels:{ 
-                font:{size:11, weight:'bold'}, 
-                color:themeInk(),
-                padding:12
-              }
-            },
-            datalabels:{ 
-              formatter:(v)=> `${nf.format(v)}\n(${pf(v,total)}%)`, 
-              anchor:'end', 
-              align:'top', 
-              offset:8, 
-              font:{weight:'bold', size:10},
-              color:'#1f2937'
-            },
-            tooltip:{ 
-              callbacks:{ 
-                label:(c)=> `${c.dataset.label}: ${nf.format(c.raw)} (${pf(c.raw,total)}%)`
-              }
-            }
-          },
-          scales:{ 
-            y:{ 
-              ticks:{ color:themeInk() },
-              grid:{ color:'rgba(0,0,0,0.05)' }
-            }, 
-            x:{ 
-              ticks:{ 
-                color:themeInk(), 
-                autoSkip:false, 
-                maxRotation:45, 
-                minRotation:0,
-                font:{ size:10 }
-              },
-              grid:{ display:false }
-            }
-          }
+    async function loadRondaGeneralUnidadesByCliente(cliente) {
+      try {
+        const unidadSelect = document.getElementById('kpi-ronda-unidad');
+        if (!unidadSelect) return;
+
+        console.log(`[RONDA GENERAL] Cargando unidades para cliente: ${cliente}`);
+
+        // Obtener unidades DIRECTAMENTE DE CLIENTE_UNIDAD
+        const unidades = await getUnidadesFromClienteUnidad(cliente);
+        console.log(`[RONDA GENERAL] Unidades encontradas:`, unidades);
+
+        // Limpiar select
+        unidadSelect.innerHTML = '<option value="">Todas</option>';
+
+        // Si usuario es CLIENTE con UNIDAD asignada, mostrar SOLO esa
+        if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
+          const unidadNombre = accessControl.unidadAsignada;
+          unidadSelect.innerHTML = `<option value="${unidadNombre}">${unidadNombre}</option>`;
+          unidadSelect.disabled = true;
+          unidadSelect.style.opacity = '0.6';
+          unidadSelect.title = `Acceso restringido a: ${unidadNombre}`;
+        } else {
+          // Agregar todas las unidades disponibles
+          unidades.forEach(unidad => {
+            const option = document.createElement('option');
+            option.value = unidad;
+            option.textContent = unidad;
+            unidadSelect.appendChild(option);
+          });
         }
-      });
+      } catch (error) {
+        console.error('[RONDA GENERAL] Error al cargar unidades:', error);
+      }
     }
 
-    applyKpiUnifiedHeights();
-  }
+    async function loadKpiRondaData() {
+      try {
+        UI.showOverlay('Cargando...', 'Consultando datos de rondas');
 
-  function drawAPChart(canvasId, config){
-    const el = document.getElementById(canvasId);
-    if (!el) return;
-    if (apCharts[canvasId]) apCharts[canvasId].destroy();
-    apCharts[canvasId] = new Chart(el, config);
-  }
+        // Obtener filtros actuales
+        const clienteSelect = document.getElementById('kpi-ronda-cliente');
+        const unidadSelect = document.getElementById('kpi-ronda-unidad');
 
-  function setCard(el, value){
-    if (!el) return;
-    const n = (typeof value === 'number' && isFinite(value)) ? value : 0;
-    el.textContent = n.toLocaleString('es-PE');
-  }
+        kpiRondaFilters.cliente = clienteSelect?.value || '';
+        kpiRondaFilters.unidad = unidadSelect?.value || '';
 
-  // ============================================================================
-  // 5D) KPI — RONDA GENERAL (FILTROS Y ESTADÍSTICAS)
-  // ============================================================================
-  let kpiRondaFilters = {
-    cliente: '',
-    unidad: '',
-    fechaInicio: '',
-    fechaFin: ''
-  };
+        // Obtener TODOS los documentos
+        const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
+        let registros = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data
+          };
+        });
 
-  function initKpiRondaGeneral() {
-    
-    // Cargar opciones de Cliente y Unidad
-    loadKpiRondaClientesUnidades();
-    
-    // Event listeners de botones
-    document.getElementById('kpi-ronda-aplicar')?.addEventListener('click', () => {
-      loadKpiRondaData();
-    });
-    
-    document.getElementById('kpi-ronda-limpiar')?.addEventListener('click', () => {
-      // Limpiar filtros
-      kpiRondaFilters = {
-        cliente: '',
-        unidad: '',
-        fechaInicio: '',
-        fechaFin: ''
+        // Ordenar por horarioInicio (más recientes primero)
+        registros.sort((a, b) => {
+          const dateA = a.horarioInicio?.toDate?.() || new Date(a.horarioInicio || 0);
+          const dateB = b.horarioInicio?.toDate?.() || new Date(b.horarioInicio || 0);
+          return dateB - dateA;
+        });
+
+        // Filtro por cliente
+        if (kpiRondaFilters.cliente) {
+          registros = registros.filter(r => r.cliente === kpiRondaFilters.cliente);
+        }
+
+        // Filtro por unidad
+        if (kpiRondaFilters.unidad) {
+          registros = registros.filter(r => r.unidad === kpiRondaFilters.unidad);
+        }
+
+        // Filtro por fecha inicio
+        if (kpiRondaFilters.fechaInicio) {
+          const fechaInicio = new Date(kpiRondaFilters.fechaInicio);
+          fechaInicio.setHours(0, 0, 0, 0);
+          registros = registros.filter(r => {
+            const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
+            return fechaRegistro >= fechaInicio;
+          });
+        }
+
+        // Filtro por fecha fin
+        if (kpiRondaFilters.fechaFin) {
+          const fechaFin = new Date(kpiRondaFilters.fechaFin);
+          fechaFin.setHours(23, 59, 59, 999);
+          registros = registros.filter(r => {
+            const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
+            return fechaRegistro <= fechaFin;
+          });
+        }
+
+        // Limitar a 100 últimos registros
+        const ultimos30 = registros.slice(0, 100);
+
+        // Actualizar card de información
+        updateKpiRondaInfoCard(ultimos30);
+
+        UI.hideOverlay();
+      } catch (error) {
+        UI.toast('❌ Error al cargar datos: ' + error.message);
+        UI.hideOverlay();
+      }
+    }
+
+    function updateKpiRondaInfoCard(registros) {
+      // Actualizar total
+      const totalEl = document.getElementById('kpi-ronda-total');
+      if (totalEl) {
+        totalEl.textContent = registros.length.toLocaleString('es-PE');
+      }
+
+      // Actualizar texto de información
+      const infoTextEl = document.getElementById('kpi-ronda-info-text');
+      if (infoTextEl) {
+        if (kpiRondaFilters.cliente || kpiRondaFilters.unidad || kpiRondaFilters.fechaInicio || kpiRondaFilters.fechaFin) {
+          infoTextEl.textContent = 'Registros filtrados';
+        } else {
+          infoTextEl.textContent = 'Últimos 100 registros';
+        }
+      }
+
+      // Actualizar información de filtros
+      const filterInfoEl = document.getElementById('kpi-ronda-filter-info');
+      if (filterInfoEl) {
+        const filters = [];
+        if (kpiRondaFilters.cliente) filters.push(`Cliente: ${kpiRondaFilters.cliente}`);
+        if (kpiRondaFilters.unidad) filters.push(`Unidad: ${kpiRondaFilters.unidad}`);
+        if (kpiRondaFilters.fechaInicio) filters.push(`Desde: ${kpiRondaFilters.fechaInicio}`);
+        if (kpiRondaFilters.fechaFin) filters.push(`Hasta: ${kpiRondaFilters.fechaFin}`);
+
+        if (filters.length > 0) {
+          filterInfoEl.textContent = `🔍 Filtros: ${filters.join(' • ')}`;
+        } else {
+          filterInfoEl.textContent = '🔍 Sin filtros aplicados';
+        }
+      }
+
+      // Cargar gráficos
+      drawKpiRondaCharts(registros);
+
+      // Cargar tabla
+      fillKpiRondaTable(registros);
+    }
+
+    // Gráficos
+    function drawKpiRondaCharts(registros) {
+      drawKpiRondaEstadoChart(registros);
+      drawKpiRondaUnidadesChart(registros);
+      drawKpiRondaFechaChart(registros);
+    }
+
+    // Gráfico de Torta - Estado de Rondas
+    let kpiRondaChartEstado = null;
+    function drawKpiRondaEstadoChart(registros) {
+      const ctx = document.getElementById('kpi-ronda-chart-estado');
+      if (!ctx) return;
+
+      // Contar por estado
+      const estadoCounts = {};
+      registros.forEach(r => {
+        const estado = r.estado || 'No especificado';
+        estadoCounts[estado] = (estadoCounts[estado] || 0) + 1;
+      });
+
+      // Colores por estado
+      const estadoColors = {
+        'TERMINADA': '#22c55e',
+        'INCOMPLETA': '#f59e0b',
+        'NO REALIZADA': '#ef4444',
+        'INCOMPLETADA': '#f59e0b',
+        'No especificado': '#9ca3af'
       };
-      document.getElementById('kpi-ronda-cliente').value = '';
-      document.getElementById('kpi-ronda-unidad').value = '';
-      document.getElementById('ronda-general-fecha-inicio').value = '';
-      document.getElementById('ronda-general-fecha-fin').value = '';
-      
-      // Recargar con filtros vacíos
-      loadKpiRondaData();
-    });
-    
-    // Event listener para cambio de Cliente (actualiza Unidades)
-    document.getElementById('kpi-ronda-cliente')?.addEventListener('change', async () => {
-      const clienteSelect = document.getElementById('kpi-ronda-cliente');
-      const cliente = clienteSelect?.value || '';
-      
-      if (cliente) {
-        console.log('[RONDA GENERAL] Cliente cambió a:', cliente);
-        await loadRondaGeneralUnidadesByCliente(cliente);
-      }
-    });
-    
-    // Event listeners para filtros de fecha
-    document.getElementById('ronda-general-fecha-inicio')?.addEventListener('change', () => {
-      kpiRondaFilters.fechaInicio = document.getElementById('ronda-general-fecha-inicio').value;
-    });
-    
-    document.getElementById('ronda-general-fecha-fin')?.addEventListener('change', () => {
-      kpiRondaFilters.fechaFin = document.getElementById('ronda-general-fecha-fin').value;
-    });
-    
-    // Cargar datos iniciales con pequeño delay para asegurar que TODO está inicializado
-    setTimeout(() => {
-      loadKpiRondaData();
-    }, 500);
-  }
 
-  async function loadKpiRondaClientesUnidades() {
-    try {
-      const clienteSelect = document.getElementById('kpi-ronda-cliente');
-      if (!clienteSelect) return;
+      const labels = Object.keys(estadoCounts);
+      const data = Object.values(estadoCounts);
+      const colors = labels.map(l => estadoColors[l] || '#6366f1');
 
-      // Si es usuario CLIENTE, mostrar SOLO su cliente
-      if (accessControl && accessControl.userType === 'CLIENTE') {
-        const clienteAsignado = accessControl.clienteAsignado;
-        clienteSelect.innerHTML = `<option value="${clienteAsignado}">${clienteAsignado}</option>`;
-        clienteSelect.disabled = true;
-        clienteSelect.style.opacity = '0.6';
-        clienteSelect.title = `Acceso restringido a: ${clienteAsignado}`;
-        
-        // Cargar unidades iniciales para CLIENTE
-        await loadRondaGeneralUnidadesByCliente(clienteAsignado);
-      } else {
-        // ADMIN/SUPERVISOR: mostrar todos los clientes
-        const snapshot = await db.collection('CLIENTE_UNIDAD').get();
-        const clientes = [];
-        
-        snapshot.docs.forEach(doc => {
-          clientes.push(doc.id);
-        });
-        
-        clientes.sort((a, b) => a.localeCompare(b, 'es'));
-        
-        clienteSelect.innerHTML = '<option value="">Todos</option>';
-        clientes.forEach(cliente => {
-          const option = document.createElement('option');
-          option.value = cliente;
-          option.textContent = cliente;
-          clienteSelect.appendChild(option);
-        });
-      }
-    } catch (error) {
-      console.error('Error al cargar clientes KPI:', error);
-    }
-  }
+      // Destruir gráfico anterior si existe
+      if (kpiRondaChartEstado) kpiRondaChartEstado.destroy();
 
-  async function loadRondaGeneralUnidadesByCliente(cliente) {
-    try {
-      const unidadSelect = document.getElementById('kpi-ronda-unidad');
-      if (!unidadSelect) return;
-
-      console.log(`[RONDA GENERAL] Cargando unidades para cliente: ${cliente}`);
-
-      // Obtener unidades DIRECTAMENTE DE CLIENTE_UNIDAD
-      const unidades = await getUnidadesFromClienteUnidad(cliente);
-      console.log(`[RONDA GENERAL] Unidades encontradas:`, unidades);
-
-      // Limpiar select
-      unidadSelect.innerHTML = '<option value="">Todas</option>';
-
-      // Si usuario es CLIENTE con UNIDAD asignada, mostrar SOLO esa
-      if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
-        const unidadNombre = accessControl.unidadAsignada;
-        unidadSelect.innerHTML = `<option value="${unidadNombre}">${unidadNombre}</option>`;
-        unidadSelect.disabled = true;
-        unidadSelect.style.opacity = '0.6';
-        unidadSelect.title = `Acceso restringido a: ${unidadNombre}`;
-      } else {
-        // Agregar todas las unidades disponibles
-        unidades.forEach(unidad => {
-          const option = document.createElement('option');
-          option.value = unidad;
-          option.textContent = unidad;
-          unidadSelect.appendChild(option);
-        });
-      }
-    } catch (error) {
-      console.error('[RONDA GENERAL] Error al cargar unidades:', error);
-    }
-  }
-
-  async function loadKpiRondaData() {
-    try {
-      UI.showOverlay('Cargando...', 'Consultando datos de rondas');
-      
-      // Obtener filtros actuales
-      const clienteSelect = document.getElementById('kpi-ronda-cliente');
-      const unidadSelect = document.getElementById('kpi-ronda-unidad');
-      
-      kpiRondaFilters.cliente = clienteSelect?.value || '';
-      kpiRondaFilters.unidad = unidadSelect?.value || '';
-      
-      // Obtener TODOS los documentos
-      const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
-      let registros = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data
-        };
-      });
-      
-      // Ordenar por horarioInicio (más recientes primero)
-      registros.sort((a, b) => {
-        const dateA = a.horarioInicio?.toDate?.() || new Date(a.horarioInicio || 0);
-        const dateB = b.horarioInicio?.toDate?.() || new Date(b.horarioInicio || 0);
-        return dateB - dateA;
-      });
-      
-      // Filtro por cliente
-      if (kpiRondaFilters.cliente) {
-        registros = registros.filter(r => r.cliente === kpiRondaFilters.cliente);
-      }
-      
-      // Filtro por unidad
-      if (kpiRondaFilters.unidad) {
-        registros = registros.filter(r => r.unidad === kpiRondaFilters.unidad);
-      }
-      
-      // Filtro por fecha inicio
-      if (kpiRondaFilters.fechaInicio) {
-        const fechaInicio = new Date(kpiRondaFilters.fechaInicio);
-        fechaInicio.setHours(0, 0, 0, 0);
-        registros = registros.filter(r => {
-          const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
-          return fechaRegistro >= fechaInicio;
-        });
-      }
-      
-      // Filtro por fecha fin
-      if (kpiRondaFilters.fechaFin) {
-        const fechaFin = new Date(kpiRondaFilters.fechaFin);
-        fechaFin.setHours(23, 59, 59, 999);
-        registros = registros.filter(r => {
-          const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
-          return fechaRegistro <= fechaFin;
-        });
-      }
-      
-      // Limitar a 100 últimos registros
-      const ultimos30 = registros.slice(0, 100);
-      
-      // Actualizar card de información
-      updateKpiRondaInfoCard(ultimos30);
-      
-      UI.hideOverlay();
-    } catch (error) {
-      UI.toast('❌ Error al cargar datos: ' + error.message);
-      UI.hideOverlay();
-    }
-  }
-
-  function updateKpiRondaInfoCard(registros) {
-    // Actualizar total
-    const totalEl = document.getElementById('kpi-ronda-total');
-    if (totalEl) {
-      totalEl.textContent = registros.length.toLocaleString('es-PE');
-    }
-    
-    // Actualizar texto de información
-    const infoTextEl = document.getElementById('kpi-ronda-info-text');
-    if (infoTextEl) {
-      if (kpiRondaFilters.cliente || kpiRondaFilters.unidad || kpiRondaFilters.fechaInicio || kpiRondaFilters.fechaFin) {
-        infoTextEl.textContent = 'Registros filtrados';
-      } else {
-        infoTextEl.textContent = 'Últimos 100 registros';
-      }
-    }
-    
-    // Actualizar información de filtros
-    const filterInfoEl = document.getElementById('kpi-ronda-filter-info');
-    if (filterInfoEl) {
-      const filters = [];
-      if (kpiRondaFilters.cliente) filters.push(`Cliente: ${kpiRondaFilters.cliente}`);
-      if (kpiRondaFilters.unidad) filters.push(`Unidad: ${kpiRondaFilters.unidad}`);
-      if (kpiRondaFilters.fechaInicio) filters.push(`Desde: ${kpiRondaFilters.fechaInicio}`);
-      if (kpiRondaFilters.fechaFin) filters.push(`Hasta: ${kpiRondaFilters.fechaFin}`);
-      
-      if (filters.length > 0) {
-        filterInfoEl.textContent = `🔍 Filtros: ${filters.join(' • ')}`;
-      } else {
-        filterInfoEl.textContent = '🔍 Sin filtros aplicados';
-      }
-    }
-    
-    // Cargar gráficos
-    drawKpiRondaCharts(registros);
-    
-    // Cargar tabla
-    fillKpiRondaTable(registros);
-  }
-
-  // Gráficos
-  function drawKpiRondaCharts(registros) {
-    drawKpiRondaEstadoChart(registros);
-    drawKpiRondaUnidadesChart(registros);
-    drawKpiRondaFechaChart(registros);
-  }
-
-  // Gráfico de Torta - Estado de Rondas
-  let kpiRondaChartEstado = null;
-  function drawKpiRondaEstadoChart(registros) {
-    const ctx = document.getElementById('kpi-ronda-chart-estado');
-    if (!ctx) return;
-    
-    // Contar por estado
-    const estadoCounts = {};
-    registros.forEach(r => {
-      const estado = r.estado || 'No especificado';
-      estadoCounts[estado] = (estadoCounts[estado] || 0) + 1;
-    });
-    
-    // Colores por estado
-    const estadoColors = {
-      'TERMINADA': '#22c55e',
-      'INCOMPLETA': '#f59e0b',
-      'NO REALIZADA': '#ef4444',
-      'INCOMPLETADA': '#f59e0b',
-      'No especificado': '#9ca3af'
-    };
-    
-    const labels = Object.keys(estadoCounts);
-    const data = Object.values(estadoCounts);
-    const colors = labels.map(l => estadoColors[l] || '#6366f1');
-    
-    // Destruir gráfico anterior si existe
-    if (kpiRondaChartEstado) kpiRondaChartEstado.destroy();
-    
-    kpiRondaChartEstado = new Chart(ctx, {
-      type: 'doughnut',
-      data: {
-        labels: labels,
-        datasets: [{
-          data: data,
-          backgroundColor: colors,
-          borderColor: '#fff',
-          borderWidth: 2
-        }]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: true,
-        plugins: {
-          legend: {
-            position: 'bottom',
-            labels: { font: { size: 12 }, padding: 15 }
-          }
-        }
-      }
-    });
-  }
-
-  // Gráfico de Barras - Rondas por Unidad
-  let kpiRondaChartUnidades = null;
-  function drawKpiRondaUnidadesChart(registros) {
-    const ctx = document.getElementById('kpi-ronda-chart-unidades');
-    if (!ctx) return;
-    
-    // Contar por unidad
-    const unidadCounts = {};
-    registros.forEach(r => {
-      const unidad = r.unidad || 'Sin unidad';
-      unidadCounts[unidad] = (unidadCounts[unidad] || 0) + 1;
-    });
-    
-    const labels = Object.keys(unidadCounts).sort();
-    const data = labels.map(l => unidadCounts[l]);
-    
-    // Destruir gráfico anterior si existe
-    if (kpiRondaChartUnidades) kpiRondaChartUnidades.destroy();
-    
-    kpiRondaChartUnidades = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: labels,
-        datasets: [{
-          label: 'Cantidad de Rondas',
-          data: data,
-          backgroundColor: '#3b82f6',
-          borderColor: '#1e40af',
-          borderWidth: 1
-        }]
-      },
-      options: {
-        indexAxis: 'y',
-        responsive: true,
-        maintainAspectRatio: true,
-        plugins: {
-          legend: { display: true, labels: { font: { size: 11 } } }
+      kpiRondaChartEstado = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: data,
+            backgroundColor: colors,
+            borderColor: '#fff',
+            borderWidth: 2
+          }]
         },
-        scales: {
-          x: { beginAtZero: true, ticks: { stepSize: 1 } }
-        }
-      }
-    });
-  }
-
-  // Gráfico de Línea - Rondas por Fecha y Estado
-  let kpiRondaChartFecha = null;
-  function drawKpiRondaFechaChart(registros) {
-    const ctx = document.getElementById('kpi-ronda-chart-fecha');
-    if (!ctx) return;
-    
-    // Función auxiliar para convertir fecha
-    const convertToDate = (value) => {
-      if (!value) return null;
-      
-      // Si es un Timestamp de Firebase (con propiedades _seconds y _nanoseconds)
-      if (value._seconds !== undefined || value._nanoseconds !== undefined) {
-        try {
-          const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
-          return new Date(ms);
-        } catch(e) {
-          return null;
-        }
-      }
-      
-      // Si es un Timestamp de Firebase con segundos y nanoseconds
-      if (value.seconds !== undefined || value.nanoseconds !== undefined) {
-        try {
-          const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
-          return new Date(ms);
-        } catch(e) {
-          return null;
-        }
-      }
-      
-      // Si tiene método toDate()
-      if (value.toDate && typeof value.toDate === 'function') return value.toDate();
-      
-      if (value instanceof Date) return value;
-      if (typeof value === 'string') return new Date(value);
-      return null;
-    };
-    
-    // Agrupar por fecha y estado
-    const dataByDate = {};
-    registros.forEach(r => {
-      const dateObj = convertToDate(r.horarioInicio);
-      if (!dateObj || isNaN(dateObj)) return;
-      
-      const dateStr = dateObj.toLocaleDateString('es-PE');
-      
-      if (!dataByDate[dateStr]) {
-        dataByDate[dateStr] = {
-          'TERMINADA': 0,
-          'INCOMPLETA': 0,
-          'INCOMPLETADA': 0,
-          'NO REALIZADA': 0
-        };
-      }
-      
-      const estado = r.estado || 'NO REALIZADA';
-      dataByDate[dateStr][estado]++;
-    });
-    
-    const labels = Object.keys(dataByDate).sort();
-    const terminadas = labels.map(d => dataByDate[d]['TERMINADA'] || 0);
-    const incompletas = labels.map(d => (dataByDate[d]['INCOMPLETA'] || 0) + (dataByDate[d]['INCOMPLETADA'] || 0));
-    const noRealizadas = labels.map(d => dataByDate[d]['NO REALIZADA'] || 0);
-    
-    // Destruir gráfico anterior si existe
-    if (kpiRondaChartFecha) kpiRondaChartFecha.destroy();
-    
-    kpiRondaChartFecha = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: labels,
-        datasets: [
-          {
-            label: 'Completadas',
-            data: terminadas,
-            borderColor: '#22c55e',
-            backgroundColor: 'rgba(34, 197, 94, 0.1)',
-            borderWidth: 2,
-            tension: 0.4,
-            fill: true
-          },
-          {
-            label: 'Incompletas',
-            data: incompletas,
-            borderColor: '#f59e0b',
-            backgroundColor: 'rgba(245, 158, 11, 0.1)',
-            borderWidth: 2,
-            tension: 0.4,
-            fill: true
-          },
-          {
-            label: 'No realizadas',
-            data: noRealizadas,
-            borderColor: '#ef4444',
-            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-            borderWidth: 2,
-            tension: 0.4,
-            fill: true
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: true,
-        interaction: { mode: 'index', intersect: false },
-        plugins: {
-          legend: { position: 'top', labels: { font: { size: 11 }, usePointStyle: true } }
-        },
-        scales: {
-          x: {
-            ticks: {
-              font: { size: 10 },
-              maxRotation: 45,
-              minRotation: 0
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { font: { size: 12 }, padding: 15 }
             }
-          },
-          y: { 
-            beginAtZero: true, 
-            ticks: { stepSize: 1 },
-            grace: '10%'
           }
         }
-      }
-    });
-  }
-
-  // Tabla de Información
-  function fillKpiRondaTable(registros) {
-    const tbody = document.getElementById('kpi-ronda-tabla-body');
-    if (!tbody) return;
-    
-    tbody.innerHTML = '';
-    
-    if (registros.length === 0) {
-      tbody.innerHTML = '<tr style="border-bottom: 1px solid #e2e8f0;"><td colspan="7" style="padding: 20px; text-align: center; color: #a0aec0;">No hay registros</td></tr>';
-      return;
+      });
     }
-    
-    // Función auxiliar para convertir valor a Date
-    const convertToDate = (value) => {
-      if (!value) return null;
-      
-      // Si es un Timestamp de Firebase (con propiedades _seconds y _nanoseconds)
-      if (value._seconds !== undefined || value._nanoseconds !== undefined) {
-        try {
-          const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
-          return new Date(ms);
-        } catch(e) {
+
+    // Gráfico de Barras - Rondas por Unidad
+    let kpiRondaChartUnidades = null;
+    function drawKpiRondaUnidadesChart(registros) {
+      const ctx = document.getElementById('kpi-ronda-chart-unidades');
+      if (!ctx) return;
+
+      // Contar por unidad
+      const unidadCounts = {};
+      registros.forEach(r => {
+        const unidad = r.unidad || 'Sin unidad';
+        unidadCounts[unidad] = (unidadCounts[unidad] || 0) + 1;
+      });
+
+      const labels = Object.keys(unidadCounts).sort();
+      const data = labels.map(l => unidadCounts[l]);
+
+      // Destruir gráfico anterior si existe
+      if (kpiRondaChartUnidades) kpiRondaChartUnidades.destroy();
+
+      kpiRondaChartUnidades = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Cantidad de Rondas',
+            data: data,
+            backgroundColor: '#3b82f6',
+            borderColor: '#1e40af',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: true,
+          plugins: {
+            legend: { display: true, labels: { font: { size: 11 } } }
+          },
+          scales: {
+            x: { beginAtZero: true, ticks: { stepSize: 1 } }
+          }
         }
-      }
-      
-      // Si es un Timestamp de Firebase con segundos y nanoseconds (sin guión bajo)
-      if (value.seconds !== undefined || value.nanoseconds !== undefined) {
-        try {
-          const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
-          return new Date(ms);
-        } catch(e) {
+      });
+    }
+
+    // Gráfico de Línea - Rondas por Fecha y Estado
+    let kpiRondaChartFecha = null;
+    function drawKpiRondaFechaChart(registros) {
+      const ctx = document.getElementById('kpi-ronda-chart-fecha');
+      if (!ctx) return;
+
+      // Función auxiliar para convertir fecha
+      const convertToDate = (value) => {
+        if (!value) return null;
+
+        // Si es un Timestamp de Firebase (con propiedades _seconds y _nanoseconds)
+        if (value._seconds !== undefined || value._nanoseconds !== undefined) {
+          try {
+            const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
+            return new Date(ms);
+          } catch (e) {
+            return null;
+          }
         }
-      }
-      
-      // Si tiene método toDate()
-      if (value.toDate && typeof value.toDate === 'function') {
-        try {
-          return value.toDate();
-        } catch(e) {
+
+        // Si es un Timestamp de Firebase con segundos y nanoseconds
+        if (value.seconds !== undefined || value.nanoseconds !== undefined) {
+          try {
+            const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
+            return new Date(ms);
+          } catch (e) {
+            return null;
+          }
         }
-      }
-      
-      // Si es una Date normal
-      if (value instanceof Date) return value;
-      
-      // Si es un string ISO
-      if (typeof value === 'string') {
-        try {
-          return new Date(value);
-        } catch(e) {
+
+        // Si tiene método toDate()
+        if (value.toDate && typeof value.toDate === 'function') return value.toDate();
+
+        if (value instanceof Date) return value;
+        if (typeof value === 'string') return new Date(value);
+        return null;
+      };
+
+      // Agrupar por fecha y estado
+      const dataByDate = {};
+      registros.forEach(r => {
+        const dateObj = convertToDate(r.horarioInicio);
+        if (!dateObj || isNaN(dateObj)) return;
+
+        const dateStr = dateObj.toLocaleDateString('es-PE');
+
+        if (!dataByDate[dateStr]) {
+          dataByDate[dateStr] = {
+            'TERMINADA': 0,
+            'INCOMPLETA': 0,
+            'INCOMPLETADA': 0,
+            'NO REALIZADA': 0
+          };
         }
-      }
-      
-      return null;
-    };
-    
-    registros.forEach((r, idx) => {
-      // Debug en primer registro
-      if (idx === 0) {
-      }
-      
-      // Convertir a Date
-      let dateObj = convertToDate(r.horarioInicio);
-      
-      if (idx === 0) {
-      }
-      
-      // Formatear fecha
-      let fecha = '-';
-      let hora = '-';
-      if (dateObj && dateObj instanceof Date && !isNaN(dateObj)) {
-        try {
-          fecha = dateObj.toLocaleDateString('es-PE', { 
-            year: 'numeric', 
-            month: '2-digit', 
-            day: '2-digit'
-          });
-          hora = dateObj.toLocaleTimeString('es-PE', { 
-            hour: '2-digit', 
-            minute: '2-digit',
-            hour12: false
-          });
-        } catch(e) {
+
+        const estado = r.estado || 'NO REALIZADA';
+        dataByDate[dateStr][estado]++;
+      });
+
+      const labels = Object.keys(dataByDate).sort();
+      const terminadas = labels.map(d => dataByDate[d]['TERMINADA'] || 0);
+      const incompletas = labels.map(d => (dataByDate[d]['INCOMPLETA'] || 0) + (dataByDate[d]['INCOMPLETADA'] || 0));
+      const noRealizadas = labels.map(d => dataByDate[d]['NO REALIZADA'] || 0);
+
+      // Destruir gráfico anterior si existe
+      if (kpiRondaChartFecha) kpiRondaChartFecha.destroy();
+
+      kpiRondaChartFecha = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: 'Completadas',
+              data: terminadas,
+              borderColor: '#22c55e',
+              backgroundColor: 'rgba(34, 197, 94, 0.1)',
+              borderWidth: 2,
+              tension: 0.4,
+              fill: true
+            },
+            {
+              label: 'Incompletas',
+              data: incompletas,
+              borderColor: '#f59e0b',
+              backgroundColor: 'rgba(245, 158, 11, 0.1)',
+              borderWidth: 2,
+              tension: 0.4,
+              fill: true
+            },
+            {
+              label: 'No realizadas',
+              data: noRealizadas,
+              borderColor: '#ef4444',
+              backgroundColor: 'rgba(239, 68, 68, 0.1)',
+              borderWidth: 2,
+              tension: 0.4,
+              fill: true
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: { position: 'top', labels: { font: { size: 11 }, usePointStyle: true } }
+          },
+          scales: {
+            x: {
+              ticks: {
+                font: { size: 10 },
+                maxRotation: 45,
+                minRotation: 0
+              }
+            },
+            y: {
+              beginAtZero: true,
+              ticks: { stepSize: 1 },
+              grace: '10%'
+            }
+          }
         }
-      } else {
+      });
+    }
+
+    // Tabla de Información
+    function fillKpiRondaTable(registros) {
+      const tbody = document.getElementById('kpi-ronda-tabla-body');
+      if (!tbody) return;
+
+      tbody.innerHTML = '';
+
+      if (registros.length === 0) {
+        tbody.innerHTML = '<tr style="border-bottom: 1px solid #e2e8f0;"><td colspan="7" style="padding: 20px; text-align: center; color: #a0aec0;">No hay registros</td></tr>';
+        return;
+      }
+
+      // Función auxiliar para convertir valor a Date
+      const convertToDate = (value) => {
+        if (!value) return null;
+
+        // Si es un Timestamp de Firebase (con propiedades _seconds y _nanoseconds)
+        if (value._seconds !== undefined || value._nanoseconds !== undefined) {
+          try {
+            const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
+            return new Date(ms);
+          } catch (e) {
+          }
+        }
+
+        // Si es un Timestamp de Firebase con segundos y nanoseconds (sin guión bajo)
+        if (value.seconds !== undefined || value.nanoseconds !== undefined) {
+          try {
+            const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
+            return new Date(ms);
+          } catch (e) {
+          }
+        }
+
+        // Si tiene método toDate()
+        if (value.toDate && typeof value.toDate === 'function') {
+          try {
+            return value.toDate();
+          } catch (e) {
+          }
+        }
+
+        // Si es una Date normal
+        if (value instanceof Date) return value;
+
+        // Si es un string ISO
+        if (typeof value === 'string') {
+          try {
+            return new Date(value);
+          } catch (e) {
+          }
+        }
+
+        return null;
+      };
+
+      registros.forEach((r, idx) => {
+        // Debug en primer registro
         if (idx === 0) {
         }
-      }
-      
-      if (idx === 0) {
-      }
-      
-      // Contar QR desde el objeto puntosRegistrados (convertir a array si es necesario)
-      let qrRegistrados = 0;
-      let qrSinRegistrar = 0;
-      
-      // Convertir puntosRegistrados a array si es un objeto
-      let puntosArray = Array.isArray(r.puntosRegistrados) 
-        ? r.puntosRegistrados 
-        : (r.puntosRegistrados ? Object.values(r.puntosRegistrados) : []);
-      
-      if (puntosArray.length > 0) {
-        // Iterar sobre cada punto
-        puntosArray.forEach((punto, pIdx) => {
-          if (idx === 0);
-          
-          // Contar el punto actual si tiene qrEscaneado
-          if (punto.qrEscaneado === true) qrRegistrados++;
-          else if (punto.qrEscaneado === false) qrSinRegistrar++;
-        });
-        
+
+        // Convertir a Date
+        let dateObj = convertToDate(r.horarioInicio);
+
         if (idx === 0) {
         }
-      } else {
-        // Fallback: usar puntosCompletados y puntosTotales si no hay datos
-        qrRegistrados = r.puntosCompletados || 0;
-        const qrTotal = r.puntosTotales || 0;
-        qrSinRegistrar = qrTotal - qrRegistrados;
-      }
-      
-      // Color de estado
-      let estadoColor = '#9ca3af';
-      if (r.estado === 'TERMINADA') estadoColor = '#22c55e';
-      else if (r.estado === 'INCOMPLETA' || r.estado === 'INCOMPLETADA') estadoColor = '#f59e0b';
-      else if (r.estado === 'NO REALIZADA') estadoColor = '#ef4444';
-      
-      const row = document.createElement('tr');
-      row.style.borderBottom = '1px solid #e2e8f0';
-      row.innerHTML = `
+
+        // Formatear fecha
+        let fecha = '-';
+        let hora = '-';
+        if (dateObj && dateObj instanceof Date && !isNaN(dateObj)) {
+          try {
+            fecha = dateObj.toLocaleDateString('es-PE', {
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit'
+            });
+            hora = dateObj.toLocaleTimeString('es-PE', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false
+            });
+          } catch (e) {
+          }
+        } else {
+          if (idx === 0) {
+          }
+        }
+
+        if (idx === 0) {
+        }
+
+        // Contar QR desde el objeto puntosRegistrados (convertir a array si es necesario)
+        let qrRegistrados = 0;
+        let qrSinRegistrar = 0;
+
+        // Convertir puntosRegistrados a array si es un objeto
+        let puntosArray = Array.isArray(r.puntosRegistrados)
+          ? r.puntosRegistrados
+          : (r.puntosRegistrados ? Object.values(r.puntosRegistrados) : []);
+
+        if (puntosArray.length > 0) {
+          // Iterar sobre cada punto
+          puntosArray.forEach((punto, pIdx) => {
+            if (idx === 0);
+
+            // Contar el punto actual si tiene qrEscaneado
+            if (punto.qrEscaneado === true) qrRegistrados++;
+            else if (punto.qrEscaneado === false) qrSinRegistrar++;
+          });
+
+          if (idx === 0) {
+          }
+        } else {
+          // Fallback: usar puntosCompletados y puntosTotales si no hay datos
+          qrRegistrados = r.puntosCompletados || 0;
+          const qrTotal = r.puntosTotales || 0;
+          qrSinRegistrar = qrTotal - qrRegistrados;
+        }
+
+        // Color de estado
+        let estadoColor = '#9ca3af';
+        if (r.estado === 'TERMINADA') estadoColor = '#22c55e';
+        else if (r.estado === 'INCOMPLETA' || r.estado === 'INCOMPLETADA') estadoColor = '#f59e0b';
+        else if (r.estado === 'NO REALIZADA') estadoColor = '#ef4444';
+
+        const row = document.createElement('tr');
+        row.style.borderBottom = '1px solid #e2e8f0';
+        row.innerHTML = `
         <td style="padding: 12px; border-right: 1px solid #e2e8f0; font-family: monospace; font-size: 12px;">${fecha}</td>
         <td style="padding: 12px; border-right: 1px solid #e2e8f0; font-family: monospace; font-size: 12px;">${hora}</td>
         <td style="padding: 12px; border-right: 1px solid #e2e8f0; font-size: 12px;">${r.unidad || '-'}</td>
@@ -3797,379 +3815,379 @@ document.addEventListener('DOMContentLoaded', () => {
           </span>
         </td>
       `;
-      tbody.appendChild(row);
-    });
-  }
-
-  // ============================================================================
-  // 5E) KPI — DETALLE DE RONDAS (TABLA COMPLETA CON FILTROS Y EXPORTACIÓN)
-  // ============================================================================
-  let detalleRondasFilters = {
-    cliente: '',
-    unidad: '',
-    estado: '',
-    fechaInicio: '',
-    fechaFin: ''
-  };
-
-  function initDetalleRondas() {
-    
-    // Cargar opciones de Cliente y Unidad
-    loadDetalleRondasClientesUnidades();
-    
-    // Event listeners de botones
-    document.getElementById('detalle-rondas-aplicar')?.addEventListener('click', () => {
-      loadDetalleRondasData();
-    });
-    
-    document.getElementById('detalle-rondas-limpiar')?.addEventListener('click', () => {
-      detalleRondasFilters = {
-        cliente: '',
-        unidad: '',
-        estado: '',
-        fechaInicio: '',
-        fechaFin: ''
-      };
-      document.getElementById('detalle-rondas-cliente').value = '';
-      document.getElementById('detalle-rondas-unidad').value = '';
-      document.getElementById('detalle-rondas-estado').value = '';
-      document.getElementById('detalle-rondas-fecha-inicio').value = '';
-      document.getElementById('detalle-rondas-fecha-fin').value = '';
-      
-      loadDetalleRondasData();
-    });
-    
-    document.getElementById('detalle-rondas-exportar')?.addEventListener('click', () => {
-      exportDetalleRondasToExcel();
-    });
-
-    document.getElementById('detalle-rondas-pdf')?.addEventListener('click', () => {
-      exportDetalleRondasToPDF();
-    });
-    
-    // Event listener para cambio de Cliente
-    document.getElementById('detalle-rondas-cliente')?.addEventListener('change', () => {
-      loadDetalleRondasUnidadesPorCliente();
-    });
-    
-    // Event listeners para filtros de fecha
-    document.getElementById('detalle-rondas-fecha-inicio')?.addEventListener('change', () => {
-      detalleRondasFilters.fechaInicio = document.getElementById('detalle-rondas-fecha-inicio').value;
-    });
-    
-    document.getElementById('detalle-rondas-fecha-fin')?.addEventListener('change', () => {
-      detalleRondasFilters.fechaFin = document.getElementById('detalle-rondas-fecha-fin').value;
-    });
-    
-    // Cargar datos iniciales
-    setTimeout(() => {
-      loadDetalleRondasData();
-    }, 500);
-  }
-
-  async function loadDetalleRondasClientesUnidades() {
-    try {
-      const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
-      const clientes = new Set();
-      
-      snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        if (data.cliente) clientes.add(data.cliente);
+        tbody.appendChild(row);
       });
-      
-      const clienteSelect = document.getElementById('detalle-rondas-cliente');
-      if (clienteSelect) {
-        clientes.forEach(cliente => {
-          const option = document.createElement('option');
-          option.value = cliente;
-          option.textContent = cliente;
-          clienteSelect.appendChild(option);
-        });
-      }
-    } catch (error) {
     }
-  }
 
-  async function loadDetalleRondasUnidadesPorCliente() {
-    try {
-      const clienteSelect = document.getElementById('detalle-rondas-cliente');
-      const cliente = clienteSelect?.value || '';
-      const unidadSelect = document.getElementById('detalle-rondas-unidad');
-      
-      while (unidadSelect.options.length > 1) {
-        unidadSelect.remove(1);
-      }
-      
-      if (!cliente) return;
-      
-      const snapshot = await db.collection('RONDAS_COMPLETADAS')
-        .where('cliente', '==', cliente)
-        .get();
-      
-      const unidades = new Set();
-      snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        if (data.unidad) unidades.add(data.unidad);
-      });
-      
-      unidades.forEach(unidad => {
-        const option = document.createElement('option');
-        option.value = unidad;
-        option.textContent = unidad;
-        unidadSelect.appendChild(option);
-      });
-    } catch (error) {
-    }
-  }
-
-  async function loadDetalleRondasData() {
-    try {
-      UI.showOverlay('Cargando...', 'Consultando datos de rondas');
-      
-      const clienteSelect = document.getElementById('detalle-rondas-cliente');
-      const unidadSelect = document.getElementById('detalle-rondas-unidad');
-      const estadoSelect = document.getElementById('detalle-rondas-estado');
-      
-      detalleRondasFilters.cliente = clienteSelect?.value || '';
-      detalleRondasFilters.unidad = unidadSelect?.value || '';
-      detalleRondasFilters.estado = estadoSelect?.value || '';
-      
-      const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
-      let registros = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          ...data
-        };
-      });
-      
-      // Ordenar por horarioInicio descendente
-      registros.sort((a, b) => {
-        const dateA = a.horarioInicio?.toDate?.() || new Date(a.horarioInicio || 0);
-        const dateB = b.horarioInicio?.toDate?.() || new Date(b.horarioInicio || 0);
-        return dateB - dateA;
-      });
-      
-      // Aplicar filtros de cliente, unidad, estado
-      if (detalleRondasFilters.cliente) {
-        registros = registros.filter(r => r.cliente === detalleRondasFilters.cliente);
-      }
-      
-      if (detalleRondasFilters.unidad) {
-        registros = registros.filter(r => r.unidad === detalleRondasFilters.unidad);
-      }
-      
-      if (detalleRondasFilters.estado) {
-        registros = registros.filter(r => r.estado === detalleRondasFilters.estado);
-      }
-      
-      // Filtro por fecha inicio
-      if (detalleRondasFilters.fechaInicio) {
-        const fechaInicio = new Date(detalleRondasFilters.fechaInicio);
-        fechaInicio.setHours(0, 0, 0, 0);
-        registros = registros.filter(r => {
-          const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
-          return fechaRegistro >= fechaInicio;
-        });
-      }
-      
-      // Filtro por fecha fin
-      if (detalleRondasFilters.fechaFin) {
-        const fechaFin = new Date(detalleRondasFilters.fechaFin);
-        fechaFin.setHours(23, 59, 59, 999);
-        registros = registros.filter(r => {
-          const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
-          return fechaRegistro <= fechaFin;
-        });
-      }
-      
-      // Limitar a 100 registros
-      const ultimos30 = registros.slice(0, 100);
-      
-      // Actualizar información
-      updateDetalleRondasInfo(ultimos30);
-      
-      // Llenar tabla
-      fillDetalleRondasTable(ultimos30);
-      
-      UI.hideOverlay();
-    } catch (error) {
-      UI.toast('❌ Error al cargar datos: ' + error.message);
-      UI.hideOverlay();
-    }
-  }
-
-  function updateDetalleRondasInfo(registros) {
-    const totalEl = document.getElementById('detalle-rondas-total');
-    if (totalEl) {
-      totalEl.textContent = registros.length.toLocaleString('es-PE');
-    }
-    
-    const infoTextEl = document.getElementById('detalle-rondas-info-text');
-    if (infoTextEl) {
-      if (detalleRondasFilters.cliente || detalleRondasFilters.unidad || detalleRondasFilters.estado || detalleRondasFilters.fechaInicio || detalleRondasFilters.fechaFin) {
-        infoTextEl.textContent = 'Registros filtrados (últimos 100)';
-      } else {
-        infoTextEl.textContent = 'Últimos 100 registros';
-      }
-    }
-  }
-
-  function fillDetalleRondasTable(registros) {
-    const tbody = document.getElementById('detalle-rondas-tabla-body');
-    if (!tbody) return;
-    
-    tbody.innerHTML = '';
-    
-    if (registros.length === 0) {
-      tbody.innerHTML = '<tr style="border-bottom: 1px solid #e2e8f0;"><td colspan="9" style="padding: 20px; text-align: center; color: #a0aec0;">No hay registros</td></tr>';
-      return;
-    }
-    
-    const convertToDate = (value) => {
-      if (!value) return null;
-      
-      // Si es un Timestamp de Firebase (con propiedades _seconds y _nanoseconds)
-      if (value._seconds !== undefined || value._nanoseconds !== undefined) {
-        try {
-          const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
-          return new Date(ms);
-        } catch(e) {
-          return null;
-        }
-      }
-      
-      if (value.seconds !== undefined || value.nanoseconds !== undefined) {
-        try {
-          const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
-          return new Date(ms);
-        } catch(e) {
-          return null;
-        }
-      }
-      
-      if (value.toDate && typeof value.toDate === 'function') {
-        try {
-          return value.toDate();
-        } catch(e) {
-          return null;
-        }
-      }
-      
-      if (value instanceof Date) return value;
-      
-      if (typeof value === 'string') {
-        try {
-          return new Date(value);
-        } catch(e) {
-          return null;
-        }
-      }
-      
-      return null;
+    // ============================================================================
+    // 5E) KPI — DETALLE DE RONDAS (TABLA COMPLETA CON FILTROS Y EXPORTACIÓN)
+    // ============================================================================
+    let detalleRondasFilters = {
+      cliente: '',
+      unidad: '',
+      estado: '',
+      fechaInicio: '',
+      fechaFin: ''
     };
-    
-    registros.forEach(r => {
-      let fechaInicio = '-';
-      let horaInicio = '-';
-      let horaTermino = '-';
-      
-      const dateInicio = convertToDate(r.horarioInicio);
-      if (dateInicio && dateInicio instanceof Date && !isNaN(dateInicio)) {
-        fechaInicio = dateInicio.toLocaleDateString('es-PE', { 
-          year: 'numeric', 
-          month: '2-digit', 
-          day: '2-digit'
+
+    function initDetalleRondas() {
+
+      // Cargar opciones de Cliente y Unidad
+      loadDetalleRondasClientesUnidades();
+
+      // Event listeners de botones
+      document.getElementById('detalle-rondas-aplicar')?.addEventListener('click', () => {
+        loadDetalleRondasData();
+      });
+
+      document.getElementById('detalle-rondas-limpiar')?.addEventListener('click', () => {
+        detalleRondasFilters = {
+          cliente: '',
+          unidad: '',
+          estado: '',
+          fechaInicio: '',
+          fechaFin: ''
+        };
+        document.getElementById('detalle-rondas-cliente').value = '';
+        document.getElementById('detalle-rondas-unidad').value = '';
+        document.getElementById('detalle-rondas-estado').value = '';
+        document.getElementById('detalle-rondas-fecha-inicio').value = '';
+        document.getElementById('detalle-rondas-fecha-fin').value = '';
+
+        loadDetalleRondasData();
+      });
+
+      document.getElementById('detalle-rondas-exportar')?.addEventListener('click', () => {
+        exportDetalleRondasToExcel();
+      });
+
+      document.getElementById('detalle-rondas-pdf')?.addEventListener('click', () => {
+        exportDetalleRondasToPDF();
+      });
+
+      // Event listener para cambio de Cliente
+      document.getElementById('detalle-rondas-cliente')?.addEventListener('change', () => {
+        loadDetalleRondasUnidadesPorCliente();
+      });
+
+      // Event listeners para filtros de fecha
+      document.getElementById('detalle-rondas-fecha-inicio')?.addEventListener('change', () => {
+        detalleRondasFilters.fechaInicio = document.getElementById('detalle-rondas-fecha-inicio').value;
+      });
+
+      document.getElementById('detalle-rondas-fecha-fin')?.addEventListener('change', () => {
+        detalleRondasFilters.fechaFin = document.getElementById('detalle-rondas-fecha-fin').value;
+      });
+
+      // Cargar datos iniciales
+      setTimeout(() => {
+        loadDetalleRondasData();
+      }, 500);
+    }
+
+    async function loadDetalleRondasClientesUnidades() {
+      try {
+        const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
+        const clientes = new Set();
+
+        snapshot.docs.forEach(doc => {
+          const data = doc.data();
+          if (data.cliente) clientes.add(data.cliente);
         });
+
+        const clienteSelect = document.getElementById('detalle-rondas-cliente');
+        if (clienteSelect) {
+          clientes.forEach(cliente => {
+            const option = document.createElement('option');
+            option.value = cliente;
+            option.textContent = cliente;
+            clienteSelect.appendChild(option);
+          });
+        }
+      } catch (error) {
       }
-      
-      // Usar horarioRonda directamente (es la hora programada correcta en formato "HH:MM")
-      // horarioInicio puede tener desajustes de zona horaria por cómo se construye en Cloud Functions
-      if (r.horarioRonda && typeof r.horarioRonda === 'string' && r.horarioRonda.includes(':')) {
-        horaInicio = r.horarioRonda;
-      } else if (r.horarioInicio) {
-        // Fallback: Si no hay horarioRonda, convertir correctamente el Timestamp a hora Perú (UTC-5)
-        const dateInicio2 = convertToDate(r.horarioInicio);
-        if (dateInicio2 && dateInicio2 instanceof Date && !isNaN(dateInicio2)) {
-          // El Timestamp está en UTC (después de corrección en Cloud Functions)
-          // Convertir a hora Perú (UTC-5): restar 5 horas
-          // Ej: Si UTC es 23:10, Perú es 18:10
-          const utcHoras = dateInicio2.getUTCHours();
-          const utcMinutos = dateInicio2.getUTCMinutes();
-          
+    }
+
+    async function loadDetalleRondasUnidadesPorCliente() {
+      try {
+        const clienteSelect = document.getElementById('detalle-rondas-cliente');
+        const cliente = clienteSelect?.value || '';
+        const unidadSelect = document.getElementById('detalle-rondas-unidad');
+
+        while (unidadSelect.options.length > 1) {
+          unidadSelect.remove(1);
+        }
+
+        if (!cliente) return;
+
+        const snapshot = await db.collection('RONDAS_COMPLETADAS')
+          .where('cliente', '==', cliente)
+          .get();
+
+        const unidades = new Set();
+        snapshot.docs.forEach(doc => {
+          const data = doc.data();
+          if (data.unidad) unidades.add(data.unidad);
+        });
+
+        unidades.forEach(unidad => {
+          const option = document.createElement('option');
+          option.value = unidad;
+          option.textContent = unidad;
+          unidadSelect.appendChild(option);
+        });
+      } catch (error) {
+      }
+    }
+
+    async function loadDetalleRondasData() {
+      try {
+        UI.showOverlay('Cargando...', 'Consultando datos de rondas');
+
+        const clienteSelect = document.getElementById('detalle-rondas-cliente');
+        const unidadSelect = document.getElementById('detalle-rondas-unidad');
+        const estadoSelect = document.getElementById('detalle-rondas-estado');
+
+        detalleRondasFilters.cliente = clienteSelect?.value || '';
+        detalleRondasFilters.unidad = unidadSelect?.value || '';
+        detalleRondasFilters.estado = estadoSelect?.value || '';
+
+        const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
+        let registros = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: doc.id,
+            ...data
+          };
+        });
+
+        // Ordenar por horarioInicio descendente
+        registros.sort((a, b) => {
+          const dateA = a.horarioInicio?.toDate?.() || new Date(a.horarioInicio || 0);
+          const dateB = b.horarioInicio?.toDate?.() || new Date(b.horarioInicio || 0);
+          return dateB - dateA;
+        });
+
+        // Aplicar filtros de cliente, unidad, estado
+        if (detalleRondasFilters.cliente) {
+          registros = registros.filter(r => r.cliente === detalleRondasFilters.cliente);
+        }
+
+        if (detalleRondasFilters.unidad) {
+          registros = registros.filter(r => r.unidad === detalleRondasFilters.unidad);
+        }
+
+        if (detalleRondasFilters.estado) {
+          registros = registros.filter(r => r.estado === detalleRondasFilters.estado);
+        }
+
+        // Filtro por fecha inicio
+        if (detalleRondasFilters.fechaInicio) {
+          const fechaInicio = new Date(detalleRondasFilters.fechaInicio);
+          fechaInicio.setHours(0, 0, 0, 0);
+          registros = registros.filter(r => {
+            const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
+            return fechaRegistro >= fechaInicio;
+          });
+        }
+
+        // Filtro por fecha fin
+        if (detalleRondasFilters.fechaFin) {
+          const fechaFin = new Date(detalleRondasFilters.fechaFin);
+          fechaFin.setHours(23, 59, 59, 999);
+          registros = registros.filter(r => {
+            const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
+            return fechaRegistro <= fechaFin;
+          });
+        }
+
+        // Limitar a 100 registros
+        const ultimos30 = registros.slice(0, 100);
+
+        // Actualizar información
+        updateDetalleRondasInfo(ultimos30);
+
+        // Llenar tabla
+        fillDetalleRondasTable(ultimos30);
+
+        UI.hideOverlay();
+      } catch (error) {
+        UI.toast('❌ Error al cargar datos: ' + error.message);
+        UI.hideOverlay();
+      }
+    }
+
+    function updateDetalleRondasInfo(registros) {
+      const totalEl = document.getElementById('detalle-rondas-total');
+      if (totalEl) {
+        totalEl.textContent = registros.length.toLocaleString('es-PE');
+      }
+
+      const infoTextEl = document.getElementById('detalle-rondas-info-text');
+      if (infoTextEl) {
+        if (detalleRondasFilters.cliente || detalleRondasFilters.unidad || detalleRondasFilters.estado || detalleRondasFilters.fechaInicio || detalleRondasFilters.fechaFin) {
+          infoTextEl.textContent = 'Registros filtrados (últimos 100)';
+        } else {
+          infoTextEl.textContent = 'Últimos 100 registros';
+        }
+      }
+    }
+
+    function fillDetalleRondasTable(registros) {
+      const tbody = document.getElementById('detalle-rondas-tabla-body');
+      if (!tbody) return;
+
+      tbody.innerHTML = '';
+
+      if (registros.length === 0) {
+        tbody.innerHTML = '<tr style="border-bottom: 1px solid #e2e8f0;"><td colspan="9" style="padding: 20px; text-align: center; color: #a0aec0;">No hay registros</td></tr>';
+        return;
+      }
+
+      const convertToDate = (value) => {
+        if (!value) return null;
+
+        // Si es un Timestamp de Firebase (con propiedades _seconds y _nanoseconds)
+        if (value._seconds !== undefined || value._nanoseconds !== undefined) {
+          try {
+            const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
+            return new Date(ms);
+          } catch (e) {
+            return null;
+          }
+        }
+
+        if (value.seconds !== undefined || value.nanoseconds !== undefined) {
+          try {
+            const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
+            return new Date(ms);
+          } catch (e) {
+            return null;
+          }
+        }
+
+        if (value.toDate && typeof value.toDate === 'function') {
+          try {
+            return value.toDate();
+          } catch (e) {
+            return null;
+          }
+        }
+
+        if (value instanceof Date) return value;
+
+        if (typeof value === 'string') {
+          try {
+            return new Date(value);
+          } catch (e) {
+            return null;
+          }
+        }
+
+        return null;
+      };
+
+      registros.forEach(r => {
+        let fechaInicio = '-';
+        let horaInicio = '-';
+        let horaTermino = '-';
+
+        const dateInicio = convertToDate(r.horarioInicio);
+        if (dateInicio && dateInicio instanceof Date && !isNaN(dateInicio)) {
+          fechaInicio = dateInicio.toLocaleDateString('es-PE', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          });
+        }
+
+        // Usar horarioRonda directamente (es la hora programada correcta en formato "HH:MM")
+        // horarioInicio puede tener desajustes de zona horaria por cómo se construye en Cloud Functions
+        if (r.horarioRonda && typeof r.horarioRonda === 'string' && r.horarioRonda.includes(':')) {
+          horaInicio = r.horarioRonda;
+        } else if (r.horarioInicio) {
+          // Fallback: Si no hay horarioRonda, convertir correctamente el Timestamp a hora Perú (UTC-5)
+          const dateInicio2 = convertToDate(r.horarioInicio);
+          if (dateInicio2 && dateInicio2 instanceof Date && !isNaN(dateInicio2)) {
+            // El Timestamp está en UTC (después de corrección en Cloud Functions)
+            // Convertir a hora Perú (UTC-5): restar 5 horas
+            // Ej: Si UTC es 23:10, Perú es 18:10
+            const utcHoras = dateInicio2.getUTCHours();
+            const utcMinutos = dateInicio2.getUTCMinutes();
+
+            // Restar 5 horas para obtener la hora de Perú
+            let peruHoras = utcHoras - 5;
+            let peruMinutos = utcMinutos;
+
+            // Ajustar si resulta negativo (día anterior)
+            if (peruHoras < 0) {
+              peruHoras += 24;
+            }
+
+            const hh = String(peruHoras).padStart(2, '0');
+            const mm = String(peruMinutos).padStart(2, '0');
+            horaInicio = `${hh}:${mm}`;
+          }
+        }
+
+        const dateTermino = convertToDate(r.horarioTermino);
+        if (dateTermino && dateTermino instanceof Date && !isNaN(dateTermino)) {
+          // Convertir correctamente a hora Perú (UTC-5)
+          const utcHoras = dateTermino.getUTCHours();
+          const utcMinutos = dateTermino.getUTCMinutes();
+
           // Restar 5 horas para obtener la hora de Perú
           let peruHoras = utcHoras - 5;
           let peruMinutos = utcMinutos;
-          
+
           // Ajustar si resulta negativo (día anterior)
           if (peruHoras < 0) {
             peruHoras += 24;
           }
-          
+
           const hh = String(peruHoras).padStart(2, '0');
           const mm = String(peruMinutos).padStart(2, '0');
-          horaInicio = `${hh}:${mm}`;
+          horaTermino = `${hh}:${mm}`;
         }
-      }
-      
-      const dateTermino = convertToDate(r.horarioTermino);
-      if (dateTermino && dateTermino instanceof Date && !isNaN(dateTermino)) {
-        // Convertir correctamente a hora Perú (UTC-5)
-        const utcHoras = dateTermino.getUTCHours();
-        const utcMinutos = dateTermino.getUTCMinutes();
-        
-        // Restar 5 horas para obtener la hora de Perú
-        let peruHoras = utcHoras - 5;
-        let peruMinutos = utcMinutos;
-        
-        // Ajustar si resulta negativo (día anterior)
-        if (peruHoras < 0) {
-          peruHoras += 24;
+
+        const estado = r.estado || 'N/A';
+
+        // Clase CSS según estado
+        let estadoClass = '';
+        if (estado === 'TERMINADA') {
+          estadoClass = 'estado-badge terminada';
+        } else if (estado === 'INCOMPLETA' || estado === 'INCOMPLETADA') {
+          estadoClass = 'estado-badge incompletada';
+        } else if (estado === 'NO REALIZADA') {
+          estadoClass = 'estado-badge no-realizada';
         }
-        
-        const hh = String(peruHoras).padStart(2, '0');
-        const mm = String(peruMinutos).padStart(2, '0');
-        horaTermino = `${hh}:${mm}`;
-      }
-      
-      const estado = r.estado || 'N/A';
-      
-      // Clase CSS según estado
-      let estadoClass = '';
-      if (estado === 'TERMINADA') {
-        estadoClass = 'estado-badge terminada';
-      } else if (estado === 'INCOMPLETA' || estado === 'INCOMPLETADA') {
-        estadoClass = 'estado-badge incompletada';
-      } else if (estado === 'NO REALIZADA') {
-        estadoClass = 'estado-badge no-realizada';
-      }
-      
-      // Contar QR desde el objeto puntosRegistrados (convertir a array si es necesario)
-      let qrRegistrados = 0;
-      let qrSinRegistrar = 0;
-      
-      // Convertir puntosRegistrados a array si es un objeto
-      let puntosArray = Array.isArray(r.puntosRegistrados) 
-        ? r.puntosRegistrados 
-        : (r.puntosRegistrados ? Object.values(r.puntosRegistrados) : []);
-      
-      if (puntosArray.length > 0) {
-        // Iterar sobre cada punto
-        puntosArray.forEach(punto => {
-          // Contar el punto actual si tiene qrEscaneado
-          if (punto.qrEscaneado === true) qrRegistrados++;
-          else if (punto.qrEscaneado === false) qrSinRegistrar++;
-        });
-      } else {
-        // Fallback: usar puntosCompletados y puntosTotales si no hay datos
-        qrRegistrados = r.puntosCompletados || 0;
-        const qrTotal = r.puntosTotales || 0;
-        qrSinRegistrar = qrTotal - qrRegistrados;
-      }
-      
-      const row = document.createElement('tr');
-      row.style.borderBottom = '1px solid #e2e8f0';
-      row.innerHTML = `
+
+        // Contar QR desde el objeto puntosRegistrados (convertir a array si es necesario)
+        let qrRegistrados = 0;
+        let qrSinRegistrar = 0;
+
+        // Convertir puntosRegistrados a array si es un objeto
+        let puntosArray = Array.isArray(r.puntosRegistrados)
+          ? r.puntosRegistrados
+          : (r.puntosRegistrados ? Object.values(r.puntosRegistrados) : []);
+
+        if (puntosArray.length > 0) {
+          // Iterar sobre cada punto
+          puntosArray.forEach(punto => {
+            // Contar el punto actual si tiene qrEscaneado
+            if (punto.qrEscaneado === true) qrRegistrados++;
+            else if (punto.qrEscaneado === false) qrSinRegistrar++;
+          });
+        } else {
+          // Fallback: usar puntosCompletados y puntosTotales si no hay datos
+          qrRegistrados = r.puntosCompletados || 0;
+          const qrTotal = r.puntosTotales || 0;
+          qrSinRegistrar = qrTotal - qrRegistrados;
+        }
+
+        const row = document.createElement('tr');
+        row.style.borderBottom = '1px solid #e2e8f0';
+        row.innerHTML = `
         <td style="padding: 12px; border-right: 1px solid #e2e8f0;">${fechaInicio}</td>
         <td style="padding: 12px; border-right: 1px solid #e2e8f0;">${horaInicio}</td>
         <td style="padding: 12px; border-right: 1px solid #e2e8f0;">${horaTermino}</td>
@@ -4187,480 +4205,164 @@ document.addEventListener('DOMContentLoaded', () => {
           </button>
         </td>
       `;
-      tbody.appendChild(row);
-    });
-  }
-
-  function exportDetalleRondasToExcel() {
-    try {
-      const tbody = document.getElementById('detalle-rondas-tabla-body');
-      if (!tbody) {
-        UI.toast('❌ No se encontró la tabla');
-        return;
-      }
-
-      const rows = tbody.querySelectorAll('tr');
-      if (rows.length === 0) {
-        UI.toast('⚠️ No hay datos para exportar');
-        return;
-      }
-      
-      const datos = [];
-      
-      // Encabezados (sin la columna Acciones)
-      datos.push([
-        'Fecha',
-        'Hora Inicio',
-        'Hora Término',
-        'Cliente',
-        'Unidad',
-        'Nombre de Ronda',
-        'QR Registrados',
-        'QR Sin Registrar',
-        'Estado'
-      ]);
-      
-      // Filas
-      let rowsExportadas = 0;
-      rows.forEach(row => {
-        const cells = row.querySelectorAll('td');
-        // Ahora hay 10 celdas (incluida la de Acciones), pero exportamos solo las primeras 9
-        if (cells.length >= 9) {
-          datos.push([
-            cells[0].textContent.trim(),
-            cells[1].textContent.trim(),
-            cells[2].textContent.trim(),
-            cells[3].textContent.trim(),
-            cells[4].textContent.trim(),
-            cells[5].textContent.trim(),
-            cells[6].textContent.trim(),
-            cells[7].textContent.trim(),
-            cells[8].textContent.trim()
-          ]);
-          rowsExportadas++;
-        }
+        tbody.appendChild(row);
       });
-      
-      // Verificar si hay datos
-      if (rowsExportadas === 0) {
-        UI.toast('⚠️ No hay registros válidos para exportar');
-        return;
-      }
-      // Crear hoja de cálculo
-      const worksheet = XLSX.utils.aoa_to_sheet(datos);
-      
-      // Ajustar ancho de columnas
-      const colWidths = [15, 15, 15, 15, 15, 20, 15, 15, 15];
-      worksheet['!cols'] = colWidths.map(w => ({ wch: w }));
-      
-      // Crear libro
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Rondas Completadas');
-      
-      // Descargar
-      const fileName = `DetalleRondas_${moment().format('YYYYMMDD_HHmmss')}.xlsx`;
-      XLSX.writeFile(workbook, fileName);
-      
-      UI.toast(`✅ ${rowsExportadas} registros exportados correctamente`);
-    } catch (error) {
-      UI.toast('❌ Error al exportar: ' + error.message);
     }
-  }
 
-  // Función para exportar Detalle de Rondas a PDF con gráfico
-  async function exportDetalleRondasToPDF() {
-    try {
-      const tbody = document.getElementById('detalle-rondas-tabla-body');
-      if (!tbody || tbody.querySelectorAll('tr').length === 0) {
-        UI.toast('No hay datos para exportar');
-        return;
-      }
-
-      UI.showOverlay();
-
-      // Cargar logo como base64
-      let logoBase64 = null;
+    function exportDetalleRondasToExcel() {
       try {
-        const logoResponse = await fetch('logo_liberman.png');
-        const logoBlob = await logoResponse.blob();
-        logoBase64 = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(logoBlob);
+        const tbody = document.getElementById('detalle-rondas-tabla-body');
+        if (!tbody) {
+          UI.toast('❌ No se encontró la tabla');
+          return;
+        }
+
+        const rows = tbody.querySelectorAll('tr');
+        if (rows.length === 0) {
+          UI.toast('⚠️ No hay datos para exportar');
+          return;
+        }
+
+        const datos = [];
+
+        // Encabezados (sin la columna Acciones)
+        datos.push([
+          'Fecha',
+          'Hora Inicio',
+          'Hora Término',
+          'Cliente',
+          'Unidad',
+          'Nombre de Ronda',
+          'QR Registrados',
+          'QR Sin Registrar',
+          'Estado'
+        ]);
+
+        // Filas
+        let rowsExportadas = 0;
+        rows.forEach(row => {
+          const cells = row.querySelectorAll('td');
+          // Ahora hay 10 celdas (incluida la de Acciones), pero exportamos solo las primeras 9
+          if (cells.length >= 9) {
+            datos.push([
+              cells[0].textContent.trim(),
+              cells[1].textContent.trim(),
+              cells[2].textContent.trim(),
+              cells[3].textContent.trim(),
+              cells[4].textContent.trim(),
+              cells[5].textContent.trim(),
+              cells[6].textContent.trim(),
+              cells[7].textContent.trim(),
+              cells[8].textContent.trim()
+            ]);
+            rowsExportadas++;
+          }
         });
-      } catch (e) {
+
+        // Verificar si hay datos
+        if (rowsExportadas === 0) {
+          UI.toast('⚠️ No hay registros válidos para exportar');
+          return;
+        }
+        // Crear hoja de cálculo
+        const worksheet = XLSX.utils.aoa_to_sheet(datos);
+
+        // Ajustar ancho de columnas
+        const colWidths = [15, 15, 15, 15, 15, 20, 15, 15, 15];
+        worksheet['!cols'] = colWidths.map(w => ({ wch: w }));
+
+        // Crear libro
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, 'Rondas Completadas');
+
+        // Descargar
+        const fileName = `DetalleRondas_${moment().format('YYYYMMDD_HHmmss')}.xlsx`;
+        XLSX.writeFile(workbook, fileName);
+
+        UI.toast(`✅ ${rowsExportadas} registros exportados correctamente`);
+      } catch (error) {
+        UI.toast('❌ Error al exportar: ' + error.message);
       }
-
-      // Obtener datos de la tabla
-      const rows = tbody.querySelectorAll('tr');
-      const tableData = [];
-      let registrados = 0;
-      let noRegistrados = 0;
-
-      rows.forEach(row => {
-        const cells = row.querySelectorAll('td');
-        if (cells.length >= 9) {
-          const fila = [
-            cells[0].textContent.trim(),
-            cells[1].textContent.trim(),
-            cells[2].textContent.trim(),
-            cells[3].textContent.trim(),
-            cells[4].textContent.trim(),
-            cells[5].textContent.trim(),
-            cells[6].textContent.trim(),
-            cells[7].textContent.trim(),
-            cells[8].textContent.trim()
-          ];
-          tableData.push(fila);
-          registrados += parseInt(cells[6].textContent.trim()) || 0;
-          noRegistrados += parseInt(cells[7].textContent.trim()) || 0;
-        }
-      });
-
-      // Calcular totales
-      const totalPuntos = registrados + noRegistrados;
-      const porcentajeReg = totalPuntos > 0 ? ((registrados / totalPuntos) * 100).toFixed(1) : 0;
-      const porcentajeNoReg = totalPuntos > 0 ? ((noRegistrados / totalPuntos) * 100).toFixed(1) : 0;
-
-      // Crear gráfico de torta usando Canvas
-      const chartCanvas = document.createElement('canvas');
-      chartCanvas.width = 500;
-      chartCanvas.height = 350;
-      chartCanvas.style.display = 'none';
-      document.body.appendChild(chartCanvas);
-
-      const chartCtx = chartCanvas.getContext('2d');
-      
-      // Crear instancia de Chart.js
-      const pieChart = new Chart(chartCtx, {
-        type: 'doughnut',
-        data: {
-          labels: [
-            `Registrados\n${registrados}\n(${porcentajeReg}%)`,
-            `No Registrados\n${noRegistrados}\n(${porcentajeNoReg}%)`
-          ],
-          datasets: [{
-            data: [registrados, noRegistrados],
-            backgroundColor: ['#10b981', '#ef4444'],
-            borderColor: ['#059669', '#dc2626'],
-            borderWidth: 3,
-            borderRadius: 5
-          }]
-        },
-        options: {
-          responsive: false,
-          maintainAspectRatio: false,
-          plugins: {
-            legend: {
-              display: true,
-              position: 'bottom',
-              labels: {
-                font: { size: 16, weight: 'bold' },
-                padding: 20,
-                usePointStyle: true,
-                pointStyle: 'circle'
-              }
-            },
-            tooltip: {
-              enabled: true,
-              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-              padding: 12,
-              font: { size: 14 }
-            }
-          }
-        }
-      });
-
-      // Esperar a que se renderice
-      await new Promise(resolve => setTimeout(resolve, 800));
-      const chartImage = chartCanvas.toDataURL('image/png');
-      
-      // Limpiar
-      document.body.removeChild(chartCanvas);
-      pieChart.destroy();
-
-      // Crear documento PDF
-      const docDef = {
-        pageSize: 'A4',
-        pageMargins: [40, 70, 40, 40],
-        header: function(currentPage) {
-          if (currentPage === 1) {
-            return {
-              columns: [
-                logoBase64 ? {
-                  image: logoBase64,
-                  width: 60,
-                  height: 60
-                } : { text: '' },
-                {
-                  text: 'REPORTE DE DETALLE DE RONDAS',
-                  fontSize: 18,
-                  bold: true,
-                  alignment: 'center',
-                  margin: [0, 20, 0, 0],
-                  color: '#2c5aa0'
-                },
-                {
-                  text: '',
-                  width: 60
-                }
-              ],
-              margin: [40, 10, 40, 0]
-            };
-          }
-        },
-        footer: function(currentPage, pageCount) {
-          return {
-            text: `Página ${currentPage} de ${pageCount} | Generado: ${new Date().toLocaleString('es-PE')}`,
-            alignment: 'center',
-            fontSize: 9,
-            margin: [0, 0, 0, 20],
-            color: '#999'
-          };
-        },
-        content: [
-          {
-            text: `Resumen de Puntos de Control`,
-            fontSize: 14,
-            bold: true,
-            margin: [0, 10, 0, 15],
-            color: '#2c5aa0'
-          },
-          {
-            columns: [
-              {
-                width: '45%',
-                stack: [
-                  {
-                    text: 'ESTADÍSTICAS',
-                    fontSize: 12,
-                    bold: true,
-                    margin: [0, 0, 0, 10],
-                    color: '#333'
-                  },
-                  {
-                    table: {
-                      widths: ['60%', '40%'],
-                      body: [
-                        [
-                          { text: 'Total de Puntos:', bold: true, color: '#333', fontSize: 11 },
-                          { text: totalPuntos.toString(), bold: true, color: '#2c5aa0', fontSize: 14, alignment: 'center' }
-                        ],
-                        [
-                          { text: 'Registrados:', color: '#059669', bold: true, fontSize: 11 },
-                          { text: `${registrados}\n(${porcentajeReg}%)`, color: '#059669', bold: true, fontSize: 12, alignment: 'center' }
-                        ],
-                        [
-                          { text: 'No Registrados:', color: '#dc2626', bold: true, fontSize: 11 },
-                          { text: `${noRegistrados}\n(${porcentajeNoReg}%)`, color: '#dc2626', bold: true, fontSize: 12, alignment: 'center' }
-                        ]
-                      ]
-                    },
-                    layout: {
-                      hLineWidth: function(i, node) { return 1; },
-                      vLineWidth: function(i, node) { return 1; },
-                      hLineColor: function(i, node) { return '#e0e0e0'; },
-                      vLineColor: function(i, node) { return '#e0e0e0'; },
-                      paddingLeft: function(i, node) { return 10; },
-                      paddingRight: function(i, node) { return 10; },
-                      paddingTop: function(i, node) { return 8; },
-                      paddingBottom: function(i, node) { return 8; }
-                    }
-                  }
-                ]
-              },
-              {
-                width: '55%',
-                alignment: 'center',
-                image: chartImage,
-                width: 280,
-                height: 200,
-                margin: [0, 0, 0, 0]
-              }
-            ],
-            margin: [0, 0, 0, 30],
-            columnGap: 20
-          },
-          {
-            text: 'DETALLE DE RONDAS',
-            fontSize: 12,
-            bold: true,
-            margin: [0, 20, 0, 10],
-            color: '#2c5aa0'
-          },
-          {
-            table: {
-              headerRows: 1,
-              widths: ['10%', '10%', '10%', '10%', '10%', '13%', '9%', '9%', '9%'],
-              body: [
-                [
-                  { text: 'FECHA', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
-                  { text: 'H.INI', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
-                  { text: 'H.TER', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
-                  { text: 'CLIENTE', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
-                  { text: 'UNIDAD', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
-                  { text: 'RONDA', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
-                  { text: 'REG', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
-                  { text: 'NO REG', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
-                  { text: 'ESTADO', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 9 }
-                ],
-                ...tableData.map((fila) => [
-                  { text: fila[0], fontSize: 9, alignment: 'center' },
-                  { text: fila[1], fontSize: 9, alignment: 'center' },
-                  { text: fila[2], fontSize: 9, alignment: 'center' },
-                  { text: fila[3], fontSize: 9, alignment: 'center' },
-                  { text: fila[4], fontSize: 9, alignment: 'center' },
-                  { text: fila[5], fontSize: 9, alignment: 'center' },
-                  { text: fila[6], fontSize: 9, alignment: 'center', color: '#059669', bold: true },
-                  { text: fila[7], fontSize: 9, alignment: 'center', color: '#dc2626', bold: true },
-                  { text: fila[8], fontSize: 8, alignment: 'center' }
-                ])
-              ]
-            },
-            layout: {
-              hLineWidth: function(i, node) { return 0.5; },
-              vLineWidth: function(i, node) { return 0.5; },
-              hLineColor: function(i, node) { return '#d0d0d0'; },
-              vLineColor: function(i, node) { return '#d0d0d0'; },
-              fillColor: function(i, node) {
-                if (i === 0) return '#2c5aa0';
-                return (i % 2 === 0) ? '#f9f9f9' : null;
-              },
-              paddingLeft: function(i, node) { return 4; },
-              paddingRight: function(i, node) { return 4; },
-              paddingTop: function(i, node) { return 5; },
-              paddingBottom: function(i, node) { return 5; }
-            }
-          },
-          {
-            text: `\nTotal de registros reportados: ${tableData.length}`,
-            fontSize: 10,
-            bold: true,
-            margin: [0, 20, 0, 10]
-          },
-          {
-            text: `Fecha de generación: ${new Date().toLocaleDateString('es-PE')} a las ${new Date().toLocaleTimeString('es-PE')}`,
-            fontSize: 9,
-            color: '#666',
-            margin: [0, 0, 0, 0]
-          }
-        ]
-      };
-
-      // Generar y descargar PDF
-      pdfMake.createPdf(docDef).download(`detalle_rondas_${new Date().getTime()}.pdf`);
-      
-      UI.hideOverlay();
-      UI.toast('✅ PDF generado correctamente con gráfico y logo');
-
-    } catch (e) {
-      UI.hideOverlay();
-      UI.toast('❌ Error al generar PDF: ' + e.message);
     }
-  }
 
-  // Función para descargar ronda individual en PDF
-  async function descargarRondaPDF(rondaId) {
-    try {
-      // Mostrar overlay de carga
-      UI.showOverlay('Generando PDF', 'Por favor espera...');
-
-      // Obtener la data completa de la ronda desde Firebase directamente
-      const doc = await db.collection('RONDAS_COMPLETADAS').doc(rondaId).get();
-      if (!doc.exists) {
-        UI.hideOverlay();
-        UI.toast('❌ No se encontró la ronda en la base de datos');
-        return;
-      }
-
-      const rondaCompleta = doc.data();
-
-      // Cargar logo como base64
-      let logoBase64 = null;
+    // Función para exportar Detalle de Rondas a PDF con gráfico
+    async function exportDetalleRondasToPDF() {
       try {
-        const logoResponse = await fetch('logo_liberman.png');
-        const logoBlob = await logoResponse.blob();
-        logoBase64 = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(logoBlob);
+        const tbody = document.getElementById('detalle-rondas-tabla-body');
+        if (!tbody || tbody.querySelectorAll('tr').length === 0) {
+          UI.toast('No hay datos para exportar');
+          return;
+        }
+
+        UI.showOverlay();
+
+        // Cargar logo como base64
+        let logoBase64 = null;
+        try {
+          const logoResponse = await fetch('logo_liberman.png');
+          const logoBlob = await logoResponse.blob();
+          logoBase64 = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(logoBlob);
+          });
+        } catch (e) {
+        }
+
+        // Obtener datos de la tabla
+        const rows = tbody.querySelectorAll('tr');
+        const tableData = [];
+        let registrados = 0;
+        let noRegistrados = 0;
+
+        rows.forEach(row => {
+          const cells = row.querySelectorAll('td');
+          if (cells.length >= 9) {
+            const fila = [
+              cells[0].textContent.trim(),
+              cells[1].textContent.trim(),
+              cells[2].textContent.trim(),
+              cells[3].textContent.trim(),
+              cells[4].textContent.trim(),
+              cells[5].textContent.trim(),
+              cells[6].textContent.trim(),
+              cells[7].textContent.trim(),
+              cells[8].textContent.trim()
+            ];
+            tableData.push(fila);
+            registrados += parseInt(cells[6].textContent.trim()) || 0;
+            noRegistrados += parseInt(cells[7].textContent.trim()) || 0;
+          }
         });
-      } catch (e) {
-      }
 
-      // Convertir fecha de Timestamp a formato legible
-      const convertToDate = (value) => {
-        if (!value) return null;
-        if (value._seconds || value._nanoseconds) {
-          try {
-            const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
-            return new Date(ms);
-          } catch(e) { return null; }
-        }
-        if (value.seconds || value.nanoseconds) {
-          try {
-            const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
-            return new Date(ms);
-          } catch(e) { return null; }
-        }
-        if (value.toDate && typeof value.toDate === 'function') {
-          try { return value.toDate(); } catch(e) { return null; }
-        }
-        if (value instanceof Date) return value;
-        if (typeof value === 'string') {
-          try { return new Date(value); } catch(e) { return null; }
-        }
-        return null;
-      };
+        // Calcular totales
+        const totalPuntos = registrados + noRegistrados;
+        const porcentajeReg = totalPuntos > 0 ? ((registrados / totalPuntos) * 100).toFixed(1) : 0;
+        const porcentajeNoReg = totalPuntos > 0 ? ((noRegistrados / totalPuntos) * 100).toFixed(1) : 0;
 
-      const dateInicio = convertToDate(rondaCompleta.horarioInicio);
-      const dateTermino = convertToDate(rondaCompleta.horarioTermino);
-
-      const fechaInicio = dateInicio ? dateInicio.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-';
-      const horaInicio = dateInicio ? dateInicio.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: false }) : '-';
-      const horaTermino = dateTermino ? dateTermino.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: false }) : '-';
-
-      // Contar QR
-      let qrRegistrados = 0, qrSinRegistrar = 0;
-      let puntosArray = Array.isArray(rondaCompleta.puntosRegistrados) ? rondaCompleta.puntosRegistrados : (rondaCompleta.puntosRegistrados ? Object.values(rondaCompleta.puntosRegistrados) : []);
-      if (puntosArray.length > 0) {
-        puntosArray.forEach(punto => {
-          if (punto.qrEscaneado === true) qrRegistrados++;
-          else if (punto.qrEscaneado === false) qrSinRegistrar++;
-        });
-      } else {
-        qrRegistrados = rondaCompleta.puntosCompletados || 0;
-        const qrTotal = rondaCompleta.puntosTotales || 0;
-        qrSinRegistrar = qrTotal - qrRegistrados;
-      }
-
-      // Crear gráfico de torta
-      let chartImage = null;
-      const totalPuntos = qrRegistrados + qrSinRegistrar;
-      if (totalPuntos > 0) {
+        // Crear gráfico de torta usando Canvas
         const chartCanvas = document.createElement('canvas');
-        chartCanvas.width = 400;
-        chartCanvas.height = 300;
+        chartCanvas.width = 500;
+        chartCanvas.height = 350;
         chartCanvas.style.display = 'none';
         document.body.appendChild(chartCanvas);
 
         const chartCtx = chartCanvas.getContext('2d');
-        const porcentajeReg = ((qrRegistrados / totalPuntos) * 100).toFixed(1);
-        const porcentajeNoReg = ((qrSinRegistrar / totalPuntos) * 100).toFixed(1);
 
+        // Crear instancia de Chart.js
         const pieChart = new Chart(chartCtx, {
           type: 'doughnut',
           data: {
             labels: [
-              `Registrados\n${qrRegistrados}\n(${porcentajeReg}%)`,
-              `Sin Registrar\n${qrSinRegistrar}\n(${porcentajeNoReg}%)`
+              `Registrados\n${registrados}\n(${porcentajeReg}%)`,
+              `No Registrados\n${noRegistrados}\n(${porcentajeNoReg}%)`
             ],
             datasets: [{
-              data: [qrRegistrados, qrSinRegistrar],
+              data: [registrados, noRegistrados],
               backgroundColor: ['#10b981', '#ef4444'],
               borderColor: ['#059669', '#dc2626'],
               borderWidth: 3,
-              borderRadius: 8
+              borderRadius: 5
             }]
           },
           options: {
@@ -4671,316 +4373,632 @@ document.addEventListener('DOMContentLoaded', () => {
                 display: true,
                 position: 'bottom',
                 labels: {
-                  font: { size: 14, weight: 'bold' },
+                  font: { size: 16, weight: 'bold' },
                   padding: 20,
                   usePointStyle: true,
-                  pointStyle: 'circle',
-                  color: '#2d3748'
+                  pointStyle: 'circle'
                 }
               },
               tooltip: {
                 enabled: true,
                 backgroundColor: 'rgba(0, 0, 0, 0.8)',
                 padding: 12,
-                font: { size: 12 }
+                font: { size: 14 }
               }
             }
           }
         });
 
+        // Esperar a que se renderice
         await new Promise(resolve => setTimeout(resolve, 800));
-        chartImage = chartCanvas.toDataURL('image/png');
+        const chartImage = chartCanvas.toDataURL('image/png');
+
+        // Limpiar
         document.body.removeChild(chartCanvas);
         pieChart.destroy();
-      }
 
-      // Obtener detalles de puntos si existen
-      let detallesPuntos = [];
-      if (puntosArray && puntosArray.length > 0) {
-        puntosArray.forEach((punto, idx) => {
-          detallesPuntos.push({
-            numero: idx + 1,
-            nombre: punto.nombre || `Punto ${idx + 1}`,
-            estado: punto.qrEscaneado ? '✓ Registrado' : '✗ No Registrado',
-            hora: punto.horaEscaneo ? new Date(punto.horaEscaneo.seconds * 1000).toLocaleTimeString('es-PE') : '-'
-          });
-        });
-      }
-
-      // Crear documento PDF
-      const docDefinition = {
-        pageSize: 'A4',
-        pageMargins: [40, 80, 40, 40],
-        header: function(currentPage) {
-          if (currentPage === 1) {
+        // Crear documento PDF
+        const docDef = {
+          pageSize: 'A4',
+          pageMargins: [40, 70, 40, 40],
+          header: function (currentPage) {
+            if (currentPage === 1) {
+              return {
+                columns: [
+                  logoBase64 ? {
+                    image: logoBase64,
+                    width: 60,
+                    height: 60
+                  } : { text: '' },
+                  {
+                    text: 'REPORTE DE DETALLE DE RONDAS',
+                    fontSize: 18,
+                    bold: true,
+                    alignment: 'center',
+                    margin: [0, 20, 0, 0],
+                    color: '#2c5aa0'
+                  },
+                  {
+                    text: '',
+                    width: 60
+                  }
+                ],
+                margin: [40, 10, 40, 0]
+              };
+            }
+          },
+          footer: function (currentPage, pageCount) {
             return {
+              text: `Página ${currentPage} de ${pageCount} | Generado: ${new Date().toLocaleString('es-PE')}`,
+              alignment: 'center',
+              fontSize: 9,
+              margin: [0, 0, 0, 20],
+              color: '#999'
+            };
+          },
+          content: [
+            {
+              text: `Resumen de Puntos de Control`,
+              fontSize: 14,
+              bold: true,
+              margin: [0, 10, 0, 15],
+              color: '#2c5aa0'
+            },
+            {
               columns: [
-                logoBase64 ? {
-                  image: logoBase64,
-                  width: 60,
-                  height: 60
-                } : { text: '' },
                 {
-                  text: 'REPORTE DE RONDA',
-                  fontSize: 18,
-                  bold: true,
-                  alignment: 'center',
-                  margin: [0, 15, 0, 0],
-                  color: '#2c5aa0'
+                  width: '45%',
+                  stack: [
+                    {
+                      text: 'ESTADÍSTICAS',
+                      fontSize: 12,
+                      bold: true,
+                      margin: [0, 0, 0, 10],
+                      color: '#333'
+                    },
+                    {
+                      table: {
+                        widths: ['60%', '40%'],
+                        body: [
+                          [
+                            { text: 'Total de Puntos:', bold: true, color: '#333', fontSize: 11 },
+                            { text: totalPuntos.toString(), bold: true, color: '#2c5aa0', fontSize: 14, alignment: 'center' }
+                          ],
+                          [
+                            { text: 'Registrados:', color: '#059669', bold: true, fontSize: 11 },
+                            { text: `${registrados}\n(${porcentajeReg}%)`, color: '#059669', bold: true, fontSize: 12, alignment: 'center' }
+                          ],
+                          [
+                            { text: 'No Registrados:', color: '#dc2626', bold: true, fontSize: 11 },
+                            { text: `${noRegistrados}\n(${porcentajeNoReg}%)`, color: '#dc2626', bold: true, fontSize: 12, alignment: 'center' }
+                          ]
+                        ]
+                      },
+                      layout: {
+                        hLineWidth: function (i, node) { return 1; },
+                        vLineWidth: function (i, node) { return 1; },
+                        hLineColor: function (i, node) { return '#e0e0e0'; },
+                        vLineColor: function (i, node) { return '#e0e0e0'; },
+                        paddingLeft: function (i, node) { return 10; },
+                        paddingRight: function (i, node) { return 10; },
+                        paddingTop: function (i, node) { return 8; },
+                        paddingBottom: function (i, node) { return 8; }
+                      }
+                    }
+                  ]
                 },
                 {
-                  text: '',
-                  width: 60
+                  width: '55%',
+                  alignment: 'center',
+                  image: chartImage,
+                  width: 280,
+                  height: 200,
+                  margin: [0, 0, 0, 0]
                 }
               ],
-              margin: [40, 15, 40, 0]
-            };
+              margin: [0, 0, 0, 30],
+              columnGap: 20
+            },
+            {
+              text: 'DETALLE DE RONDAS',
+              fontSize: 12,
+              bold: true,
+              margin: [0, 20, 0, 10],
+              color: '#2c5aa0'
+            },
+            {
+              table: {
+                headerRows: 1,
+                widths: ['10%', '10%', '10%', '10%', '10%', '13%', '9%', '9%', '9%'],
+                body: [
+                  [
+                    { text: 'FECHA', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                    { text: 'H.INI', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                    { text: 'H.TER', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                    { text: 'CLIENTE', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                    { text: 'UNIDAD', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                    { text: 'RONDA', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                    { text: 'REG', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                    { text: 'NO REG', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                    { text: 'ESTADO', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 9 }
+                  ],
+                  ...tableData.map((fila) => [
+                    { text: fila[0], fontSize: 9, alignment: 'center' },
+                    { text: fila[1], fontSize: 9, alignment: 'center' },
+                    { text: fila[2], fontSize: 9, alignment: 'center' },
+                    { text: fila[3], fontSize: 9, alignment: 'center' },
+                    { text: fila[4], fontSize: 9, alignment: 'center' },
+                    { text: fila[5], fontSize: 9, alignment: 'center' },
+                    { text: fila[6], fontSize: 9, alignment: 'center', color: '#059669', bold: true },
+                    { text: fila[7], fontSize: 9, alignment: 'center', color: '#dc2626', bold: true },
+                    { text: fila[8], fontSize: 8, alignment: 'center' }
+                  ])
+                ]
+              },
+              layout: {
+                hLineWidth: function (i, node) { return 0.5; },
+                vLineWidth: function (i, node) { return 0.5; },
+                hLineColor: function (i, node) { return '#d0d0d0'; },
+                vLineColor: function (i, node) { return '#d0d0d0'; },
+                fillColor: function (i, node) {
+                  if (i === 0) return '#2c5aa0';
+                  return (i % 2 === 0) ? '#f9f9f9' : null;
+                },
+                paddingLeft: function (i, node) { return 4; },
+                paddingRight: function (i, node) { return 4; },
+                paddingTop: function (i, node) { return 5; },
+                paddingBottom: function (i, node) { return 5; }
+              }
+            },
+            {
+              text: `\nTotal de registros reportados: ${tableData.length}`,
+              fontSize: 10,
+              bold: true,
+              margin: [0, 20, 0, 10]
+            },
+            {
+              text: `Fecha de generación: ${new Date().toLocaleDateString('es-PE')} a las ${new Date().toLocaleTimeString('es-PE')}`,
+              fontSize: 9,
+              color: '#666',
+              margin: [0, 0, 0, 0]
+            }
+          ]
+        };
+
+        // Generar y descargar PDF
+        pdfMake.createPdf(docDef).download(`detalle_rondas_${new Date().getTime()}.pdf`);
+
+        UI.hideOverlay();
+        UI.toast('✅ PDF generado correctamente con gráfico y logo');
+
+      } catch (e) {
+        UI.hideOverlay();
+        UI.toast('❌ Error al generar PDF: ' + e.message);
+      }
+    }
+
+    // Función para descargar ronda individual en PDF
+    async function descargarRondaPDF(rondaId) {
+      try {
+        // Mostrar overlay de carga
+        UI.showOverlay('Generando PDF', 'Por favor espera...');
+
+        // Obtener la data completa de la ronda desde Firebase directamente
+        const doc = await db.collection('RONDAS_COMPLETADAS').doc(rondaId).get();
+        if (!doc.exists) {
+          UI.hideOverlay();
+          UI.toast('❌ No se encontró la ronda en la base de datos');
+          return;
+        }
+
+        const rondaCompleta = doc.data();
+
+        // Cargar logo como base64
+        let logoBase64 = null;
+        try {
+          const logoResponse = await fetch('logo_liberman.png');
+          const logoBlob = await logoResponse.blob();
+          logoBase64 = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(logoBlob);
+          });
+        } catch (e) {
+        }
+
+        // Convertir fecha de Timestamp a formato legible
+        const convertToDate = (value) => {
+          if (!value) return null;
+          if (value._seconds || value._nanoseconds) {
+            try {
+              const ms = (value._seconds || 0) * 1000 + (value._nanoseconds || 0) / 1000000;
+              return new Date(ms);
+            } catch (e) { return null; }
           }
-        },
-        footer: function(currentPage, pageCount) {
-          return {
-            text: `Página ${currentPage} de ${pageCount} | Generado: ${new Date().toLocaleString('es-PE')}`,
+          if (value.seconds || value.nanoseconds) {
+            try {
+              const ms = (value.seconds || 0) * 1000 + (value.nanoseconds || 0) / 1000000;
+              return new Date(ms);
+            } catch (e) { return null; }
+          }
+          if (value.toDate && typeof value.toDate === 'function') {
+            try { return value.toDate(); } catch (e) { return null; }
+          }
+          if (value instanceof Date) return value;
+          if (typeof value === 'string') {
+            try { return new Date(value); } catch (e) { return null; }
+          }
+          return null;
+        };
+
+        const dateInicio = convertToDate(rondaCompleta.horarioInicio);
+        const dateTermino = convertToDate(rondaCompleta.horarioTermino);
+
+        const fechaInicio = dateInicio ? dateInicio.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' }) : '-';
+        const horaInicio = dateInicio ? dateInicio.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: false }) : '-';
+        const horaTermino = dateTermino ? dateTermino.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: false }) : '-';
+
+        // Contar QR
+        let qrRegistrados = 0, qrSinRegistrar = 0;
+        let puntosArray = Array.isArray(rondaCompleta.puntosRegistrados) ? rondaCompleta.puntosRegistrados : (rondaCompleta.puntosRegistrados ? Object.values(rondaCompleta.puntosRegistrados) : []);
+        if (puntosArray.length > 0) {
+          puntosArray.forEach(punto => {
+            if (punto.qrEscaneado === true) qrRegistrados++;
+            else if (punto.qrEscaneado === false) qrSinRegistrar++;
+          });
+        } else {
+          qrRegistrados = rondaCompleta.puntosCompletados || 0;
+          const qrTotal = rondaCompleta.puntosTotales || 0;
+          qrSinRegistrar = qrTotal - qrRegistrados;
+        }
+
+        // Crear gráfico de torta
+        let chartImage = null;
+        const totalPuntos = qrRegistrados + qrSinRegistrar;
+        if (totalPuntos > 0) {
+          const chartCanvas = document.createElement('canvas');
+          chartCanvas.width = 400;
+          chartCanvas.height = 300;
+          chartCanvas.style.display = 'none';
+          document.body.appendChild(chartCanvas);
+
+          const chartCtx = chartCanvas.getContext('2d');
+          const porcentajeReg = ((qrRegistrados / totalPuntos) * 100).toFixed(1);
+          const porcentajeNoReg = ((qrSinRegistrar / totalPuntos) * 100).toFixed(1);
+
+          const pieChart = new Chart(chartCtx, {
+            type: 'doughnut',
+            data: {
+              labels: [
+                `Registrados\n${qrRegistrados}\n(${porcentajeReg}%)`,
+                `Sin Registrar\n${qrSinRegistrar}\n(${porcentajeNoReg}%)`
+              ],
+              datasets: [{
+                data: [qrRegistrados, qrSinRegistrar],
+                backgroundColor: ['#10b981', '#ef4444'],
+                borderColor: ['#059669', '#dc2626'],
+                borderWidth: 3,
+                borderRadius: 8
+              }]
+            },
+            options: {
+              responsive: false,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: {
+                  display: true,
+                  position: 'bottom',
+                  labels: {
+                    font: { size: 14, weight: 'bold' },
+                    padding: 20,
+                    usePointStyle: true,
+                    pointStyle: 'circle',
+                    color: '#2d3748'
+                  }
+                },
+                tooltip: {
+                  enabled: true,
+                  backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                  padding: 12,
+                  font: { size: 12 }
+                }
+              }
+            }
+          });
+
+          await new Promise(resolve => setTimeout(resolve, 800));
+          chartImage = chartCanvas.toDataURL('image/png');
+          document.body.removeChild(chartCanvas);
+          pieChart.destroy();
+        }
+
+        // Obtener detalles de puntos si existen
+        let detallesPuntos = [];
+        if (puntosArray && puntosArray.length > 0) {
+          puntosArray.forEach((punto, idx) => {
+            detallesPuntos.push({
+              numero: idx + 1,
+              nombre: punto.nombre || `Punto ${idx + 1}`,
+              estado: punto.qrEscaneado ? '✓ Registrado' : '✗ No Registrado',
+              hora: punto.horaEscaneo ? new Date(punto.horaEscaneo.seconds * 1000).toLocaleTimeString('es-PE') : '-'
+            });
+          });
+        }
+
+        // Crear documento PDF
+        const docDefinition = {
+          pageSize: 'A4',
+          pageMargins: [40, 80, 40, 40],
+          header: function (currentPage) {
+            if (currentPage === 1) {
+              return {
+                columns: [
+                  logoBase64 ? {
+                    image: logoBase64,
+                    width: 60,
+                    height: 60
+                  } : { text: '' },
+                  {
+                    text: 'REPORTE DE RONDA',
+                    fontSize: 18,
+                    bold: true,
+                    alignment: 'center',
+                    margin: [0, 15, 0, 0],
+                    color: '#2c5aa0'
+                  },
+                  {
+                    text: '',
+                    width: 60
+                  }
+                ],
+                margin: [40, 15, 40, 0]
+              };
+            }
+          },
+          footer: function (currentPage, pageCount) {
+            return {
+              text: `Página ${currentPage} de ${pageCount} | Generado: ${new Date().toLocaleString('es-PE')}`,
+              alignment: 'center',
+              fontSize: 9,
+              margin: [0, 0, 0, 15],
+              color: '#999'
+            };
+          },
+          styles: {
+            subheader: { fontSize: 13, bold: true, color: '#2c5aa0', marginTop: 15, marginBottom: 10 },
+            label: { fontSize: 11, bold: true, color: '#4a5568' },
+            value: { fontSize: 11, color: '#2d3748' },
+            tableHeader: { bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+            tableCell: { padding: 6, color: '#2d3748', fontSize: 10 }
+          },
+          content: [
+            // Información General
+            { text: 'INFORMACIÓN GENERAL', style: 'subheader' },
+            {
+              columns: [
+                {
+                  width: '50%',
+                  layout: 'lightHorizontalLines',
+                  table: {
+                    widths: ['40%', '60%'],
+                    body: [
+                      [
+                        { text: 'Cliente:', style: 'label' },
+                        { text: rondaCompleta.cliente || '-', style: 'value' }
+                      ],
+                      [
+                        { text: 'Unidad:', style: 'label' },
+                        { text: rondaCompleta.unidad || '-', style: 'value' }
+                      ],
+                      [
+                        { text: 'Ronda:', style: 'label' },
+                        { text: rondaCompleta.nombre || '-', style: 'value' }
+                      ]
+                    ]
+                  }
+                },
+                {
+                  width: '50%',
+                  layout: 'lightHorizontalLines',
+                  table: {
+                    widths: ['40%', '60%'],
+                    body: [
+                      [
+                        { text: 'Estado:', style: 'label' },
+                        {
+                          text: rondaCompleta.estado || '-',
+                          color: rondaCompleta.estado === 'TERMINADA' ? '#22c55e' :
+                            (rondaCompleta.estado === 'INCOMPLETA' || rondaCompleta.estado === 'INCOMPLETADA') ? '#f59e0b' :
+                              rondaCompleta.estado === 'NO REALIZADA' ? '#ef4444' : '#9ca3af',
+                          bold: true,
+                          fontSize: 11
+                        }
+                      ],
+                      [
+                        { text: 'Fecha:', style: 'label' },
+                        { text: fechaInicio, style: 'value' }
+                      ],
+                      [
+                        { text: 'Hora Inicio:', style: 'label' },
+                        { text: horaInicio, style: 'value' }
+                      ]
+                    ]
+                  }
+                }
+              ],
+              columnGap: 20,
+              marginBottom: 20
+            },
+
+            // Resumen de Puntos
+            { text: 'RESUMEN DE PUNTOS DE CONTROL', style: 'subheader' },
+            {
+              columns: [
+                {
+                  width: '45%',
+                  layout: 'lightHorizontalLines',
+                  table: {
+                    widths: ['60%', '40%'],
+                    body: [
+                      [
+                        { text: 'Total Puntos:', style: 'label' },
+                        { text: totalPuntos.toString(), style: 'value', alignment: 'center', color: '#3b82f6', bold: true }
+                      ],
+                      [
+                        { text: 'Registrados:', style: 'label', color: '#059669' },
+                        { text: qrRegistrados.toString(), style: 'value', alignment: 'center', color: '#059669', bold: true }
+                      ],
+                      [
+                        { text: 'Sin Registrar:', style: 'label', color: '#dc2626' },
+                        { text: qrSinRegistrar.toString(), style: 'value', alignment: 'center', color: '#dc2626', bold: true }
+                      ]
+                    ]
+                  }
+                },
+                {
+                  width: '55%',
+                  alignment: 'center',
+                  ...(chartImage ? { image: chartImage, width: 250, height: 180 } : {})
+                }
+              ],
+              columnGap: 20,
+              marginBottom: 20
+            }
+          ]
+        };
+
+        // Agregar tabla de detalles de puntos si existen
+        if (detallesPuntos.length > 0) {
+          docDefinition.content.push(
+            { text: 'DETALLE DE PUNTOS DE CONTROL', style: 'subheader' },
+            {
+              layout: {
+                hLineWidth: function (i, node) { return i === 0 || i === node.table.body.length ? 2 : 0.5; },
+                vLineWidth: function (i, node) { return 0.5; },
+                hLineColor: function (i, node) { return '#d0d0d0'; },
+                vLineColor: function (i, node) { return '#d0d0d0'; },
+                fillColor: function (i, node) {
+                  if (i === 0) return '#2c5aa0';
+                  return (i % 2 === 0) ? '#f9f9f9' : 'white';
+                },
+                paddingLeft: function (i, node) { return 8; },
+                paddingRight: function (i, node) { return 8; },
+                paddingTop: function (i, node) { return 6; },
+                paddingBottom: function (i, node) { return 6; }
+              },
+              table: {
+                headerRows: 1,
+                widths: ['8%', '35%', '20%', '27%'],
+                body: [
+                  [
+                    { text: '#', style: 'tableHeader' },
+                    { text: 'PUNTO', style: 'tableHeader' },
+                    { text: 'ESTADO', style: 'tableHeader' },
+                    { text: 'HORA', style: 'tableHeader' }
+                  ],
+                  ...detallesPuntos.map(p => [
+                    { text: p.numero.toString(), style: 'tableCell', alignment: 'center' },
+                    { text: p.nombre, style: 'tableCell' },
+                    {
+                      text: p.estado,
+                      style: 'tableCell',
+                      color: p.estado.includes('Registrado') ? '#22c55e' : '#ef4444',
+                      bold: true
+                    },
+                    { text: p.hora, style: 'tableCell', alignment: 'center' }
+                  ])
+                ]
+              },
+              marginBottom: 20
+            }
+          );
+        }
+
+        // Agregar pie de página
+        docDefinition.content.push(
+          { text: '\n' },
+          {
+            text: `Generado: ${new Date().toLocaleDateString('es-PE')} a las ${new Date().toLocaleTimeString('es-PE')}`,
             alignment: 'center',
             fontSize: 9,
-            margin: [0, 0, 0, 15],
-            color: '#999'
-          };
-        },
-        styles: {
-          subheader: { fontSize: 13, bold: true, color: '#2c5aa0', marginTop: 15, marginBottom: 10 },
-          label: { fontSize: 11, bold: true, color: '#4a5568' },
-          value: { fontSize: 11, color: '#2d3748' },
-          tableHeader: { bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
-          tableCell: { padding: 6, color: '#2d3748', fontSize: 10 }
-        },
-        content: [
-          // Información General
-          { text: 'INFORMACIÓN GENERAL', style: 'subheader' },
-          {
-            columns: [
-              {
-                width: '50%',
-                layout: 'lightHorizontalLines',
-                table: {
-                  widths: ['40%', '60%'],
-                  body: [
-                    [
-                      { text: 'Cliente:', style: 'label' },
-                      { text: rondaCompleta.cliente || '-', style: 'value' }
-                    ],
-                    [
-                      { text: 'Unidad:', style: 'label' },
-                      { text: rondaCompleta.unidad || '-', style: 'value' }
-                    ],
-                    [
-                      { text: 'Ronda:', style: 'label' },
-                      { text: rondaCompleta.nombre || '-', style: 'value' }
-                    ]
-                  ]
-                }
-              },
-              {
-                width: '50%',
-                layout: 'lightHorizontalLines',
-                table: {
-                  widths: ['40%', '60%'],
-                  body: [
-                    [
-                      { text: 'Estado:', style: 'label' },
-                      { 
-                        text: rondaCompleta.estado || '-', 
-                        color: rondaCompleta.estado === 'TERMINADA' ? '#22c55e' : 
-                               (rondaCompleta.estado === 'INCOMPLETA' || rondaCompleta.estado === 'INCOMPLETADA') ? '#f59e0b' : 
-                               rondaCompleta.estado === 'NO REALIZADA' ? '#ef4444' : '#9ca3af',
-                        bold: true,
-                        fontSize: 11
-                      }
-                    ],
-                    [
-                      { text: 'Fecha:', style: 'label' },
-                      { text: fechaInicio, style: 'value' }
-                    ],
-                    [
-                      { text: 'Hora Inicio:', style: 'label' },
-                      { text: horaInicio, style: 'value' }
-                    ]
-                  ]
-                }
-              }
-            ],
-            columnGap: 20,
-            marginBottom: 20
-          },
-
-          // Resumen de Puntos
-          { text: 'RESUMEN DE PUNTOS DE CONTROL', style: 'subheader' },
-          {
-            columns: [
-              {
-                width: '45%',
-                layout: 'lightHorizontalLines',
-                table: {
-                  widths: ['60%', '40%'],
-                  body: [
-                    [
-                      { text: 'Total Puntos:', style: 'label' },
-                      { text: totalPuntos.toString(), style: 'value', alignment: 'center', color: '#3b82f6', bold: true }
-                    ],
-                    [
-                      { text: 'Registrados:', style: 'label', color: '#059669' },
-                      { text: qrRegistrados.toString(), style: 'value', alignment: 'center', color: '#059669', bold: true }
-                    ],
-                    [
-                      { text: 'Sin Registrar:', style: 'label', color: '#dc2626' },
-                      { text: qrSinRegistrar.toString(), style: 'value', alignment: 'center', color: '#dc2626', bold: true }
-                    ]
-                  ]
-                }
-              },
-              {
-                width: '55%',
-                alignment: 'center',
-                ...(chartImage ? { image: chartImage, width: 250, height: 180 } : {})
-              }
-            ],
-            columnGap: 20,
-            marginBottom: 20
-          }
-        ]
-      };
-
-      // Agregar tabla de detalles de puntos si existen
-      if (detallesPuntos.length > 0) {
-        docDefinition.content.push(
-          { text: 'DETALLE DE PUNTOS DE CONTROL', style: 'subheader' },
-          {
-            layout: {
-              hLineWidth: function(i, node) { return i === 0 || i === node.table.body.length ? 2 : 0.5; },
-              vLineWidth: function(i, node) { return 0.5; },
-              hLineColor: function(i, node) { return '#d0d0d0'; },
-              vLineColor: function(i, node) { return '#d0d0d0'; },
-              fillColor: function(i, node) {
-                if (i === 0) return '#2c5aa0';
-                return (i % 2 === 0) ? '#f9f9f9' : 'white';
-              },
-              paddingLeft: function(i, node) { return 8; },
-              paddingRight: function(i, node) { return 8; },
-              paddingTop: function(i, node) { return 6; },
-              paddingBottom: function(i, node) { return 6; }
-            },
-            table: {
-              headerRows: 1,
-              widths: ['8%', '35%', '20%', '27%'],
-              body: [
-                [
-                  { text: '#', style: 'tableHeader' },
-                  { text: 'PUNTO', style: 'tableHeader' },
-                  { text: 'ESTADO', style: 'tableHeader' },
-                  { text: 'HORA', style: 'tableHeader' }
-                ],
-                ...detallesPuntos.map(p => [
-                  { text: p.numero.toString(), style: 'tableCell', alignment: 'center' },
-                  { text: p.nombre, style: 'tableCell' },
-                  { 
-                    text: p.estado, 
-                    style: 'tableCell',
-                    color: p.estado.includes('Registrado') ? '#22c55e' : '#ef4444',
-                    bold: true
-                  },
-                  { text: p.hora, style: 'tableCell', alignment: 'center' }
-                ])
-              ]
-            },
-            marginBottom: 20
+            color: '#a0aec0'
           }
         );
-      }
 
-      // Agregar pie de página
-      docDefinition.content.push(
-        { text: '\n' },
-        { 
-          text: `Generado: ${new Date().toLocaleDateString('es-PE')} a las ${new Date().toLocaleTimeString('es-PE')}`, 
-          alignment: 'center', 
-          fontSize: 9, 
-          color: '#a0aec0' 
+        // Generar y descargar PDF
+        UI.hideOverlay();
+        if (window.pdfMake && window.pdfMake.createPdf) {
+          window.pdfMake.createPdf(docDefinition).download(`Ronda_${rondaCompleta.cliente || 'SinCliente'}_${fechaInicio.replace(/\//g, '-')}_${rondaId.substring(0, 8)}.pdf`);
+          UI.toast('✅ PDF descargado correctamente');
+        } else {
+          UI.toast('❌ Las librerías de PDF no están cargadas');
         }
-      );
 
-      // Generar y descargar PDF
-      UI.hideOverlay();
-      if (window.pdfMake && window.pdfMake.createPdf) {
-        window.pdfMake.createPdf(docDefinition).download(`Ronda_${rondaCompleta.cliente || 'SinCliente'}_${fechaInicio.replace(/\//g, '-')}_${rondaId.substring(0, 8)}.pdf`);
-        UI.toast('✅ PDF descargado correctamente');
-      } else {
-        UI.toast('❌ Las librerías de PDF no están cargadas');
-      }
-
-    } catch (error) {
-      UI.hideOverlay();
-      UI.toast('❌ Error al generar PDF: ' + error.message);
-    }
-  }
-
-  // Event Listener para botones de descarga PDF en tabla de rondas
-  document.addEventListener('click', (ev) => {
-    const btnPDF = ev.target.closest('.btn-download-pdf');
-    if (btnPDF) {
-      const rondaId = btnPDF.getAttribute('data-ronda-id');
-      if (rondaId) {
-        descargarRondaPDF(rondaId);
+      } catch (error) {
+        UI.hideOverlay();
+        UI.toast('❌ Error al generar PDF: ' + error.message);
       }
     }
-  });
 
-  // ============================================================================
-  // 6) INCIDENCIAS — FILTROS, TABLA Y EXPORTACIÓN
-  // ============================================================================
-  async function buscarIncidencias() {
-    if (!incidenciasTbody) return;
-    UI.showOverlay('Buscando…', 'Consultando incidencias');
+    // Event Listener para botones de descarga PDF en tabla de rondas
+    document.addEventListener('click', (ev) => {
+      const btnPDF = ev.target.closest('.btn-download-pdf');
+      if (btnPDF) {
+        const rondaId = btnPDF.getAttribute('data-ronda-id');
+        if (rondaId) {
+          descargarRondaPDF(rondaId);
+        }
+      }
+    });
 
-    try {
-      let q = getQueryWithClienteFilter(COLLECTIONS.INCIDENTS);
+    // ============================================================================
+    // 6) INCIDENCIAS — FILTROS, TABLA Y EXPORTACIÓN
+    // ============================================================================
+    async function buscarIncidencias() {
+      if (!incidenciasTbody) return;
+      UI.showOverlay('Buscando…', 'Consultando incidencias');
 
-      // Fechas
-      const fi = incFechaInicio?.value ? new Date(incFechaInicio.value) : null;
-      const ff = incFechaFin?.value ? new Date(incFechaFin.value) : null;
-      if (fi) q = q.where('timestamp', '>=', fi);
-      if (ff) q = q.where('timestamp', '<=', new Date(ff.getFullYear(), ff.getMonth(), ff.getDate() + 1));
+      try {
+        let q = getQueryWithClienteFilter(COLLECTIONS.INCIDENTS);
 
-      // Cliente / Unidad / Estado
-      const cli = incCliente?.value || '';
-      const uni = incUnidad?.value || '';
-      const est = incEstado?.value || '';
-      if (cli) q = q.where('cliente', '==', cli);
-      if (uni) q = q.where('unidad', '==', uni);
-      if (est) q = q.where('estado', '==', est);
+        // Fechas
+        const fi = incFechaInicio?.value ? new Date(incFechaInicio.value) : null;
+        const ff = incFechaFin?.value ? new Date(incFechaFin.value) : null;
+        if (fi) q = q.where('timestamp', '>=', fi);
+        if (ff) q = q.where('timestamp', '<=', new Date(ff.getFullYear(), ff.getMonth(), ff.getDate() + 1));
 
-      const snap = await q.get();
-      const rows = snap.docs.map(d => {
-        const data = d.data();
-        // Convertir timestamp a string para que persista en JSON
-        const f = data.timestamp?.toDate ? data.timestamp.toDate() : new Date(data.timestamp || 0);
-        const timestampStr = f instanceof Date && !Number.isNaN(f.getTime()) ? f.toISOString() : new Date().toISOString();
-        
-        return { 
-          id: d.id, 
-          ...data,
-          timestampStr: timestampStr,  // Guardar fecha como string
-          timestamp: undefined  // Eliminar objeto Timestamp que no se serializa bien
-        };
-      })
-        .sort((a, b) => {
-          const ad = new Date(a.timestampStr);
-          const bd = new Date(b.timestampStr);
-          return bd.getTime() - ad.getTime(); // desc
-        });
+        // Cliente / Unidad / Estado
+        const cli = incCliente?.value || '';
+        const uni = incUnidad?.value || '';
+        const est = incEstado?.value || '';
+        if (cli) q = q.where('cliente', '==', cli);
+        if (uni) q = q.where('unidad', '==', uni);
+        if (est) q = q.where('estado', '==', est);
 
-      incidenciasTbody.innerHTML = rows.map(r => {
-        const f = new Date(r.timestampStr);
-        const t = f instanceof Date && !Number.isNaN(f.getTime()) ? f.toLocaleString('es-PE') : '';
-        return `<tr>
+        const snap = await q.get();
+        const rows = snap.docs.map(d => {
+          const data = d.data();
+          // Convertir timestamp a string para que persista en JSON
+          const f = data.timestamp?.toDate ? data.timestamp.toDate() : new Date(data.timestamp || 0);
+          const timestampStr = f instanceof Date && !Number.isNaN(f.getTime()) ? f.toISOString() : new Date().toISOString();
+
+          return {
+            id: d.id,
+            ...data,
+            timestampStr: timestampStr,  // Guardar fecha como string
+            timestamp: undefined  // Eliminar objeto Timestamp que no se serializa bien
+          };
+        })
+          .sort((a, b) => {
+            const ad = new Date(a.timestampStr);
+            const bd = new Date(b.timestampStr);
+            return bd.getTime() - ad.getTime(); // desc
+          });
+
+        incidenciasTbody.innerHTML = rows.map(r => {
+          const f = new Date(r.timestampStr);
+          const t = f instanceof Date && !Number.isNaN(f.getTime()) ? f.toLocaleString('es-PE') : '';
+          return `<tr>
           <td style="width:150px">${t}</td>
           <td>${r.cliente || ''}</td>
           <td>${r.unidad || ''}</td>
@@ -4998,14 +5016,14 @@ document.addEventListener('DOMContentLoaded', () => {
             </button>
           </td>
         </tr>`;
-      }).join('');
+        }).join('');
 
-      incidenciasTbody.dataset.rows = JSON.stringify(rows);
-      UI.toast(`Resultados: ${rows.length}`);
-    } catch (e) {
-      UI.confirm({ title: 'Error', message: 'No se pudo consultar incidencias.', kind: 'err' });
-    } finally { UI.hideOverlay(); }
-  }
+        incidenciasTbody.dataset.rows = JSON.stringify(rows);
+        UI.toast(`Resultados: ${rows.length}`);
+      } catch (e) {
+        UI.confirm({ title: 'Error', message: 'No se pudo consultar incidencias.', kind: 'err' });
+      } finally { UI.hideOverlay(); }
+    }
 
     // Generar PDF para una incidencia con diseño profesional LIDERMAN
     async function generarPDFIncidencia(inc) {
@@ -5032,7 +5050,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (typeof inc.timestamp === 'number') {
               f = new Date(inc.timestamp);
             }
-            
+
             if (f instanceof Date && !Number.isNaN(f.getTime())) {
               fechaSoloFecha = f.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' });
             }
@@ -5046,12 +5064,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (inc.fotoURL) {
           try {
             let urlFinal = inc.fotoURL;
-            
+
             // Asegurar que tiene alt=media
             if (!urlFinal.includes('alt=')) {
               urlFinal = urlFinal + (urlFinal.includes('?') ? '&' : '?') + 'alt=media';
             }
-            
+
             const response = await fetch(urlFinal);
             if (response.ok) {
               const blob = await response.blob();
@@ -5082,7 +5100,7 @@ document.addEventListener('DOMContentLoaded', () => {
         content.push({
           columns: [
             { text: `REPORTE Nº ${inc.id?.toString().slice(-3) || '---'}`, style: 'reportNumber', width: '60%' },
-            { 
+            {
               stack: [
                 { text: 'Fecha:', fontSize: 10, bold: true, color: colorPrimario, alignment: 'right' },
                 { text: fechaSoloFecha || 'N/A', fontSize: 11, bold: true, alignment: 'right' }
@@ -5296,7 +5314,7 @@ document.addEventListener('DOMContentLoaded', () => {
       incidenciasTbody.addEventListener('click', (ev) => {
         const btnPdf = ev.target.closest && ev.target.closest('.btn-pdf');
         const btnEdit = ev.target.closest && ev.target.closest('.btn-edit-inc');
-        
+
         if (btnPdf) {
           const id = btnPdf.dataset.id;
           const raw = incidenciasTbody.dataset.rows;
@@ -5317,251 +5335,251 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-  // Función para abrir visor de fotos expandible
-  function abrirVisorFoto(fotoUrl) {
-    // Crear overlay y modal
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:2000;display:flex;align-items:center;justify-content:center;cursor:pointer';
-    
-    const imgContainer = document.createElement('div');
-    imgContainer.style.cssText = 'position:relative;max-width:90%;max-height:90%;background:#fff;padding:20px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
-    
-    const img = document.createElement('img');
-    img.src = fotoUrl;
-    img.style.cssText = 'max-width:100%;max-height:600px;object-fit:contain;display:block';
-    img.alt = 'Foto expandida';
-    
-    const closeBtn = document.createElement('button');
-    closeBtn.innerHTML = '✕';
-    closeBtn.style.cssText = 'position:absolute;top:5px;right:5px;background:none;border:none;font-size:28px;cursor:pointer;color:#666;hover:color:#000';
-    closeBtn.onclick = () => overlay.remove();
-    
-    imgContainer.appendChild(img);
-    imgContainer.appendChild(closeBtn);
-    overlay.appendChild(imgContainer);
-    
-    // Cerrar al hacer click fuera de la imagen
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        overlay.remove();
-      }
-    });
-    
-    // Cerrar con tecla ESC
-    const handleEsc = (e) => {
-      if (e.key === 'Escape') {
-        overlay.remove();
-        document.removeEventListener('keydown', handleEsc);
-      }
-    };
-    document.addEventListener('keydown', handleEsc);
-    
-    document.body.appendChild(overlay);
-  }
+    // Función para abrir visor de fotos expandible
+    function abrirVisorFoto(fotoUrl) {
+      // Crear overlay y modal
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:2000;display:flex;align-items:center;justify-content:center;cursor:pointer';
 
-  // Función para generar PDF del Cuaderno (Cronología de Ocurrencias)
-  function generarPDFCuaderno() {
-    const raw = cuadernoTbody?.dataset.rows;
-    if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
-    
-    const rows = JSON.parse(raw);
-    if (rows.length === 0) { UI.toast('No hay registros para exportar'); return; }
+      const imgContainer = document.createElement('div');
+      imgContainer.style.cssText = 'position:relative;max-width:90%;max-height:90%;background:#fff;padding:20px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.3)';
 
-    // Obtener cliente y unidad seleccionados
-    const clienteSeleccionado = document.getElementById('cuaderno-cliente')?.value || '';
-    const unidadSeleccionada = document.getElementById('cuaderno-unidad')?.value || '';
+      const img = document.createElement('img');
+      img.src = fotoUrl;
+      img.style.cssText = 'max-width:100%;max-height:600px;object-fit:contain;display:block';
+      img.alt = 'Foto expandida';
 
-    UI.showOverlay('Generando PDF...', 'Creando cuaderno de ocurrencias');
-    
-    // Cargar logo como imagen local
-    fetch('logo_liberman.png')
-      .then(res => res.blob())
-      .then(blob => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const logoDataUrl = reader.result;
-          generarPDFCuadernoConLogo(rows, logoDataUrl, clienteSeleccionado, unidadSeleccionada);
-        };
-        reader.onerror = () => {
-          generarPDFCuadernoConLogo(rows, null, clienteSeleccionado, unidadSeleccionada);
-        };
-        reader.readAsDataURL(blob);
-      })
-      .catch(e => {
-        generarPDFCuadernoConLogo(rows, null, clienteSeleccionado, unidadSeleccionada);
+      const closeBtn = document.createElement('button');
+      closeBtn.innerHTML = '✕';
+      closeBtn.style.cssText = 'position:absolute;top:5px;right:5px;background:none;border:none;font-size:28px;cursor:pointer;color:#666;hover:color:#000';
+      closeBtn.onclick = () => overlay.remove();
+
+      imgContainer.appendChild(img);
+      imgContainer.appendChild(closeBtn);
+      overlay.appendChild(imgContainer);
+
+      // Cerrar al hacer click fuera de la imagen
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+          overlay.remove();
+        }
       });
-  }
 
-  function generarPDFCuadernoConLogo(rows, logoDataUrl, cliente, unidad) {
-    try {
-      const colorPrimario = '#2c5aa0';
-      const colorSecundario = '#1a3d5c';
-      const content = [];
-
-      // ENCABEZADO CON LOGO
-      const encabezado = {
-        columns: [
-          {
-            stack: [
-              { text: 'LIDERMAN', fontSize: 16, bold: true, color: '#c41e3a' },
-              { text: 'SOLUCIONES TECNOLÓGICAS', fontSize: 10, color: colorPrimario },
-              { text: 'CUADERNO DE OCURRENCIAS DE SEGURIDAD', fontSize: 12, bold: true, color: colorPrimario, margin: [0, 5, 0, 0] }
-            ],
-            width: logoDataUrl ? '70%' : '100%'
-          }
-        ],
-        margin: [0, 0, 0, 15]
+      // Cerrar con tecla ESC
+      const handleEsc = (e) => {
+        if (e.key === 'Escape') {
+          overlay.remove();
+          document.removeEventListener('keydown', handleEsc);
+        }
       };
+      document.addEventListener('keydown', handleEsc);
 
-      if (logoDataUrl) {
-        encabezado.columns.push({
-          image: logoDataUrl,
-          width: 70,
-          height: 70,
-          alignment: 'right',
-          margin: [10, 0, 0, 0]
-        });
-      }
-
-      content.push(encabezado);
-
-      // LÍNEA SEPARADORA
-      content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 2, lineColor: colorPrimario }], margin: [0, 0, 0, 12] });
-
-      // INFORMACIÓN DE FILTROS
-      const fechaInicio = cuadernoFechaInicio?.value || 'Sin filtro';
-      const fechaFin = cuadernoFechaFin?.value || 'Sin filtro';
-      const clienteDisplay = cliente || 'Todos';
-      const unidadDisplay = unidad || 'Todas';
-      
-      content.push({
-        columns: [
-          { text: `Cliente: ${clienteDisplay} | Unidad: ${unidadDisplay}`, fontSize: 11, bold: true, color: '#c41e3a' },
-          { text: `Total de registros: ${rows.length}`, fontSize: 10, color: '#555', alignment: 'right' }
-        ],
-        margin: [0, 0, 0, 10]
-      });
-
-      content.push({
-        columns: [
-          { text: `Período: ${fechaInicio} hasta ${fechaFin}`, fontSize: 10, color: '#555' }
-        ],
-        margin: [0, 0, 0, 15]
-      });
-
-      // TABLA DE CONTENIDO / CRONOLOGÍA CON HEADERS MEJORADOS
-      const tableBody = [];
-      
-      // ENCABEZADOS CON STYLING SIMPLE
-      const headerRow = [
-        { text: 'Nº', bold: true, color: '#fff', fillColor: colorPrimario, alignment: 'center', fontSize: 10, margin: [2, 6, 2, 6] },
-        { text: 'FECHA Y HORA', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-        { text: 'CLIENTE', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-        { text: 'UNIDAD', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-        { text: 'TIPO', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-        { text: 'USR. ENTRANTE', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-        { text: 'USR. SALIENTE', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-        { text: 'USUARIO', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-        { text: 'COMENTARIO', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] }
-      ];
-      tableBody.push(headerRow);
-
-      // Agregar filas con datos
-      rows.forEach((r, idx) => {
-        const fechaHora = r.timestampStr || 'N/A';
-        const usuarioEntrante = r.usuarioEntrante?.nombre || r.usuarioEntrante?.id || '-';
-        const usuarioSaliente = r.usuarioSaliente?.nombre || r.usuarioSaliente?.id || '-';
-        const usuario = r.usuario || usuarioEntrante || usuarioSaliente || '-';
-        const backgroundColor = idx % 2 === 0 ? '#fafafa' : '#ffffff';
-
-        tableBody.push([
-          { text: idx + 1, alignment: 'center', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-          { text: fechaHora, fontSize: 8, fillColor: backgroundColor, bold: true, color: colorPrimario, margin: [2, 4, 2, 4] },
-          { text: r.cliente || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-          { text: r.unidad || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-          { text: r.tipoRegistro || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-          { text: usuarioEntrante, fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-          { text: usuarioSaliente, fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-          { text: usuario, fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-          { text: r.comentario || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] }
-        ]);
-      });
-
-      content.push({
-        table: {
-          widths: ['4%', '12%', '12%', '12%', '10%', '14%', '14%', '12%', '14%'],
-          body: tableBody,
-          headerRows: 1
-        },
-        layout: {
-          fillColor: function(i, node) {
-            if (i === 0) return colorPrimario;  // Encabezado
-            return (i % 2 === 0) ? '#fafafa' : '#ffffff';
-          },
-          hLineWidth: (i) => i === 0 ? 2 : 0.5,
-          vLineWidth: () => 0.5,
-          hLineColor: () => '#ddd',
-          vLineColor: () => '#ddd',
-          paddingLeft: () => 6,
-          paddingRight: () => 6,
-          paddingTop: () => 6,
-          paddingBottom: () => 6
-        },
-        margin: [0, 0, 0, 20]
-      });
-
-      // PIE DE PÁGINA
-      content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: '#ccc' }], margin: [0, 10, 0, 10] });
-      
-      const fechaActual = new Date().toLocaleString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-      content.push({
-        columns: [
-          { text: `Generado: ${fechaActual}`, fontSize: 9, color: '#999' },
-          { text: 'Liderman - Soluciones Tecnológicas', fontSize: 9, color: '#999', alignment: 'right' }
-        ],
-        margin: [0, 0, 0, 0]
-      });
-
-      // ESTILOS DEL DOCUMENTO
-      const styles = {
-        reportNumber: { fontSize: 16, bold: true, color: colorPrimario },
-        sectionTitle: { fontSize: 13, bold: true, color: colorPrimario, border: [false, false, false, true], borderColor: colorSecundario }
-      };
-
-      // DEFINICIÓN DEL DOCUMENTO PDF
-      const docDefinition = {
-        content: content,
-        styles: styles,
-        defaultStyle: { fontSize: 10 },
-        pageMargins: [40, 40, 40, 60],
-        footer: (currentPage, pageCount) => ({
-          text: `Página ${currentPage} de ${pageCount}`,
-          alignment: 'center',
-          fontSize: 9,
-          color: '#999',
-          margin: [0, 10, 0, 0]
-        })
-      };
-
-      // Generar y descargar PDF
-      const nombreArchivo = `Cuaderno_Ocurrencias_${new Date().toISOString().split('T')[0]}.pdf`;
-      try {
-        pdfMake.createPdf(docDefinition).download(nombreArchivo);
-        UI.toast('✓ PDF descargado exitosamente');
-      } catch (e) {
-        UI.toast('Error al descargar PDF. Intenta nuevamente.');
-      }
-      UI.toast('PDF generado exitosamente');
-      UI.hideOverlay();
-    } catch (error) {
-      UI.toast('Error al generar PDF: ' + error.message);
-      UI.hideOverlay();
+      document.body.appendChild(overlay);
     }
-  }
 
-  function abrirModalEditarIncidencia(inc) {
-    // Crear modal HTML
-    const modalHTML = `
+    // Función para generar PDF del Cuaderno (Cronología de Ocurrencias)
+    function generarPDFCuaderno() {
+      const raw = cuadernoTbody?.dataset.rows;
+      if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
+
+      const rows = JSON.parse(raw);
+      if (rows.length === 0) { UI.toast('No hay registros para exportar'); return; }
+
+      // Obtener cliente y unidad seleccionados
+      const clienteSeleccionado = document.getElementById('cuaderno-cliente')?.value || '';
+      const unidadSeleccionada = document.getElementById('cuaderno-unidad')?.value || '';
+
+      UI.showOverlay('Generando PDF...', 'Creando cuaderno de ocurrencias');
+
+      // Cargar logo como imagen local
+      fetch('logo_liberman.png')
+        .then(res => res.blob())
+        .then(blob => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const logoDataUrl = reader.result;
+            generarPDFCuadernoConLogo(rows, logoDataUrl, clienteSeleccionado, unidadSeleccionada);
+          };
+          reader.onerror = () => {
+            generarPDFCuadernoConLogo(rows, null, clienteSeleccionado, unidadSeleccionada);
+          };
+          reader.readAsDataURL(blob);
+        })
+        .catch(e => {
+          generarPDFCuadernoConLogo(rows, null, clienteSeleccionado, unidadSeleccionada);
+        });
+    }
+
+    function generarPDFCuadernoConLogo(rows, logoDataUrl, cliente, unidad) {
+      try {
+        const colorPrimario = '#2c5aa0';
+        const colorSecundario = '#1a3d5c';
+        const content = [];
+
+        // ENCABEZADO CON LOGO
+        const encabezado = {
+          columns: [
+            {
+              stack: [
+                { text: 'LIDERMAN', fontSize: 16, bold: true, color: '#c41e3a' },
+                { text: 'SOLUCIONES TECNOLÓGICAS', fontSize: 10, color: colorPrimario },
+                { text: 'CUADERNO DE OCURRENCIAS DE SEGURIDAD', fontSize: 12, bold: true, color: colorPrimario, margin: [0, 5, 0, 0] }
+              ],
+              width: logoDataUrl ? '70%' : '100%'
+            }
+          ],
+          margin: [0, 0, 0, 15]
+        };
+
+        if (logoDataUrl) {
+          encabezado.columns.push({
+            image: logoDataUrl,
+            width: 70,
+            height: 70,
+            alignment: 'right',
+            margin: [10, 0, 0, 0]
+          });
+        }
+
+        content.push(encabezado);
+
+        // LÍNEA SEPARADORA
+        content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 2, lineColor: colorPrimario }], margin: [0, 0, 0, 12] });
+
+        // INFORMACIÓN DE FILTROS
+        const fechaInicio = cuadernoFechaInicio?.value || 'Sin filtro';
+        const fechaFin = cuadernoFechaFin?.value || 'Sin filtro';
+        const clienteDisplay = cliente || 'Todos';
+        const unidadDisplay = unidad || 'Todas';
+
+        content.push({
+          columns: [
+            { text: `Cliente: ${clienteDisplay} | Unidad: ${unidadDisplay}`, fontSize: 11, bold: true, color: '#c41e3a' },
+            { text: `Total de registros: ${rows.length}`, fontSize: 10, color: '#555', alignment: 'right' }
+          ],
+          margin: [0, 0, 0, 10]
+        });
+
+        content.push({
+          columns: [
+            { text: `Período: ${fechaInicio} hasta ${fechaFin}`, fontSize: 10, color: '#555' }
+          ],
+          margin: [0, 0, 0, 15]
+        });
+
+        // TABLA DE CONTENIDO / CRONOLOGÍA CON HEADERS MEJORADOS
+        const tableBody = [];
+
+        // ENCABEZADOS CON STYLING SIMPLE
+        const headerRow = [
+          { text: 'Nº', bold: true, color: '#fff', fillColor: colorPrimario, alignment: 'center', fontSize: 10, margin: [2, 6, 2, 6] },
+          { text: 'FECHA Y HORA', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+          { text: 'CLIENTE', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+          { text: 'UNIDAD', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+          { text: 'TIPO', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+          { text: 'USR. ENTRANTE', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+          { text: 'USR. SALIENTE', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+          { text: 'USUARIO', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
+          { text: 'COMENTARIO', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] }
+        ];
+        tableBody.push(headerRow);
+
+        // Agregar filas con datos
+        rows.forEach((r, idx) => {
+          const fechaHora = r.timestampStr || 'N/A';
+          const usuarioEntrante = r.usuarioEntrante?.nombre || r.usuarioEntrante?.id || '-';
+          const usuarioSaliente = r.usuarioSaliente?.nombre || r.usuarioSaliente?.id || '-';
+          const usuario = r.usuario || usuarioEntrante || usuarioSaliente || '-';
+          const backgroundColor = idx % 2 === 0 ? '#fafafa' : '#ffffff';
+
+          tableBody.push([
+            { text: idx + 1, alignment: 'center', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+            { text: fechaHora, fontSize: 8, fillColor: backgroundColor, bold: true, color: colorPrimario, margin: [2, 4, 2, 4] },
+            { text: r.cliente || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+            { text: r.unidad || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+            { text: r.tipoRegistro || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+            { text: usuarioEntrante, fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+            { text: usuarioSaliente, fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+            { text: usuario, fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
+            { text: r.comentario || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] }
+          ]);
+        });
+
+        content.push({
+          table: {
+            widths: ['4%', '12%', '12%', '12%', '10%', '14%', '14%', '12%', '14%'],
+            body: tableBody,
+            headerRows: 1
+          },
+          layout: {
+            fillColor: function (i, node) {
+              if (i === 0) return colorPrimario;  // Encabezado
+              return (i % 2 === 0) ? '#fafafa' : '#ffffff';
+            },
+            hLineWidth: (i) => i === 0 ? 2 : 0.5,
+            vLineWidth: () => 0.5,
+            hLineColor: () => '#ddd',
+            vLineColor: () => '#ddd',
+            paddingLeft: () => 6,
+            paddingRight: () => 6,
+            paddingTop: () => 6,
+            paddingBottom: () => 6
+          },
+          margin: [0, 0, 0, 20]
+        });
+
+        // PIE DE PÁGINA
+        content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: '#ccc' }], margin: [0, 10, 0, 10] });
+
+        const fechaActual = new Date().toLocaleString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+        content.push({
+          columns: [
+            { text: `Generado: ${fechaActual}`, fontSize: 9, color: '#999' },
+            { text: 'Liderman - Soluciones Tecnológicas', fontSize: 9, color: '#999', alignment: 'right' }
+          ],
+          margin: [0, 0, 0, 0]
+        });
+
+        // ESTILOS DEL DOCUMENTO
+        const styles = {
+          reportNumber: { fontSize: 16, bold: true, color: colorPrimario },
+          sectionTitle: { fontSize: 13, bold: true, color: colorPrimario, border: [false, false, false, true], borderColor: colorSecundario }
+        };
+
+        // DEFINICIÓN DEL DOCUMENTO PDF
+        const docDefinition = {
+          content: content,
+          styles: styles,
+          defaultStyle: { fontSize: 10 },
+          pageMargins: [40, 40, 40, 60],
+          footer: (currentPage, pageCount) => ({
+            text: `Página ${currentPage} de ${pageCount}`,
+            alignment: 'center',
+            fontSize: 9,
+            color: '#999',
+            margin: [0, 10, 0, 0]
+          })
+        };
+
+        // Generar y descargar PDF
+        const nombreArchivo = `Cuaderno_Ocurrencias_${new Date().toISOString().split('T')[0]}.pdf`;
+        try {
+          pdfMake.createPdf(docDefinition).download(nombreArchivo);
+          UI.toast('✓ PDF descargado exitosamente');
+        } catch (e) {
+          UI.toast('Error al descargar PDF. Intenta nuevamente.');
+        }
+        UI.toast('PDF generado exitosamente');
+        UI.hideOverlay();
+      } catch (error) {
+        UI.toast('Error al generar PDF: ' + error.message);
+        UI.hideOverlay();
+      }
+    }
+
+    function abrirModalEditarIncidencia(inc) {
+      // Crear modal HTML
+      const modalHTML = `
       <div id="modal-edit-inc" class="modal-overlay" style="display:flex">
         <div class="modal-content" style="width:90%; max-width:800px; max-height:90vh; overflow-y:auto">
           <div class="modal-header">
@@ -5661,208 +5679,208 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     `;
 
-    // Insertar modal en el DOM
-    const existingModal = document.getElementById('modal-edit-inc');
-    if (existingModal) existingModal.remove();
-    
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-    
-    const modal = document.getElementById('modal-edit-inc');
-    const form = document.getElementById('form-edit-inc');
-    const btnCancel = document.getElementById('btn-cancel-edit');
-    const btnClose = modal.querySelector('.btn-close-modal');
+      // Insertar modal en el DOM
+      const existingModal = document.getElementById('modal-edit-inc');
+      if (existingModal) existingModal.remove();
 
-    // Cerrar modal
-    const cerrarModal = () => modal.remove();
-    btnCancel.addEventListener('click', cerrarModal);
-    btnClose.addEventListener('click', cerrarModal);
-    modal.addEventListener('click', (e) => {
-      if (e.target === modal) cerrarModal();
-    });
+      document.body.insertAdjacentHTML('beforeend', modalHTML);
 
-    // Guardar cambios
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      UI.showOverlay('Guardando...', 'Actualizando incidencia');
+      const modal = document.getElementById('modal-edit-inc');
+      const form = document.getElementById('form-edit-inc');
+      const btnCancel = document.getElementById('btn-cancel-edit');
+      const btnClose = modal.querySelector('.btn-close-modal');
+
+      // Cerrar modal
+      const cerrarModal = () => modal.remove();
+      btnCancel.addEventListener('click', cerrarModal);
+      btnClose.addEventListener('click', cerrarModal);
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) cerrarModal();
+      });
+
+      // Guardar cambios
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        UI.showOverlay('Guardando...', 'Actualizando incidencia');
+        try {
+          const formData = new FormData(form);
+          const updates = {};
+          for (let [key, value] of formData) {
+            updates[key] = value;
+          }
+
+          // Actualizar en Firestore
+          await db.collection('INCIDENCIAS_REGISTRADAS').doc(inc.id).update(updates);
+          UI.hideOverlay();
+          UI.toast('Incidencia actualizada exitosamente');
+          cerrarModal();
+          // Recargar tabla
+          document.getElementById('incidencias-btn-buscar')?.click();
+        } catch (error) {
+          UI.hideOverlay();
+          UI.toast('Error al guardar: ' + error.message);
+        }
+      });
+    }
+
+    function limpiarIncidencias() {
+      if (incFechaInicio) incFechaInicio.value = '';
+      if (incFechaFin) incFechaFin.value = '';
+      if (incCliente) incCliente.value = '';
+      if (incUnidad) incUnidad.value = '';
+      if (incEstado) incEstado.value = '';
+      if (incidenciasTbody) incidenciasTbody.innerHTML = '';
+      delete incidenciasTbody?.dataset.rows;
+    }
+
+    function exportarIncidenciasCSV() {
+      // Redirigir a Excel
+      exportarIncidenciasExcel();
+    }
+
+    function exportarIncidenciasExcel() {
+      const raw = incidenciasTbody?.dataset.rows;
+      if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
+
       try {
-        const formData = new FormData(form);
-        const updates = {};
-        for (let [key, value] of formData) {
-          updates[key] = value;
+        if (!window.XLSX) {
+          UI.toast('Librería XLSX no disponible');
+          return;
         }
 
-        // Actualizar en Firestore
-        await db.collection('INCIDENCIAS_REGISTRADAS').doc(inc.id).update(updates);
-        UI.hideOverlay();
-        UI.toast('Incidencia actualizada exitosamente');
-        cerrarModal();
-        // Recargar tabla
-        document.getElementById('incidencias-btn-buscar')?.click();
-      } catch (error) {
-        UI.hideOverlay();
-        UI.toast('Error al guardar: ' + error.message);
-      }
-    });
-  }
+        const rows = JSON.parse(raw);
+        const wb = XLSX.utils.book_new();
 
-  function limpiarIncidencias() {
-    if (incFechaInicio) incFechaInicio.value = '';
-    if (incFechaFin) incFechaFin.value = '';
-    if (incCliente) incCliente.value = '';
-    if (incUnidad) incUnidad.value = '';
-    if (incEstado) incEstado.value = '';
-    if (incidenciasTbody) incidenciasTbody.innerHTML = '';
-    delete incidenciasTbody?.dataset.rows;
-  }
+        // Preparar datos con formato de tabla
+        const headers = ['FECHA', 'CLIENTE', 'UNIDAD', 'CATEGORÍA', 'SUB CATEGORÍA', 'NIVEL DE RIESGO', 'ESTADO', 'COMENTARIO'];
+        const data = [headers];
 
-  function exportarIncidenciasCSV() {
-    // Redirigir a Excel
-    exportarIncidenciasExcel();
-  }
+        for (const r of rows) {
+          const f = r.timestamp?.toDate ? r.timestamp.toDate() : new Date(r.timestamp);
+          const fecha = (f instanceof Date && !Number.isNaN(f.getTime())) ? f.toLocaleDateString('es-PE') + ' ' + f.toLocaleTimeString('es-PE') : '';
 
-  function exportarIncidenciasExcel() {
-    const raw = incidenciasTbody?.dataset.rows;
-    if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
-    
-    try {
-      if (!window.XLSX) {
-        UI.toast('Librería XLSX no disponible');
-        return;
-      }
+          data.push([
+            fecha,
+            r.cliente || '',
+            r.unidad || '',
+            r.tipoIncidente || '',
+            r.detalleIncidente || '',
+            r.Nivelderiesgo || '',
+            r.estado || '',
+            r.comentario || ''
+          ]);
+        }
 
-      const rows = JSON.parse(raw);
-      const wb = XLSX.utils.book_new();
+        // Crear hoja con datos
+        const ws = XLSX.utils.aoa_to_sheet(data);
 
-      // Preparar datos con formato de tabla
-      const headers = ['FECHA', 'CLIENTE', 'UNIDAD', 'CATEGORÍA', 'SUB CATEGORÍA', 'NIVEL DE RIESGO', 'ESTADO', 'COMENTARIO'];
-      const data = [headers];
+        // Aplicar ancho de columnas
+        ws['!cols'] = [
+          { wch: 20 }, // FECHA
+          { wch: 18 }, // CLIENTE
+          { wch: 18 }, // UNIDAD
+          { wch: 25 }, // CATEGORÍA
+          { wch: 25 }, // SUB CATEGORÍA
+          { wch: 18 }, // NIVEL DE RIESGO
+          { wch: 15 }, // ESTADO
+          { wch: 30 }  // COMENTARIO
+        ];
 
-      for (const r of rows) {
-        const f = r.timestamp?.toDate ? r.timestamp.toDate() : new Date(r.timestamp);
-        const fecha = (f instanceof Date && !Number.isNaN(f.getTime())) ? f.toLocaleDateString('es-PE') + ' ' + f.toLocaleTimeString('es-PE') : '';
-        
-        data.push([
-          fecha,
-          r.cliente || '',
-          r.unidad || '',
-          r.tipoIncidente || '',
-          r.detalleIncidente || '',
-          r.Nivelderiesgo || '',
-          r.estado || '',
-          r.comentario || ''
-        ]);
-      }
+        // Aplicar estilos a la cabecera
+        const headerStyle = {
+          font: { bold: true, color: { rgb: 'FFFFFF' } },
+          fill: { fgColor: { rgb: 'FF4472C4' } },
+          alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+          border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
+        };
 
-      // Crear hoja con datos
-      const ws = XLSX.utils.aoa_to_sheet(data);
-      
-      // Aplicar ancho de columnas
-      ws['!cols'] = [
-        { wch: 20 }, // FECHA
-        { wch: 18 }, // CLIENTE
-        { wch: 18 }, // UNIDAD
-        { wch: 25 }, // CATEGORÍA
-        { wch: 25 }, // SUB CATEGORÍA
-        { wch: 18 }, // NIVEL DE RIESGO
-        { wch: 15 }, // ESTADO
-        { wch: 30 }  // COMENTARIO
-      ];
+        for (let i = 0; i < headers.length; i++) {
+          const cell = XLSX.utils.encode_cell({ r: 0, c: i });
+          if (ws[cell]) ws[cell].s = headerStyle;
+        }
 
-      // Aplicar estilos a la cabecera
-      const headerStyle = {
-        font: { bold: true, color: { rgb: 'FFFFFF' } },
-        fill: { fgColor: { rgb: 'FF4472C4' } },
-        alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-        border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
-      };
-
-      for (let i = 0; i < headers.length; i++) {
-        const cell = XLSX.utils.encode_cell({ r: 0, c: i });
-        if (ws[cell]) ws[cell].s = headerStyle;
-      }
-
-      // Aplicar borde a todas las celdas
-      for (let r = 0; r < data.length; r++) {
-        for (let c = 0; c < headers.length; c++) {
-          const cell = XLSX.utils.encode_cell({ r, c });
-          if (ws[cell]) {
-            if (!ws[cell].s) ws[cell].s = {};
-            ws[cell].s.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
-            ws[cell].s.alignment = { wrapText: true };
+        // Aplicar borde a todas las celdas
+        for (let r = 0; r < data.length; r++) {
+          for (let c = 0; c < headers.length; c++) {
+            const cell = XLSX.utils.encode_cell({ r, c });
+            if (ws[cell]) {
+              if (!ws[cell].s) ws[cell].s = {};
+              ws[cell].s.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+              ws[cell].s.alignment = { wrapText: true };
+            }
           }
         }
+
+        XLSX.utils.book_append_sheet(wb, ws, 'Incidencias');
+
+        // Hoja de metadatos
+        const metadata = [
+          ['REPORTE DE INCIDENCIAS'],
+          ['Fecha de Generación', new Date().toLocaleString('es-PE')],
+          ['Total de Registros', rows.length],
+          [],
+          ['Filtros Aplicados'],
+          ['Cliente', document.getElementById('incidencias-cliente')?.value || 'Todos'],
+          ['Unidad', document.getElementById('incidencias-unidad')?.value || 'Todas'],
+          ['Estado', document.getElementById('incidencias-estado')?.value || 'Todos'],
+          ['Rango de Fechas', document.getElementById('incidencias-fecha-inicio')?.value + ' a ' + document.getElementById('incidencias-fecha-fin')?.value || 'N/A']
+        ];
+
+        const metaWs = XLSX.utils.aoa_to_sheet(metadata);
+        metaWs['!cols'] = [{ wch: 25 }, { wch: 35 }];
+        XLSX.utils.book_append_sheet(wb, metaWs, 'Información');
+
+        // Descargar archivo
+        XLSX.writeFile(wb, `incidencias_${new Date().toISOString().split('T')[0]}.xlsx`);
+        UI.toast('Exportado a Excel correctamente');
+      } catch (e) {
+        UI.toast('Error al exportar a Excel');
       }
-
-      XLSX.utils.book_append_sheet(wb, ws, 'Incidencias');
-
-      // Hoja de metadatos
-      const metadata = [
-        ['REPORTE DE INCIDENCIAS'],
-        ['Fecha de Generación', new Date().toLocaleString('es-PE')],
-        ['Total de Registros', rows.length],
-        [],
-        ['Filtros Aplicados'],
-        ['Cliente', document.getElementById('incidencias-cliente')?.value || 'Todos'],
-        ['Unidad', document.getElementById('incidencias-unidad')?.value || 'Todas'],
-        ['Estado', document.getElementById('incidencias-estado')?.value || 'Todos'],
-        ['Rango de Fechas', document.getElementById('incidencias-fecha-inicio')?.value + ' a ' + document.getElementById('incidencias-fecha-fin')?.value || 'N/A']
-      ];
-
-      const metaWs = XLSX.utils.aoa_to_sheet(metadata);
-      metaWs['!cols'] = [{ wch: 25 }, { wch: 35 }];
-      XLSX.utils.book_append_sheet(wb, metaWs, 'Información');
-
-      // Descargar archivo
-      XLSX.writeFile(wb, `incidencias_${new Date().toISOString().split('T')[0]}.xlsx`);
-      UI.toast('Exportado a Excel correctamente');
-    } catch (e) {
-      UI.toast('Error al exportar a Excel');
     }
-  }
 
-  incBtnBuscar?.addEventListener('click', buscarIncidencias);
-  incBtnLimpiar?.addEventListener('click', limpiarIncidencias);
-  incBtnExportar?.addEventListener('click', exportarIncidenciasCSV);
+    incBtnBuscar?.addEventListener('click', buscarIncidencias);
+    incBtnLimpiar?.addEventListener('click', limpiarIncidencias);
+    incBtnExportar?.addEventListener('click', exportarIncidenciasCSV);
 
-  // ============================================================================
-  // 7) OTRAS SECCIONES (USUARIOS, CLIENTE/UNIDAD, ETC.)
-  // ============================================================================
+    // ============================================================================
+    // 7) OTRAS SECCIONES (USUARIOS, CLIENTE/UNIDAD, ETC.)
+    // ============================================================================
 
-  // --- USUARIOS ---
-  async function loadUsers() {
-    if (!usersTbody) return;
-    UI.showOverlay('Cargando usuarios…', 'Consultando base de datos');
-    try {
-      // Cargar TODOS los usuarios (límite de 1000 para mejor rendimiento)
-      const snap = await db.collection(COLLECTIONS.USERS).limit(1000).get();
-      
-      let usuarios = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      
-      // Si es SUPERVISOR, filtrar para excluir usuarios con TIPOACCESO = 'ADMIN'
-      if (accessControl?.isSupervisor()) {
-        usuarios = usuarios.filter(u => {
-          // Mostrar usuarios que:
-          // - NO tienen TIPOACCESO, O
-          // - Tienen TIPOACCESO pero NO es 'ADMIN'
-          return !u.TIPOACCESO || u.TIPOACCESO !== 'ADMIN';
-        });
-      }
-      
-      cachedUsers = usuarios;
-      renderUsers(cachedUsers);
-    } catch (e) {
-      UI.confirm({ title: 'Error', message: 'No se pudo cargar la lista de usuarios.', kind: 'err' });
-    } finally { UI.hideOverlay(); }
-  }
+    // --- USUARIOS ---
+    async function loadUsers() {
+      if (!usersTbody) return;
+      UI.showOverlay('Cargando usuarios…', 'Consultando base de datos');
+      try {
+        // Cargar TODOS los usuarios (límite de 1000 para mejor rendimiento)
+        const snap = await db.collection(COLLECTIONS.USERS).limit(1000).get();
 
-  function renderUsers(list) {
-    if (!usersTbody) return;
-    usersTbody.innerHTML = '';
-    if (usersCountEl) usersCountEl.textContent = `(${list.length})`;
-    const frag = document.createDocumentFragment();
-    list.forEach(u => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
+        let usuarios = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        // Si es SUPERVISOR, filtrar para excluir usuarios con TIPOACCESO = 'ADMIN'
+        if (accessControl?.isSupervisor()) {
+          usuarios = usuarios.filter(u => {
+            // Mostrar usuarios que:
+            // - NO tienen TIPOACCESO, O
+            // - Tienen TIPOACCESO pero NO es 'ADMIN'
+            return !u.TIPOACCESO || u.TIPOACCESO !== 'ADMIN';
+          });
+        }
+
+        cachedUsers = usuarios;
+        renderUsers(cachedUsers);
+      } catch (e) {
+        UI.confirm({ title: 'Error', message: 'No se pudo cargar la lista de usuarios.', kind: 'err' });
+      } finally { UI.hideOverlay(); }
+    }
+
+    function renderUsers(list) {
+      if (!usersTbody) return;
+      usersTbody.innerHTML = '';
+      if (usersCountEl) usersCountEl.textContent = `(${list.length})`;
+      const frag = document.createDocumentFragment();
+      list.forEach(u => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
         <td>${u.id || ''}</td>
         <td>${u.NOMBRES || ''}</td>
         <td>${u.APELLIDOS || ''}</td>
@@ -5874,249 +5892,249 @@ document.addEventListener('DOMContentLoaded', () => {
           <button class="btn small secondary" data-act="edit" data-id="${u.id}">Editar</button>
           <button class="btn small danger" data-act="del" data-id="${u.id}">Eliminar</button>
         </td>`;
-      frag.appendChild(tr);
-    });
-    usersTbody.appendChild(frag);
-  }
-
-  // ===== FILTROS PREDICTIVOS PARA USUARIOS =====
-  const filterInputs = {
-    id: document.getElementById('filter-id'),
-    nombres: document.getElementById('filter-nombres'),
-    apellidos: document.getElementById('filter-apellidos'),
-    cliente: document.getElementById('filter-cliente'),
-    unidad: document.getElementById('filter-unidad'),
-    tipo: document.getElementById('filter-tipo'),
-    estado: document.getElementById('filter-estado')
-  };
-  
-  const clearFiltersBtn = document.getElementById('clear-filters');
-
-  function applyFilters() {
-    const filters = {
-      id: filterInputs.id?.value.toLowerCase().trim() || '',
-      nombres: filterInputs.nombres?.value.toLowerCase().trim() || '',
-      apellidos: filterInputs.apellidos?.value.toLowerCase().trim() || '',
-      cliente: filterInputs.cliente?.value.toLowerCase().trim() || '',
-      unidad: filterInputs.unidad?.value.toLowerCase().trim() || '',
-      tipo: filterInputs.tipo?.value.toLowerCase().trim() || '',
-      estado: filterInputs.estado?.value.toLowerCase().trim() || ''
-    };
-
-    const filtered = cachedUsers.filter(u => {
-      return (
-        (u.id || '').toLowerCase().includes(filters.id) &&
-        (u.NOMBRES || '').toLowerCase().includes(filters.nombres) &&
-        (u.APELLIDOS || '').toLowerCase().includes(filters.apellidos) &&
-        (u.CLIENTE || '').toLowerCase().includes(filters.cliente) &&
-        (u.UNIDAD || '').toLowerCase().includes(filters.unidad) &&
-        (u.TIPO || '').toLowerCase().includes(filters.tipo) &&
-        (u.ESTADO || '').toLowerCase().includes(filters.estado)
-      );
-    });
-
-    renderUsers(filtered);
-  }
-
-  // Event listeners para cada filtro
-  Object.values(filterInputs).forEach(input => {
-    if (input) {
-      input.addEventListener('input', applyFilters);
-      input.addEventListener('keyup', applyFilters);
-    }
-  });
-
-  // Botón para limpiar filtros
-  if (clearFiltersBtn) {
-    clearFiltersBtn.addEventListener('click', () => {
-      Object.values(filterInputs).forEach(input => {
-        if (input) input.value = '';
+        frag.appendChild(tr);
       });
-      renderUsers(cachedUsers);
-    });
-  }
-
-  usersTbody?.addEventListener('click', async (ev) => {
-    const btn = ev.target.closest('button[data-act]');
-    if (!btn) return;
-    const id = btn.dataset.id;
-    const act = btn.dataset.act;
-
-    if (act === 'del') {
-      const ok = await UI.confirm({ title: 'Eliminar usuario', message: `¿Eliminar "${id}"?`, kind: 'err', confirmText: 'Eliminar' });
-      if (!ok) return;
-      UI.showOverlay('Eliminando…', 'Actualizando');
-      try {
-        await db.collection(COLLECTIONS.USERS).doc(id).delete();
-        cachedUsers = cachedUsers.filter(x => x.id !== id);
-        renderUsers(cachedUsers);
-        UI.toast('Usuario eliminado');
-      } catch (e) {
-        UI.confirm({ title: 'Error', message: 'No se pudo eliminar.', kind: 'err' });
-      } finally { UI.hideOverlay(); }
+      usersTbody.appendChild(frag);
     }
 
-    if (act === 'edit') {
-      const u = cachedUsers.find(x => x.id === id);
-      if (!u) return;
-
-      editNombres.value = u.NOMBRES ?? '';
-      editApellidos.value = u.APELLIDOS ?? '';
-      editTipo.value = u.TIPO ?? 'AGENTE';
-      editEstado.value = u.ESTADO ?? 'ACTIVO';
-
-      (async () => {
-        UI.showOverlay('Cargando…', 'Obteniendo datos del usuario');
-        try {
-          // Usar la función genérica para cargar Cliente/Unidad
-          await loadClienteUnidadFiltersGenerico('editCliente', 'editUnidad', false);
-
-          // Establecer los valores del usuario
-          editCliente.value = u.CLIENTE || '';
-          
-          // Actualizar unidades cuando se cargaron
-          setTimeout(() => {
-            editUnidad.value = u.UNIDAD || '';
-          }, 100);
-
-          editingUserId = id;
-          openModal(editModal);
-        } catch (e) {
-          console.error('Error al cargar usuario:', e);
-          UI.toast('❌ Error al cargar los datos del usuario');
-        } finally {
-          UI.hideOverlay();
-        }
-      })();
-    }
-  });
-
-  editCancelBtn?.addEventListener('click', () => closeModal(editModal));
-  editForm?.addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    if (!editingUserId) return;
-
-    const payload = {
-      NOMBRES: editNombres.value.trim(),
-      APELLIDOS: editApellidos.value.trim(),
-      CLIENTE: editCliente.value || '',
-      UNIDAD: editUnidad.value || '',
-      TIPO: editTipo.value,
-      ESTADO: editEstado.value
+    // ===== FILTROS PREDICTIVOS PARA USUARIOS =====
+    const filterInputs = {
+      id: document.getElementById('filter-id'),
+      nombres: document.getElementById('filter-nombres'),
+      apellidos: document.getElementById('filter-apellidos'),
+      cliente: document.getElementById('filter-cliente'),
+      unidad: document.getElementById('filter-unidad'),
+      tipo: document.getElementById('filter-tipo'),
+      estado: document.getElementById('filter-estado')
     };
 
-    UI.showOverlay('Guardando…', 'Actualizando datos');
-    try {
-      await db.collection(COLLECTIONS.USERS).doc(editingUserId).set(payload, { merge: true });
-      const u = cachedUsers.find(x => x.id === editingUserId);
-      if (u) Object.assign(u, payload);
-      renderUsers(cachedUsers);
-      UI.toast('Usuario actualizado');
-      closeModal(editModal);
-    } catch (e) {
-      UI.confirm({ title: 'Error', message: 'No se pudo actualizar.', kind: 'err' });
-    } finally { UI.hideOverlay(); }
-  });
+    const clearFiltersBtn = document.getElementById('clear-filters');
 
-  // --- CLIENTE/UNIDAD ---
-  async function loadClienteUnidad() {
-    if (!clienteUnidadTbody) return;
-    UI.showOverlay('Cargando cliente/unidad…', 'Consultando base de datos');
-    try {
-      // Obtener todos los CLIENTES desde CLIENTE_UNIDAD (límite 500)
-      const clientesSnap = await db.collection(COLLECTIONS.CLIENT_UNITS).limit(500).get();
-      cachedClientesUnidades = [];
+    function applyFilters() {
+      const filters = {
+        id: filterInputs.id?.value.toLowerCase().trim() || '',
+        nombres: filterInputs.nombres?.value.toLowerCase().trim() || '',
+        apellidos: filterInputs.apellidos?.value.toLowerCase().trim() || '',
+        cliente: filterInputs.cliente?.value.toLowerCase().trim() || '',
+        unidad: filterInputs.unidad?.value.toLowerCase().trim() || '',
+        tipo: filterInputs.tipo?.value.toLowerCase().trim() || '',
+        estado: filterInputs.estado?.value.toLowerCase().trim() || ''
+      };
 
-      // Para cada CLIENTE, obtener sus UNIDADES y PUESTOS
-      for (const clienteDoc of clientesSnap.docs) {
-        const clienteId = clienteDoc.id;
-        const clienteData = clienteDoc.data();
+      const filtered = cachedUsers.filter(u => {
+        return (
+          (u.id || '').toLowerCase().includes(filters.id) &&
+          (u.NOMBRES || '').toLowerCase().includes(filters.nombres) &&
+          (u.APELLIDOS || '').toLowerCase().includes(filters.apellidos) &&
+          (u.CLIENTE || '').toLowerCase().includes(filters.cliente) &&
+          (u.UNIDAD || '').toLowerCase().includes(filters.unidad) &&
+          (u.TIPO || '').toLowerCase().includes(filters.tipo) &&
+          (u.ESTADO || '').toLowerCase().includes(filters.estado)
+        );
+      });
 
-        // Obtener UNIDADES desde la SUBCOLECCIÓN
-        const unidadesSnap = await db
-          .collection(COLLECTIONS.CLIENT_UNITS)
-          .doc(clienteId)
-          .collection('UNIDADES')
-          .get();
+      renderUsers(filtered);
+    }
 
-        // Para cada UNIDAD, obtener sus PUESTOS
-        for (const unidadDoc of unidadesSnap.docs) {
-          const unidadId = unidadDoc.id;
-          const unidadData = unidadDoc.data();
+    // Event listeners para cada filtro
+    Object.values(filterInputs).forEach(input => {
+      if (input) {
+        input.addEventListener('input', applyFilters);
+        input.addEventListener('keyup', applyFilters);
+      }
+    });
 
-          // Obtener PUESTOS desde la SUBCOLECCIÓN de UNIDAD
-          const puestosSnap = await db
+    // Botón para limpiar filtros
+    if (clearFiltersBtn) {
+      clearFiltersBtn.addEventListener('click', () => {
+        Object.values(filterInputs).forEach(input => {
+          if (input) input.value = '';
+        });
+        renderUsers(cachedUsers);
+      });
+    }
+
+    usersTbody?.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('button[data-act]');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const act = btn.dataset.act;
+
+      if (act === 'del') {
+        const ok = await UI.confirm({ title: 'Eliminar usuario', message: `¿Eliminar "${id}"?`, kind: 'err', confirmText: 'Eliminar' });
+        if (!ok) return;
+        UI.showOverlay('Eliminando…', 'Actualizando');
+        try {
+          await db.collection(COLLECTIONS.USERS).doc(id).delete();
+          cachedUsers = cachedUsers.filter(x => x.id !== id);
+          renderUsers(cachedUsers);
+          UI.toast('Usuario eliminado');
+        } catch (e) {
+          UI.confirm({ title: 'Error', message: 'No se pudo eliminar.', kind: 'err' });
+        } finally { UI.hideOverlay(); }
+      }
+
+      if (act === 'edit') {
+        const u = cachedUsers.find(x => x.id === id);
+        if (!u) return;
+
+        editNombres.value = u.NOMBRES ?? '';
+        editApellidos.value = u.APELLIDOS ?? '';
+        editTipo.value = u.TIPO ?? 'AGENTE';
+        editEstado.value = u.ESTADO ?? 'ACTIVO';
+
+        (async () => {
+          UI.showOverlay('Cargando…', 'Obteniendo datos del usuario');
+          try {
+            // Usar la función genérica para cargar Cliente/Unidad
+            await loadClienteUnidadFiltersGenerico('editCliente', 'editUnidad', false);
+
+            // Establecer los valores del usuario
+            editCliente.value = u.CLIENTE || '';
+
+            // Actualizar unidades cuando se cargaron
+            setTimeout(() => {
+              editUnidad.value = u.UNIDAD || '';
+            }, 100);
+
+            editingUserId = id;
+            openModal(editModal);
+          } catch (e) {
+            console.error('Error al cargar usuario:', e);
+            UI.toast('❌ Error al cargar los datos del usuario');
+          } finally {
+            UI.hideOverlay();
+          }
+        })();
+      }
+    });
+
+    editCancelBtn?.addEventListener('click', () => closeModal(editModal));
+    editForm?.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      if (!editingUserId) return;
+
+      const payload = {
+        NOMBRES: editNombres.value.trim(),
+        APELLIDOS: editApellidos.value.trim(),
+        CLIENTE: editCliente.value || '',
+        UNIDAD: editUnidad.value || '',
+        TIPO: editTipo.value,
+        ESTADO: editEstado.value
+      };
+
+      UI.showOverlay('Guardando…', 'Actualizando datos');
+      try {
+        await db.collection(COLLECTIONS.USERS).doc(editingUserId).set(payload, { merge: true });
+        const u = cachedUsers.find(x => x.id === editingUserId);
+        if (u) Object.assign(u, payload);
+        renderUsers(cachedUsers);
+        UI.toast('Usuario actualizado');
+        closeModal(editModal);
+      } catch (e) {
+        UI.confirm({ title: 'Error', message: 'No se pudo actualizar.', kind: 'err' });
+      } finally { UI.hideOverlay(); }
+    });
+
+    // --- CLIENTE/UNIDAD ---
+    async function loadClienteUnidad() {
+      if (!clienteUnidadTbody) return;
+      UI.showOverlay('Cargando cliente/unidad…', 'Consultando base de datos');
+      try {
+        // Obtener todos los CLIENTES desde CLIENTE_UNIDAD (límite 500)
+        const clientesSnap = await db.collection(COLLECTIONS.CLIENT_UNITS).limit(500).get();
+        cachedClientesUnidades = [];
+
+        // Para cada CLIENTE, obtener sus UNIDADES y PUESTOS
+        for (const clienteDoc of clientesSnap.docs) {
+          const clienteId = clienteDoc.id;
+          const clienteData = clienteDoc.data();
+
+          // Obtener UNIDADES desde la SUBCOLECCIÓN
+          const unidadesSnap = await db
             .collection(COLLECTIONS.CLIENT_UNITS)
             .doc(clienteId)
             .collection('UNIDADES')
-            .doc(unidadId)
-            .collection('PUESTOS')
             .get();
 
-          // Si hay puestos, agregar una entrada por cada puesto
-          if (puestosSnap.size > 0) {
-            puestosSnap.docs.forEach(puestoDoc => {
-              const puestoId = puestoDoc.id;
-              const puestoData = puestoDoc.data();
+          // Para cada UNIDAD, obtener sus PUESTOS
+          for (const unidadDoc of unidadesSnap.docs) {
+            const unidadId = unidadDoc.id;
+            const unidadData = unidadDoc.data();
+
+            // Obtener PUESTOS desde la SUBCOLECCIÓN de UNIDAD
+            const puestosSnap = await db
+              .collection(COLLECTIONS.CLIENT_UNITS)
+              .doc(clienteId)
+              .collection('UNIDADES')
+              .doc(unidadId)
+              .collection('PUESTOS')
+              .get();
+
+            // Si hay puestos, agregar una entrada por cada puesto
+            if (puestosSnap.size > 0) {
+              puestosSnap.docs.forEach(puestoDoc => {
+                const puestoId = puestoDoc.id;
+                const puestoData = puestoDoc.data();
+                cachedClientesUnidades.push({
+                  clienteId,
+                  clienteData,
+                  unidadId,
+                  unidadData,
+                  puestoId,
+                  puestoData
+                });
+              });
+            } else {
+              // Si no hay puestos, agregar una entrada sin puesto
               cachedClientesUnidades.push({
                 clienteId,
                 clienteData,
                 unidadId,
                 unidadData,
-                puestoId,
-                puestoData
+                puestoId: null,
+                puestoData: null
               });
-            });
-          } else {
-            // Si no hay puestos, agregar una entrada sin puesto
+            }
+          }
+
+          // Si no hay unidades, agregar una entrada sin unidad
+          if (unidadesSnap.size === 0) {
             cachedClientesUnidades.push({
               clienteId,
               clienteData,
-              unidadId,
-              unidadData,
+              unidadId: null,
+              unidadData: null,
               puestoId: null,
               puestoData: null
             });
           }
         }
 
-        // Si no hay unidades, agregar una entrada sin unidad
-        if (unidadesSnap.size === 0) {
-          cachedClientesUnidades.push({
-            clienteId,
-            clienteData,
-            unidadId: null,
-            unidadData: null,
-            puestoId: null,
-            puestoData: null
-          });
-        }
-      }
+        renderClienteUnidad(cachedClientesUnidades);
+      } catch (e) {
+        console.error('Error cargando Cliente/Unidad:', e);
+        UI.confirm({ title: 'Error', message: 'No se pudo cargar Cliente/Unidad.', kind: 'err' });
+      } finally { UI.hideOverlay(); }
+    }
 
-      renderClienteUnidad(cachedClientesUnidades);
-    } catch (e) {
-      console.error('Error cargando Cliente/Unidad:', e);
-      UI.confirm({ title: 'Error', message: 'No se pudo cargar Cliente/Unidad.', kind: 'err' });
-    } finally { UI.hideOverlay(); }
-  }
+    function renderClienteUnidad(list) {
+      if (!clienteUnidadTbody) return;
+      const term = norm(clienteUnidadSearchInput?.value || '');
+      const filtered = term
+        ? list.filter(x =>
+          norm(x.clienteId || '').includes(term) ||
+          norm(x.unidadId || '').includes(term) ||
+          norm(x.puestoId || '').includes(term)
+        )
+        : list;
 
-  function renderClienteUnidad(list) {
-    if (!clienteUnidadTbody) return;
-    const term = norm(clienteUnidadSearchInput?.value || '');
-    const filtered = term
-      ? list.filter(x => 
-        norm(x.clienteId || '').includes(term) ||
-        norm(x.unidadId || '').includes(term) ||
-        norm(x.puestoId || '').includes(term)
-      )
-      : list;
+      clienteUnidadTbody.innerHTML = '';
+      const frag = document.createDocumentFragment();
 
-    clienteUnidadTbody.innerHTML = '';
-    const frag = document.createDocumentFragment();
-    
-    filtered.forEach(row => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
+      filtered.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
         <td>${row.clienteId || ''}</td>
         <td>${row.unidadId || '<i class="muted">Sin unidades</i>'}</td>
         <td>${row.puestoId || '<i class="muted">Sin puestos</i>'}</td>
@@ -6126,448 +6144,448 @@ document.addEventListener('DOMContentLoaded', () => {
             data-unidad="${row.unidadId || ''}" 
             data-puesto="${row.puestoId || ''}">Editar</button>
         </td>`;
-      frag.appendChild(tr);
+        frag.appendChild(tr);
+      });
+
+      clienteUnidadTbody.appendChild(frag);
+    }
+    clienteUnidadSearchInput?.addEventListener('input', () => renderClienteUnidad(cachedClientesUnidades));
+
+    // Función para convertir a mayúsculas
+    const toUpperCase = (str) => (str || '').toUpperCase().trim();
+
+    // Botón para agregar nuevo CLIENTE
+    cuAgregarClienteBtn?.addEventListener('click', () => {
+      cuNuevoCliente.value = '';
+      cuNuevaUnidadCliente.value = '';
+      openModal(cuAgregarClienteModal);
     });
-    
-    clienteUnidadTbody.appendChild(frag);
-  }
-  clienteUnidadSearchInput?.addEventListener('input', () => renderClienteUnidad(cachedClientesUnidades));
 
-  // Función para convertir a mayúsculas
-  const toUpperCase = (str) => (str || '').toUpperCase().trim();
+    // Botón para agregar UNIDAD a cliente existente
+    cuAgregarUnidadBtn?.addEventListener('click', async () => {
+      // Cargar clientes disponibles
+      cuAgregarUnidadCliente.innerHTML = '<option value="">-- Seleccionar Cliente --</option>';
+      cuNuevaUnidad.value = '';
 
-  // Botón para agregar nuevo CLIENTE
-  cuAgregarClienteBtn?.addEventListener('click', () => {
-    cuNuevoCliente.value = '';
-    cuNuevaUnidadCliente.value = '';
-    openModal(cuAgregarClienteModal);
-  });
+      try {
+        // Obtener clientes únicos desde cachedClientesUnidades
+        const clientesUnicos = [...new Set(cachedClientesUnidades.map(c => c.clienteId))].sort();
+        clientesUnicos.forEach(cliente => {
+          const option = document.createElement('option');
+          option.value = cliente;
+          option.textContent = cliente;
+          cuAgregarUnidadCliente.appendChild(option);
+        });
+      } catch (e) {
+        console.error('Error cargando clientes:', e);
+      }
 
-  // Botón para agregar UNIDAD a cliente existente
-  cuAgregarUnidadBtn?.addEventListener('click', async () => {
-    // Cargar clientes disponibles
-    cuAgregarUnidadCliente.innerHTML = '<option value="">-- Seleccionar Cliente --</option>';
-    cuNuevaUnidad.value = '';
-    
-    try {
-      // Obtener clientes únicos desde cachedClientesUnidades
-      const clientesUnicos = [...new Set(cachedClientesUnidades.map(c => c.clienteId))].sort();
-      clientesUnicos.forEach(cliente => {
-        const option = document.createElement('option');
-        option.value = cliente;
-        option.textContent = cliente;
-        cuAgregarUnidadCliente.appendChild(option);
-      });
-    } catch (e) {
-      console.error('Error cargando clientes:', e);
-    }
-    
-    openModal(cuAgregarUnidadModal);
-  });
+      openModal(cuAgregarUnidadModal);
+    });
 
-  // Botón para agregar PUESTO a unidad
-  cuAgregarPuestoBtn?.addEventListener('click', async () => {
-    // Limpiar y cargar clientes disponibles
-    cuAgregarPuestoCliente.innerHTML = '<option value="">-- Seleccionar Cliente --</option>';
-    cuAgregarPuestoUnidad.innerHTML = '<option value="">-- Seleccionar Unidad --</option>';
-    cuNuevoPuesto.value = '';
-    
-    try {
-      // Obtener clientes únicos desde cachedClientesUnidades
-      const clientesUnicos = [...new Set(cachedClientesUnidades.map(c => c.clienteId))].sort();
-      clientesUnicos.forEach(cliente => {
-        const option = document.createElement('option');
-        option.value = cliente;
-        option.textContent = cliente;
-        cuAgregarPuestoCliente.appendChild(option);
-      });
-    } catch (e) {
-      console.error('Error cargando clientes:', e);
-    }
-    
-    openModal(cuAgregarPuestoModal);
-  });
+    // Botón para agregar PUESTO a unidad
+    cuAgregarPuestoBtn?.addEventListener('click', async () => {
+      // Limpiar y cargar clientes disponibles
+      cuAgregarPuestoCliente.innerHTML = '<option value="">-- Seleccionar Cliente --</option>';
+      cuAgregarPuestoUnidad.innerHTML = '<option value="">-- Seleccionar Unidad --</option>';
+      cuNuevoPuesto.value = '';
 
-  // Evento para cargar unidades cuando cambia cliente en agregar puesto
-  cuAgregarPuestoCliente?.addEventListener('change', async (ev) => {
-    const clienteSeleccionado = ev.target.value;
-    cuAgregarPuestoUnidad.innerHTML = '<option value="">-- Seleccionar Unidad --</option>';
-    
-    if (!clienteSeleccionado) return;
+      try {
+        // Obtener clientes únicos desde cachedClientesUnidades
+        const clientesUnicos = [...new Set(cachedClientesUnidades.map(c => c.clienteId))].sort();
+        clientesUnicos.forEach(cliente => {
+          const option = document.createElement('option');
+          option.value = cliente;
+          option.textContent = cliente;
+          cuAgregarPuestoCliente.appendChild(option);
+        });
+      } catch (e) {
+        console.error('Error cargando clientes:', e);
+      }
 
-    try {
-      // Obtener unidades desde la SUBCOLECCIÓN del cliente
-      const unidadesSnap = await db
-        .collection(COLLECTIONS.CLIENT_UNITS)
-        .doc(clienteSeleccionado)
-        .collection('UNIDADES')
-        .get();
+      openModal(cuAgregarPuestoModal);
+    });
 
-      unidadesSnap.docs.forEach(doc => {
-        const option = document.createElement('option');
-        option.value = doc.id;
-        option.textContent = doc.id;
-        cuAgregarPuestoUnidad.appendChild(option);
-      });
-    } catch (e) {
-      console.error('Error cargando unidades:', e);
-    }
-  });
+    // Evento para cargar unidades cuando cambia cliente en agregar puesto
+    cuAgregarPuestoCliente?.addEventListener('change', async (ev) => {
+      const clienteSeleccionado = ev.target.value;
+      cuAgregarPuestoUnidad.innerHTML = '<option value="">-- Seleccionar Unidad --</option>';
 
-  // Cancelar modal agregar cliente
-  cuAgregarClienteCancel?.addEventListener('click', () => closeModal(cuAgregarClienteModal));
+      if (!clienteSeleccionado) return;
 
-  // Cancelar modal agregar unidad
-  cuAgregarUnidadCancel?.addEventListener('click', () => closeModal(cuAgregarUnidadModal));
+      try {
+        // Obtener unidades desde la SUBCOLECCIÓN del cliente
+        const unidadesSnap = await db
+          .collection(COLLECTIONS.CLIENT_UNITS)
+          .doc(clienteSeleccionado)
+          .collection('UNIDADES')
+          .get();
 
-  // Cancelar modal agregar puesto
-  cuAgregarPuestoCancel?.addEventListener('click', () => closeModal(cuAgregarPuestoModal));
+        unidadesSnap.docs.forEach(doc => {
+          const option = document.createElement('option');
+          option.value = doc.id;
+          option.textContent = doc.id;
+          cuAgregarPuestoUnidad.appendChild(option);
+        });
+      } catch (e) {
+        console.error('Error cargando unidades:', e);
+      }
+    });
 
-  // Enviar formulario agregar CLIENTE
-  cuAgregarClienteForm?.addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const nuevoCliente = toUpperCase(cuNuevoCliente.value);
-    const nuevaUnidad = toUpperCase(cuNuevaUnidadCliente.value);
+    // Cancelar modal agregar cliente
+    cuAgregarClienteCancel?.addEventListener('click', () => closeModal(cuAgregarClienteModal));
 
-    if (!nuevoCliente || !nuevaUnidad) {
-      UI.toast('Por favor completa todos los campos');
-      return;
-    }
+    // Cancelar modal agregar unidad
+    cuAgregarUnidadCancel?.addEventListener('click', () => closeModal(cuAgregarUnidadModal));
 
-    // Validar que el cliente no exista
-    if (cachedClientesUnidades.some(c => c.clienteId === nuevoCliente)) {
-      UI.toast('❌ Este cliente ya existe');
-      return;
-    }
+    // Cancelar modal agregar puesto
+    cuAgregarPuestoCancel?.addEventListener('click', () => closeModal(cuAgregarPuestoModal));
 
-    UI.showOverlay('Creando…', 'Agregando nuevo cliente');
-    try {
-      // Crear documento del cliente en CLIENTE_UNIDAD
-      await db.collection(COLLECTIONS.CLIENT_UNITS).doc(nuevoCliente).set({
-        creado: new Date(),
-        descripcion: nuevoCliente
-      });
+    // Enviar formulario agregar CLIENTE
+    cuAgregarClienteForm?.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const nuevoCliente = toUpperCase(cuNuevoCliente.value);
+      const nuevaUnidad = toUpperCase(cuNuevaUnidadCliente.value);
 
-      // Crear la primera UNIDAD en la SUBCOLECCIÓN
-      await db
-        .collection(COLLECTIONS.CLIENT_UNITS)
-        .doc(nuevoCliente)
-        .collection('UNIDADES')
-        .doc(nuevaUnidad)
-        .set({
-          nombre: nuevaUnidad,
-          creado: new Date()
+      if (!nuevoCliente || !nuevaUnidad) {
+        UI.toast('Por favor completa todos los campos');
+        return;
+      }
+
+      // Validar que el cliente no exista
+      if (cachedClientesUnidades.some(c => c.clienteId === nuevoCliente)) {
+        UI.toast('❌ Este cliente ya existe');
+        return;
+      }
+
+      UI.showOverlay('Creando…', 'Agregando nuevo cliente');
+      try {
+        // Crear documento del cliente en CLIENTE_UNIDAD
+        await db.collection(COLLECTIONS.CLIENT_UNITS).doc(nuevoCliente).set({
+          creado: new Date(),
+          descripcion: nuevoCliente
         });
 
-      // Recargar datos
-      clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver nuevo registro
-      await loadClienteUnidad();
-      UI.toast('✅ Cliente y unidad agregados correctamente');
-      closeModal(cuAgregarClienteModal);
-    } catch (e) {
-      console.error('Error:', e);
-      UI.toast('❌ Error al crear cliente');
-    } finally {
-      UI.hideOverlay();
-    }
-  });
+        // Crear la primera UNIDAD en la SUBCOLECCIÓN
+        await db
+          .collection(COLLECTIONS.CLIENT_UNITS)
+          .doc(nuevoCliente)
+          .collection('UNIDADES')
+          .doc(nuevaUnidad)
+          .set({
+            nombre: nuevaUnidad,
+            creado: new Date()
+          });
 
-  // Enviar formulario agregar UNIDAD
-  cuAgregarUnidadForm?.addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const cliente = toUpperCase(cuAgregarUnidadCliente.value);
-    const nuevaUnidad = toUpperCase(cuNuevaUnidad.value);
+        // Recargar datos
+        clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver nuevo registro
+        await loadClienteUnidad();
+        UI.toast('✅ Cliente y unidad agregados correctamente');
+        closeModal(cuAgregarClienteModal);
+      } catch (e) {
+        console.error('Error:', e);
+        UI.toast('❌ Error al crear cliente');
+      } finally {
+        UI.hideOverlay();
+      }
+    });
 
-    if (!cliente || !nuevaUnidad) {
-      UI.toast('Por favor selecciona un cliente y escribe la unidad');
-      return;
-    }
+    // Enviar formulario agregar UNIDAD
+    cuAgregarUnidadForm?.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const cliente = toUpperCase(cuAgregarUnidadCliente.value);
+      const nuevaUnidad = toUpperCase(cuNuevaUnidad.value);
 
-    // Validar que la unidad no exista para este cliente
-    if (cachedClientesUnidades.some(c => c.clienteId === cliente && c.unidadId === nuevaUnidad)) {
-      UI.toast('❌ Esta unidad ya existe para este cliente');
-      return;
-    }
+      if (!cliente || !nuevaUnidad) {
+        UI.toast('Por favor selecciona un cliente y escribe la unidad');
+        return;
+      }
 
-    UI.showOverlay('Creando…', 'Agregando unidad');
-    try {
-      // Crear UNIDAD en la SUBCOLECCIÓN del cliente
-      await db
-        .collection(COLLECTIONS.CLIENT_UNITS)
-        .doc(cliente)
-        .collection('UNIDADES')
-        .doc(nuevaUnidad)
-        .set({
-          nombre: nuevaUnidad,
-          creado: new Date()
-        });
-
-      // Recargar datos
-      clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver nueva unidad
-      await loadClienteUnidad();
-      UI.toast('✅ Unidad agregada correctamente');
-      closeModal(cuAgregarUnidadModal);
-    } catch (e) {
-      console.error('Error:', e);
-      UI.toast('❌ Error al agregar unidad');
-    } finally {
-      UI.hideOverlay();
-    }
-  });
-
-  // Enviar formulario agregar PUESTO
-  cuAgregarPuestoForm?.addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const cliente = toUpperCase(cuAgregarPuestoCliente.value);
-    const unidad = toUpperCase(cuAgregarPuestoUnidad.value);
-    const nuevoPuesto = toUpperCase(cuNuevoPuesto.value);
-
-    if (!cliente || !unidad || !nuevoPuesto) {
-      UI.toast('Por favor completa todos los campos');
-      return;
-    }
-
-    // Validar que el puesto no exista para esta unidad
-    if (cachedClientesUnidades.some(c => 
-      c.clienteId === cliente && 
-      c.unidadId === unidad && 
-      c.puestoId === nuevoPuesto
-    )) {
-      UI.toast('❌ Este puesto ya existe para esta unidad');
-      return;
-    }
-
-    UI.showOverlay('Creando…', 'Agregando puesto');
-    try {
-      // Crear PUESTO en la SUBCOLECCIÓN de UNIDADES
-      await db
-        .collection(COLLECTIONS.CLIENT_UNITS)
-        .doc(cliente)
-        .collection('UNIDADES')
-        .doc(unidad)
-        .collection('PUESTOS')
-        .doc(nuevoPuesto)
-        .set({
-          nombre: nuevoPuesto,
-          creado: new Date()
-        });
-
-      // Recargar datos
-      clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver nuevo puesto
-      await loadClienteUnidad();
-      UI.toast('✅ Puesto agregado correctamente');
-      closeModal(cuAgregarPuestoModal);
-    } catch (e) {
-      UI.toast('❌ Error al agregar puesto');
-    } finally {
-      UI.hideOverlay();
-    }
-  });
-
-  clienteUnidadTbody?.addEventListener('click', async (ev) => {
-    const btn = ev.target.closest('button[data-act="edit-cu"]');
-    if (!btn) return;
-    const docId = btn.dataset.id;
-    const oldU = btn.dataset.unidad;
-    const oldPuesto = btn.dataset.puesto || '';
-
-    cuEditClienteOriginal.value = docId;
-    cuEditUnidadOriginal.value = oldU;
-    cuEditPuestoOriginal.value = oldPuesto;
-    cuEditCliente.value = docId;
-    cuEditCliente.disabled = true;
-    cuEditUnidad.value = oldU;
-    cuEditPuesto.value = oldPuesto;
-
-    openModal(cuEditModal);
-  });
-
-  cuEditCancelBtn?.addEventListener('click', () => {
-    closeModal(cuEditModal);
-  });
-  
-  cuEditForm?.addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const docId = cuEditClienteOriginal.value;
-    const oldU = cuEditUnidadOriginal.value;
-    const oldPuesto = cuEditPuestoOriginal.value;
-    const newUnidad = toUpperCase(cuEditUnidad.value);
-    const newPuesto = toUpperCase(cuEditPuesto.value);
-    
-    if (!docId || !oldU || !newUnidad || !newPuesto) return;
-
-    // Validar que haya cambios
-    if (newUnidad === oldU && newPuesto === oldPuesto) {
-      UI.toast('No hay cambios para guardar');
-      return;
-    }
-
-    // Validar que la nueva unidad no exista (si cambió el nombre)
-    if (newUnidad !== oldU) {
-      if (cachedClientesUnidades.some(c => c.clienteId === docId && c.unidadId === newUnidad)) {
+      // Validar que la unidad no exista para este cliente
+      if (cachedClientesUnidades.some(c => c.clienteId === cliente && c.unidadId === nuevaUnidad)) {
         UI.toast('❌ Esta unidad ya existe para este cliente');
         return;
       }
-    }
 
-    // Validar que el nuevo puesto no exista en la unidad (si cambió)
-    if (newPuesto !== oldPuesto) {
-      if (cachedClientesUnidades.some(c => 
-        c.clienteId === docId && 
-        c.unidadId === newUnidad && 
-        c.puestoId === newPuesto
-      )) {
-        UI.toast('❌ Este puesto ya existe en esta unidad');
-        return;
-      }
-    }
-
-    UI.showOverlay('Guardando…', 'Actualizando datos');
-    try {
-      // Si cambió el nombre de unidad, renombrar documento UNIDAD
-      if (newUnidad !== oldU) {
-        // Copiar datos de UNIDAD antigua a nueva
-        const unidadAntiguaSnap = await db
-          .collection(COLLECTIONS.CLIENT_UNITS)
-          .doc(docId)
-          .collection('UNIDADES')
-          .doc(oldU)
-          .get();
-
-        const unidadData = unidadAntiguaSnap.data() || {};
-        
-        // Crear nueva unidad
+      UI.showOverlay('Creando…', 'Agregando unidad');
+      try {
+        // Crear UNIDAD en la SUBCOLECCIÓN del cliente
         await db
           .collection(COLLECTIONS.CLIENT_UNITS)
-          .doc(docId)
+          .doc(cliente)
           .collection('UNIDADES')
-          .doc(newUnidad)
-          .set(unidadData);
+          .doc(nuevaUnidad)
+          .set({
+            nombre: nuevaUnidad,
+            creado: new Date()
+          });
 
-        // Copiar todos los PUESTOS a la nueva unidad
-        const puestosSnap = await db
+        // Recargar datos
+        clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver nueva unidad
+        await loadClienteUnidad();
+        UI.toast('✅ Unidad agregada correctamente');
+        closeModal(cuAgregarUnidadModal);
+      } catch (e) {
+        console.error('Error:', e);
+        UI.toast('❌ Error al agregar unidad');
+      } finally {
+        UI.hideOverlay();
+      }
+    });
+
+    // Enviar formulario agregar PUESTO
+    cuAgregarPuestoForm?.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const cliente = toUpperCase(cuAgregarPuestoCliente.value);
+      const unidad = toUpperCase(cuAgregarPuestoUnidad.value);
+      const nuevoPuesto = toUpperCase(cuNuevoPuesto.value);
+
+      if (!cliente || !unidad || !nuevoPuesto) {
+        UI.toast('Por favor completa todos los campos');
+        return;
+      }
+
+      // Validar que el puesto no exista para esta unidad
+      if (cachedClientesUnidades.some(c =>
+        c.clienteId === cliente &&
+        c.unidadId === unidad &&
+        c.puestoId === nuevoPuesto
+      )) {
+        UI.toast('❌ Este puesto ya existe para esta unidad');
+        return;
+      }
+
+      UI.showOverlay('Creando…', 'Agregando puesto');
+      try {
+        // Crear PUESTO en la SUBCOLECCIÓN de UNIDADES
+        await db
           .collection(COLLECTIONS.CLIENT_UNITS)
-          .doc(docId)
+          .doc(cliente)
           .collection('UNIDADES')
-          .doc(oldU)
+          .doc(unidad)
           .collection('PUESTOS')
-          .get();
+          .doc(nuevoPuesto)
+          .set({
+            nombre: nuevoPuesto,
+            creado: new Date()
+          });
 
-        for (const puestoDoc of puestosSnap.docs) {
-          const puestoData = puestoDoc.data();
+        // Recargar datos
+        clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver nuevo puesto
+        await loadClienteUnidad();
+        UI.toast('✅ Puesto agregado correctamente');
+        closeModal(cuAgregarPuestoModal);
+      } catch (e) {
+        UI.toast('❌ Error al agregar puesto');
+      } finally {
+        UI.hideOverlay();
+      }
+    });
+
+    clienteUnidadTbody?.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('button[data-act="edit-cu"]');
+      if (!btn) return;
+      const docId = btn.dataset.id;
+      const oldU = btn.dataset.unidad;
+      const oldPuesto = btn.dataset.puesto || '';
+
+      cuEditClienteOriginal.value = docId;
+      cuEditUnidadOriginal.value = oldU;
+      cuEditPuestoOriginal.value = oldPuesto;
+      cuEditCliente.value = docId;
+      cuEditCliente.disabled = true;
+      cuEditUnidad.value = oldU;
+      cuEditPuesto.value = oldPuesto;
+
+      openModal(cuEditModal);
+    });
+
+    cuEditCancelBtn?.addEventListener('click', () => {
+      closeModal(cuEditModal);
+    });
+
+    cuEditForm?.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const docId = cuEditClienteOriginal.value;
+      const oldU = cuEditUnidadOriginal.value;
+      const oldPuesto = cuEditPuestoOriginal.value;
+      const newUnidad = toUpperCase(cuEditUnidad.value);
+      const newPuesto = toUpperCase(cuEditPuesto.value);
+
+      if (!docId || !oldU || !newUnidad || !newPuesto) return;
+
+      // Validar que haya cambios
+      if (newUnidad === oldU && newPuesto === oldPuesto) {
+        UI.toast('No hay cambios para guardar');
+        return;
+      }
+
+      // Validar que la nueva unidad no exista (si cambió el nombre)
+      if (newUnidad !== oldU) {
+        if (cachedClientesUnidades.some(c => c.clienteId === docId && c.unidadId === newUnidad)) {
+          UI.toast('❌ Esta unidad ya existe para este cliente');
+          return;
+        }
+      }
+
+      // Validar que el nuevo puesto no exista en la unidad (si cambió)
+      if (newPuesto !== oldPuesto) {
+        if (cachedClientesUnidades.some(c =>
+          c.clienteId === docId &&
+          c.unidadId === newUnidad &&
+          c.puestoId === newPuesto
+        )) {
+          UI.toast('❌ Este puesto ya existe en esta unidad');
+          return;
+        }
+      }
+
+      UI.showOverlay('Guardando…', 'Actualizando datos');
+      try {
+        // Si cambió el nombre de unidad, renombrar documento UNIDAD
+        if (newUnidad !== oldU) {
+          // Copiar datos de UNIDAD antigua a nueva
+          const unidadAntiguaSnap = await db
+            .collection(COLLECTIONS.CLIENT_UNITS)
+            .doc(docId)
+            .collection('UNIDADES')
+            .doc(oldU)
+            .get();
+
+          const unidadData = unidadAntiguaSnap.data() || {};
+
+          // Crear nueva unidad
+          await db
+            .collection(COLLECTIONS.CLIENT_UNITS)
+            .doc(docId)
+            .collection('UNIDADES')
+            .doc(newUnidad)
+            .set(unidadData);
+
+          // Copiar todos los PUESTOS a la nueva unidad
+          const puestosSnap = await db
+            .collection(COLLECTIONS.CLIENT_UNITS)
+            .doc(docId)
+            .collection('UNIDADES')
+            .doc(oldU)
+            .collection('PUESTOS')
+            .get();
+
+          for (const puestoDoc of puestosSnap.docs) {
+            const puestoData = puestoDoc.data();
+            await db
+              .collection(COLLECTIONS.CLIENT_UNITS)
+              .doc(docId)
+              .collection('UNIDADES')
+              .doc(newUnidad)
+              .collection('PUESTOS')
+              .doc(puestoDoc.id)
+              .set(puestoData);
+          }
+
+          // Eliminar unidad antigua
+          await db
+            .collection(COLLECTIONS.CLIENT_UNITS)
+            .doc(docId)
+            .collection('UNIDADES')
+            .doc(oldU)
+            .delete();
+        }
+
+        // Si cambió el nombre de puesto, renombrar documento PUESTO
+        if (newPuesto !== oldPuesto && oldPuesto) {
+          // Copiar datos del PUESTO antiguo
+          const puestoAntiguoSnap = await db
+            .collection(COLLECTIONS.CLIENT_UNITS)
+            .doc(docId)
+            .collection('UNIDADES')
+            .doc(newUnidad)
+            .collection('PUESTOS')
+            .doc(oldPuesto)
+            .get();
+
+          const puestoData = puestoAntiguoSnap.data() || {};
+
+          // Crear nuevo puesto
           await db
             .collection(COLLECTIONS.CLIENT_UNITS)
             .doc(docId)
             .collection('UNIDADES')
             .doc(newUnidad)
             .collection('PUESTOS')
-            .doc(puestoDoc.id)
+            .doc(newPuesto)
             .set(puestoData);
+
+          // Eliminar puesto antiguo
+          await db
+            .collection(COLLECTIONS.CLIENT_UNITS)
+            .doc(docId)
+            .collection('UNIDADES')
+            .doc(newUnidad)
+            .collection('PUESTOS')
+            .doc(oldPuesto)
+            .delete();
         }
 
-        // Eliminar unidad antigua
-        await db
-          .collection(COLLECTIONS.CLIENT_UNITS)
-          .doc(docId)
-          .collection('UNIDADES')
-          .doc(oldU)
-          .delete();
+        // Recargar datos
+        clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver cambios
+        await loadClienteUnidad();
+        UI.toast('✅ Cambios guardados correctamente');
+        closeModal(cuEditModal);
+      } catch (e) {
+        console.error('Error al actualizar:', e);
+        UI.toast('❌ Error al guardar los cambios');
+      } finally {
+        UI.hideOverlay();
       }
+    });
 
-      // Si cambió el nombre de puesto, renombrar documento PUESTO
-      if (newPuesto !== oldPuesto && oldPuesto) {
-        // Copiar datos del PUESTO antiguo
-        const puestoAntiguoSnap = await db
-          .collection(COLLECTIONS.CLIENT_UNITS)
-          .doc(docId)
-          .collection('UNIDADES')
-          .doc(newUnidad)
-          .collection('PUESTOS')
-          .doc(oldPuesto)
-          .get();
+    // --- CUADERNO ---
+    cuadernoBtnBuscar?.addEventListener('click', async () => {
+      if (!cuadernoTbody) return;
+      UI.showOverlay('Buscando…', 'Consultando cuaderno');
 
-        const puestoData = puestoAntiguoSnap.data() || {};
+      try {
+        let q = getQueryWithClienteFilter(COLLECTIONS.LOGBOOK);
+        const fi = cuadernoFechaInicio?.value ? new Date(cuadernoFechaInicio.value) : null;
+        const ff = cuadernoFechaFin?.value ? new Date(cuadernoFechaFin.value) : null;
+        if (fi) q = q.where('timestamp', '>=', fi);
+        if (ff) q = q.where('timestamp', '<=', new Date(ff.getFullYear(), ff.getMonth(), ff.getDate() + 1));
 
-        // Crear nuevo puesto
-        await db
-          .collection(COLLECTIONS.CLIENT_UNITS)
-          .doc(docId)
-          .collection('UNIDADES')
-          .doc(newUnidad)
-          .collection('PUESTOS')
-          .doc(newPuesto)
-          .set(puestoData);
+        const cli = cuadernoClienteSelect?.value || '';
+        const uni = cuadernoUnidadSelect?.value || '';
+        if (cli) q = q.where('cliente', '==', cli);
+        if (uni) q = q.where('unidad', '==', uni);
 
-        // Eliminar puesto antiguo
-        await db
-          .collection(COLLECTIONS.CLIENT_UNITS)
-          .doc(docId)
-          .collection('UNIDADES')
-          .doc(newUnidad)
-          .collection('PUESTOS')
-          .doc(oldPuesto)
-          .delete();
-      }
+        const snap = await q.get();
+        const rows = snap.docs.map(d => {
+          const data = d.data();
+          const f = data.timestamp?.toDate ? data.timestamp.toDate() : new Date(data.timestamp || 0);
+          const fechaHoraStr = f instanceof Date && !Number.isNaN(f.getTime())
+            ? f.toLocaleString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+            : 'N/A';
+          return {
+            id: d.id,
+            ...data,
+            timestampStr: fechaHoraStr // Agregar fecha formateada
+          };
+        })
+          .sort((a, b) => {
+            const ad = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(a.timestamp || 0);
+            const bd = b.timestamp?.toDate ? b.timestamp.toDate() : new Date(b.timestamp || 0);
+            return ad.getTime() - bd.getTime(); // asc: más antiguo arriba
+          });
 
-      // Recargar datos
-      clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver cambios
-      await loadClienteUnidad();
-      UI.toast('✅ Cambios guardados correctamente');
-      closeModal(cuEditModal);
-    } catch (e) {
-      console.error('Error al actualizar:', e);
-      UI.toast('❌ Error al guardar los cambios');
-    } finally {
-      UI.hideOverlay();
-    }
-  });
+        cuadernoTbody.innerHTML = rows.map(r => {
+          const f = r.timestamp?.toDate ? r.timestamp.toDate() : new Date(r.timestamp);
+          const t = f instanceof Date && !Number.isNaN(f.getTime()) ? f.toLocaleString('es-PE') : '';
 
-  // --- CUADERNO ---
-  cuadernoBtnBuscar?.addEventListener('click', async () => {
-    if (!cuadernoTbody) return;
-    UI.showOverlay('Buscando…', 'Consultando cuaderno');
+          // Extraer nombre de usuarioEntrante y usuarioSaliente (que son objetos)
+          const usuarioEntrante = r.usuarioEntrante?.nombre || r.usuarioEntrante?.id || '';
+          const usuarioSaliente = r.usuarioSaliente?.nombre || r.usuarioSaliente?.id || '';
 
-    try {
-      let q = getQueryWithClienteFilter(COLLECTIONS.LOGBOOK);
-      const fi = cuadernoFechaInicio?.value ? new Date(cuadernoFechaInicio.value) : null;
-      const ff = cuadernoFechaFin?.value ? new Date(cuadernoFechaFin.value) : null;
-      if (fi) q = q.where('timestamp', '>=', fi);
-      if (ff) q = q.where('timestamp', '<=', new Date(ff.getFullYear(), ff.getMonth(), ff.getDate() + 1));
-
-      const cli = cuadernoClienteSelect?.value || '';
-      const uni = cuadernoUnidadSelect?.value || '';
-      if (cli) q = q.where('cliente', '==', cli);
-      if (uni) q = q.where('unidad', '==', uni);
-
-      const snap = await q.get();
-      const rows = snap.docs.map(d => {
-        const data = d.data();
-        const f = data.timestamp?.toDate ? data.timestamp.toDate() : new Date(data.timestamp || 0);
-        const fechaHoraStr = f instanceof Date && !Number.isNaN(f.getTime()) 
-          ? f.toLocaleString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-          : 'N/A';
-        return { 
-          id: d.id, 
-          ...data,
-          timestampStr: fechaHoraStr // Agregar fecha formateada
-        };
-      })
-        .sort((a, b) => {
-          const ad = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(a.timestamp || 0);
-          const bd = b.timestamp?.toDate ? b.timestamp.toDate() : new Date(b.timestamp || 0);
-          return ad.getTime() - bd.getTime(); // asc: más antiguo arriba
-        });
-
-      cuadernoTbody.innerHTML = rows.map(r => {
-        const f = r.timestamp?.toDate ? r.timestamp.toDate() : new Date(r.timestamp);
-        const t = f instanceof Date && !Number.isNaN(f.getTime()) ? f.toLocaleString('es-PE') : '';
-        
-        // Extraer nombre de usuarioEntrante y usuarioSaliente (que son objetos)
-        const usuarioEntrante = r.usuarioEntrante?.nombre || r.usuarioEntrante?.id || '';
-        const usuarioSaliente = r.usuarioSaliente?.nombre || r.usuarioSaliente?.id || '';
-        
-        const fotoHTML = r.fotoURL ? `<img src="${r.fotoURL}" alt="Foto" style="width:50px;height:50px;object-fit:cover;cursor:pointer;border-radius:4px;border:1px solid #ddd" class="foto-miniatura" data-url="${r.fotoURL}" title="Haz clic para expandir">` : '<span style="color:#999">Sin foto</span>';
-        return `<tr>
+          const fotoHTML = r.fotoURL ? `<img src="${r.fotoURL}" alt="Foto" style="width:50px;height:50px;object-fit:cover;cursor:pointer;border-radius:4px;border:1px solid #ddd" class="foto-miniatura" data-url="${r.fotoURL}" title="Haz clic para expandir">` : '<span style="color:#999">Sin foto</span>';
+          return `<tr>
           <td style="width:150px">${t}</td>
           <td>${r.cliente || ''}</td>
           <td>${r.unidad || ''}</td>
@@ -6578,169 +6596,169 @@ document.addEventListener('DOMContentLoaded', () => {
           <td>${r.comentario || ''}</td>
           <td style="text-align:center">${fotoHTML}</td>
         </tr>`;
-      }).join('');
+        }).join('');
 
-      cuadernoTbody.dataset.rows = JSON.stringify(rows);
-      UI.toast(`Resultados: ${rows.length}`);
-      
-      // Agregar event listener para fotos expandibles
-      document.querySelectorAll('.foto-miniatura').forEach(img => {
-        img.addEventListener('click', (e) => {
-          const fotoUrl = e.target.dataset.url;
-          if (fotoUrl) {
-            abrirVisorFoto(fotoUrl);
-          }
+        cuadernoTbody.dataset.rows = JSON.stringify(rows);
+        UI.toast(`Resultados: ${rows.length}`);
+
+        // Agregar event listener para fotos expandibles
+        document.querySelectorAll('.foto-miniatura').forEach(img => {
+          img.addEventListener('click', (e) => {
+            const fotoUrl = e.target.dataset.url;
+            if (fotoUrl) {
+              abrirVisorFoto(fotoUrl);
+            }
+          });
         });
-      });
-    } catch (e) {
-      UI.confirm({ title: 'Error', message: 'No se pudo consultar el cuaderno.', kind: 'err' });
-    } finally { UI.hideOverlay(); }
-  });
+      } catch (e) {
+        UI.confirm({ title: 'Error', message: 'No se pudo consultar el cuaderno.', kind: 'err' });
+      } finally { UI.hideOverlay(); }
+    });
 
-  cuadernoBtnLimpiar?.addEventListener('click', () => {
-    if (cuadernoClienteSelect) cuadernoClienteSelect.value = '';
-    if (cuadernoUnidadSelect) cuadernoUnidadSelect.value = '';
-    if (cuadernoFechaInicio) cuadernoFechaInicio.value = '';
-    if (cuadernoFechaFin) cuadernoFechaFin.value = '';
-    if (cuadernoTbody) cuadernoTbody.innerHTML = '';
-    delete cuadernoTbody?.dataset.rows;
-  });
+    cuadernoBtnLimpiar?.addEventListener('click', () => {
+      if (cuadernoClienteSelect) cuadernoClienteSelect.value = '';
+      if (cuadernoUnidadSelect) cuadernoUnidadSelect.value = '';
+      if (cuadernoFechaInicio) cuadernoFechaInicio.value = '';
+      if (cuadernoFechaFin) cuadernoFechaFin.value = '';
+      if (cuadernoTbody) cuadernoTbody.innerHTML = '';
+      delete cuadernoTbody?.dataset.rows;
+    });
 
-  cuadernoBtnExportar?.addEventListener('click', () => {
-    const raw = cuadernoTbody?.dataset.rows;
-    if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
-    const rows = JSON.parse(raw);
-    
-    // Crear libro XLS
-    let html = '<table border="1"><tr style="background-color:#2c5aa0;color:white;font-weight:bold;">';
-    html += '<th>FECHA Y HORA</th><th>CLIENTE</th><th>UNIDAD</th><th>TIPO</th><th>USUARIO ENTRANTE</th><th>USUARIO SALIENTE</th><th>USUARIO</th><th>COMENTARIO</th></tr>';
-    
-    for (const r of rows) {
-      const fechaHora = r.timestampStr || 'N/A';
-      const usuarioEntrante = r.usuarioEntrante?.id || '';
-      const usuarioSaliente = r.usuarioSaliente?.id || '';
-      const usuario = r.usuario || usuarioEntrante || usuarioSaliente || '';
-      html += '<tr>';
-      html += `<td>${fechaHora}</td>`;
-      html += `<td>${r.cliente || ''}</td>`;
-      html += `<td>${r.unidad || ''}</td>`;
-      html += `<td>${r.tipoRegistro || ''}</td>`;
-      html += `<td>${usuarioEntrante}</td>`;
-      html += `<td>${usuarioSaliente}</td>`;
-      html += `<td>${usuario}</td>`;
-      html += `<td>${r.comentario || ''}</td>`;
-      html += '</tr>';
-    }
-    html += '</table>';
-    
-    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'cuaderno.xls';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  });
+    cuadernoBtnExportar?.addEventListener('click', () => {
+      const raw = cuadernoTbody?.dataset.rows;
+      if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
+      const rows = JSON.parse(raw);
 
-  cuadernoBtnImprimirPDF?.addEventListener('click', () => {
-    generarPDFCuaderno();
-  });
+      // Crear libro XLS
+      let html = '<table border="1"><tr style="background-color:#2c5aa0;color:white;font-weight:bold;">';
+      html += '<th>FECHA Y HORA</th><th>CLIENTE</th><th>UNIDAD</th><th>TIPO</th><th>USUARIO ENTRANTE</th><th>USUARIO SALIENTE</th><th>USUARIO</th><th>COMENTARIO</th></tr>';
 
-  // ============================================================================
-  // 7) TIEMPO DE CONEXIÓN - EVENT LISTENERS
-  // ============================================================================
-  tiempoConexionBtnBuscar?.addEventListener('click', async () => {
-    UI.showOverlay('Buscando…', 'Consultando CONTROL_TIEMPOS_USUARIOS');
-    try {
-      // PATRÓN CUADERNO CON FILTRO DE ACCESO
-      let q = getQueryWithClienteFilter('CONTROL_TIEMPOS_USUARIOS');
-
-      // Aplicar filtros de fecha
-      const fi = tiempoConexionFechaInicio?.value ? new Date(tiempoConexionFechaInicio.value) : null;
-      const ff = tiempoConexionFechaFin?.value ? new Date(tiempoConexionFechaFin.value) : null;
-      if (fi) q = q.where('horaInicio', '>=', fi);
-      if (ff) q = q.where('horaInicio', '<=', new Date(ff.getFullYear(), ff.getMonth(), ff.getDate() + 1));
-
-      // Aplicar filtros de cliente y unidad
-      const clienteFiltro = accessControl.userType === 'CLIENTE' 
-        ? accessControl.clienteAsignado 
-        : tiempoConexionCliente?.value || '';
-
-      const unidadFiltro = tiempoConexionUnidad?.value || '';
-
-      if (clienteFiltro) {
-        q = q.where('cliente', '==', clienteFiltro);
+      for (const r of rows) {
+        const fechaHora = r.timestampStr || 'N/A';
+        const usuarioEntrante = r.usuarioEntrante?.id || '';
+        const usuarioSaliente = r.usuarioSaliente?.id || '';
+        const usuario = r.usuario || usuarioEntrante || usuarioSaliente || '';
+        html += '<tr>';
+        html += `<td>${fechaHora}</td>`;
+        html += `<td>${r.cliente || ''}</td>`;
+        html += `<td>${r.unidad || ''}</td>`;
+        html += `<td>${r.tipoRegistro || ''}</td>`;
+        html += `<td>${usuarioEntrante}</td>`;
+        html += `<td>${usuarioSaliente}</td>`;
+        html += `<td>${usuario}</td>`;
+        html += `<td>${r.comentario || ''}</td>`;
+        html += '</tr>';
       }
-      if (unidadFiltro) {
-        q = q.where('unidad', '==', unidadFiltro);
-      }
+      html += '</table>';
 
-      // Aplicar filtro de usuario si está seleccionado
-      const usr = tiempoConexionUsuario?.value || '';
-      if (usr) {
-        q = q.where('usuarioID', '==', usr);
-      }
+      const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'cuaderno.xls';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
 
-      // Ejecutar query
-      const snap = await q.orderBy('horaInicio', 'desc').limit(1000).get();
+    cuadernoBtnImprimirPDF?.addEventListener('click', () => {
+      generarPDFCuaderno();
+    });
 
-      // Cargar caché de usuarios para mapear usuarioID a cliente/unidad
-      const usuariosCache = {};
-      const usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
-      usuariosSnap.forEach(doc => {
-        const userData = doc.data();
-        usuariosCache[doc.id] = {
-          cliente: userData.CLIENTE || '',
-          unidad: userData.UNIDAD || ''
-        };
-      });
+    // ============================================================================
+    // 7) TIEMPO DE CONEXIÓN - EVENT LISTENERS
+    // ============================================================================
+    tiempoConexionBtnBuscar?.addEventListener('click', async () => {
+      UI.showOverlay('Buscando…', 'Consultando CONTROL_TIEMPOS_USUARIOS');
+      try {
+        // PATRÓN CUADERNO CON FILTRO DE ACCESO
+        let q = getQueryWithClienteFilter('CONTROL_TIEMPOS_USUARIOS');
 
-      // Mapear datos enriquecidos - EXTRAYENDO CAMPOS CORRECTOS DE FIREBASE
-      const rows = snap.docs.map(d => {
-        const data = d.data();
-        const usuarioID = data.usuarioID || data.usuario || '';
-        const usuarioData = usuariosCache[usuarioID] || {};
-        
-        // Extraer datos de Firebase correctamente
-        const horaInicio = data.horaInicio?.toDate ? data.horaInicio.toDate() : new Date(data.horaInicio || 0);
-        const horaCierre = data.horaCierre?.toDate ? data.horaCierre.toDate() : (data.horaFin?.toDate ? data.horaFin.toDate() : null);
-        
-        // Solo la FECHA de horaInicio
-        const fechaStr = horaInicio instanceof Date && !Number.isNaN(horaInicio.getTime())
-          ? horaInicio.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' })
-          : 'N/A';
-        
-        // Solo la HORA de horaInicio
-        const horaInicioStr = horaInicio instanceof Date && !Number.isNaN(horaInicio.getTime())
-          ? horaInicio.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })
-          : '--';
-        
-        // Solo la HORA de horaCierre
-        const horaCierreStr = horaCierre instanceof Date && !Number.isNaN(horaCierre.getTime())
-          ? horaCierre.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })
-          : '--';
+        // Aplicar filtros de fecha
+        const fi = tiempoConexionFechaInicio?.value ? new Date(tiempoConexionFechaInicio.value) : null;
+        const ff = tiempoConexionFechaFin?.value ? new Date(tiempoConexionFechaFin.value) : null;
+        if (fi) q = q.where('horaInicio', '>=', fi);
+        if (ff) q = q.where('horaInicio', '<=', new Date(ff.getFullYear(), ff.getMonth(), ff.getDate() + 1));
 
-        // Calcular duración
-        let duracion = '--';
-        if (horaInicio instanceof Date && horaCierre instanceof Date) {
-          duracion = calcularDuracionTiempo(horaInicio, horaCierre);
+        // Aplicar filtros de cliente y unidad
+        const clienteFiltro = accessControl.userType === 'CLIENTE'
+          ? accessControl.clienteAsignado
+          : tiempoConexionCliente?.value || '';
+
+        const unidadFiltro = tiempoConexionUnidad?.value || '';
+
+        if (clienteFiltro) {
+          q = q.where('cliente', '==', clienteFiltro);
+        }
+        if (unidadFiltro) {
+          q = q.where('unidad', '==', unidadFiltro);
         }
 
-        return {
-          id: d.id,
-          ...data,
-          nombreUsuario: data.nombreUsuario || '',
-          cliente: data.cliente || usuarioData.cliente || '',
-          unidad: data.unidad || usuarioData.unidad || '',
-          fechaStr,
-          horaInicioStr,
-          horaCierreStr,
-          duracion
-        };
-      });
+        // Aplicar filtro de usuario si está seleccionado
+        const usr = tiempoConexionUsuario?.value || '';
+        if (usr) {
+          q = q.where('usuarioID', '==', usr);
+        }
 
-      // Renderizar tabla
-      tiempoConexionTbody.innerHTML = rows.map(r => {
-        return `<tr>
+        // Ejecutar query
+        const snap = await q.orderBy('horaInicio', 'desc').limit(1000).get();
+
+        // Cargar caché de usuarios para mapear usuarioID a cliente/unidad
+        const usuariosCache = {};
+        const usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
+        usuariosSnap.forEach(doc => {
+          const userData = doc.data();
+          usuariosCache[doc.id] = {
+            cliente: userData.CLIENTE || '',
+            unidad: userData.UNIDAD || ''
+          };
+        });
+
+        // Mapear datos enriquecidos - EXTRAYENDO CAMPOS CORRECTOS DE FIREBASE
+        const rows = snap.docs.map(d => {
+          const data = d.data();
+          const usuarioID = data.usuarioID || data.usuario || '';
+          const usuarioData = usuariosCache[usuarioID] || {};
+
+          // Extraer datos de Firebase correctamente
+          const horaInicio = data.horaInicio?.toDate ? data.horaInicio.toDate() : new Date(data.horaInicio || 0);
+          const horaCierre = data.horaCierre?.toDate ? data.horaCierre.toDate() : (data.horaFin?.toDate ? data.horaFin.toDate() : null);
+
+          // Solo la FECHA de horaInicio
+          const fechaStr = horaInicio instanceof Date && !Number.isNaN(horaInicio.getTime())
+            ? horaInicio.toLocaleDateString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit' })
+            : 'N/A';
+
+          // Solo la HORA de horaInicio
+          const horaInicioStr = horaInicio instanceof Date && !Number.isNaN(horaInicio.getTime())
+            ? horaInicio.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })
+            : '--';
+
+          // Solo la HORA de horaCierre
+          const horaCierreStr = horaCierre instanceof Date && !Number.isNaN(horaCierre.getTime())
+            ? horaCierre.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })
+            : '--';
+
+          // Calcular duración
+          let duracion = '--';
+          if (horaInicio instanceof Date && horaCierre instanceof Date) {
+            duracion = calcularDuracionTiempo(horaInicio, horaCierre);
+          }
+
+          return {
+            id: d.id,
+            ...data,
+            nombreUsuario: data.nombreUsuario || '',
+            cliente: data.cliente || usuarioData.cliente || '',
+            unidad: data.unidad || usuarioData.unidad || '',
+            fechaStr,
+            horaInicioStr,
+            horaCierreStr,
+            duracion
+          };
+        });
+
+        // Renderizar tabla
+        tiempoConexionTbody.innerHTML = rows.map(r => {
+          return `<tr>
           <td>${r.nombreUsuario || ''}</td>
           <td>${r.cliente || ''}</td>
           <td>${r.unidad || ''}</td>
@@ -6749,38 +6767,38 @@ document.addEventListener('DOMContentLoaded', () => {
           <td>${r.horaCierreStr}</td>
           <td>${r.duracion}</td>
         </tr>`;
-      }).join('');
+        }).join('');
 
-      tiempoConexionTbody.dataset.rows = JSON.stringify(rows);
-      UI.toast(`Resultados: ${rows.length}`);
-    } catch (e) {
-      UI.confirm({ title: 'Error', message: 'No se pudieron cargar los datos de Tiempo de Conexión.', kind: 'err' });
-    } finally {
-      UI.hideOverlay();
-    }
-  });
+        tiempoConexionTbody.dataset.rows = JSON.stringify(rows);
+        UI.toast(`Resultados: ${rows.length}`);
+      } catch (e) {
+        UI.confirm({ title: 'Error', message: 'No se pudieron cargar los datos de Tiempo de Conexión.', kind: 'err' });
+      } finally {
+        UI.hideOverlay();
+      }
+    });
 
-  tiempoConexionBtnLimpiar?.addEventListener('click', () => {
-    if (tiempoConexionFechaInicio) tiempoConexionFechaInicio.value = '';
-    if (tiempoConexionFechaFin) tiempoConexionFechaFin.value = '';
-    if (tiempoConexionCliente) tiempoConexionCliente.value = '';
-    if (tiempoConexionUnidad) tiempoConexionUnidad.value = '';
-    if (tiempoConexionUsuario) tiempoConexionUsuario.value = '';
-    if (tiempoConexionTbody) tiempoConexionTbody.innerHTML = '';
-    delete tiempoConexionTbody?.dataset.rows;
-  });
+    tiempoConexionBtnLimpiar?.addEventListener('click', () => {
+      if (tiempoConexionFechaInicio) tiempoConexionFechaInicio.value = '';
+      if (tiempoConexionFechaFin) tiempoConexionFechaFin.value = '';
+      if (tiempoConexionCliente) tiempoConexionCliente.value = '';
+      if (tiempoConexionUnidad) tiempoConexionUnidad.value = '';
+      if (tiempoConexionUsuario) tiempoConexionUsuario.value = '';
+      if (tiempoConexionTbody) tiempoConexionTbody.innerHTML = '';
+      delete tiempoConexionTbody?.dataset.rows;
+    });
 
-  tiempoConexionBtnExportar?.addEventListener('click', async () => {
-    const raw = tiempoConexionTbody?.dataset.rows;
-    if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
-    const rows = JSON.parse(raw);
+    tiempoConexionBtnExportar?.addEventListener('click', async () => {
+      const raw = tiempoConexionTbody?.dataset.rows;
+      if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
+      const rows = JSON.parse(raw);
 
-    // Crear libro XLS con datos correctos
-    let html = '<table border="1"><tr style="background-color:#2c5aa0;color:white;font-weight:bold;">';
-    html += '<th>USUARIO</th><th>CLIENTE</th><th>UNIDAD</th><th>FECHA</th><th>HORA INICIO</th><th>HORA FIN</th><th>TIEMPO CONEXIÓN</th></tr>';
+      // Crear libro XLS con datos correctos
+      let html = '<table border="1"><tr style="background-color:#2c5aa0;color:white;font-weight:bold;">';
+      html += '<th>USUARIO</th><th>CLIENTE</th><th>UNIDAD</th><th>FECHA</th><th>HORA INICIO</th><th>HORA FIN</th><th>TIEMPO CONEXIÓN</th></tr>';
 
-    rows.forEach(r => {
-      html += `<tr>
+      rows.forEach(r => {
+        html += `<tr>
         <td>${r.nombreUsuario || ''}</td>
         <td>${r.cliente || ''}</td>
         <td>${r.unidad || ''}</td>
@@ -6789,939 +6807,939 @@ document.addEventListener('DOMContentLoaded', () => {
         <td>${r.horaCierreStr}</td>
         <td>${r.duracion}</td>
       </tr>`;
-    });
-
-    html += '</table>';
-
-    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'tiempo_conexion.xls';
-    a.click();
-    URL.revokeObjectURL(a.href);
-    UI.toast('Exportación completada');
-  });
-
-  // Función para exportar a PDF
-  async function exportarTiempoConexionPDF() {
-    const raw = tiempoConexionTbody?.dataset.rows;
-    if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
-    const rows = JSON.parse(raw);
-
-    try {
-      // Cargar logo
-      const logoUrl = 'logo_liberman.png';
-      const logoImg = await new Promise((resolve) => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => resolve(img);
-        img.onerror = () => resolve(null);
-        img.src = logoUrl;
       });
 
-      // Convertir imagen a base64
-      let logoBase64 = null;
-      if (logoImg) {
-        const canvas = document.createElement('canvas');
-        canvas.width = logoImg.width;
-        canvas.height = logoImg.height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(logoImg, 0, 0);
-        logoBase64 = canvas.toDataURL('image/png');
-      }
+      html += '</table>';
 
-      // Crear documento PDF
-      const docDef = {
-        pageSize: 'A4',
-        pageMargins: [40, 60, 40, 40],
-        header: function() {
-          return {
-            columns: [
-              {
-                image: logoBase64 || null,
-                width: 50,
-                height: 50,
-                margin: [0, 0, 0, 0]
-              },
-              {
-                text: 'REPORTE DE TIEMPO DE CONEXIÓN',
-                fontSize: 16,
-                bold: true,
-                alignment: 'center',
-                margin: [0, 15, 0, 0]
-              },
-              {
-                text: 'LiderControl',
-                fontSize: 10,
-                alignment: 'right',
-                margin: [0, 15, 0, 0]
-              }
-            ]
-          };
-        },
-        footer: function(currentPage, pageCount) {
-          return {
-            text: `Página ${currentPage} de ${pageCount}`,
-            alignment: 'center',
-            fontSize: 10,
-            margin: [0, 0, 0, 20]
-          };
-        },
-        content: [
-          {
-            text: `Fecha de reporte: ${new Date().toLocaleDateString('es-PE')}`,
-            fontSize: 10,
-            margin: [0, 0, 0, 15],
-            color: '#666'
-          },
-          {
-            table: {
-              headerRows: 1,
-              widths: ['15%', '12%', '12%', '13%', '13%', '13%', '22%'],
-              body: [
-                [
-                  { text: 'USUARIO', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
-                  { text: 'CLIENTE', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
-                  { text: 'UNIDAD', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
-                  { text: 'FECHA', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
-                  { text: 'HORA INICIO', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
-                  { text: 'HORA FIN', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
-                  { text: 'TIEMPO CONEXIÓN', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' }
-                ],
-                ...rows.map((r, idx) => [
-                  { text: r.nombreUsuario || '', fontSize: 9 },
-                  { text: r.cliente || '', fontSize: 9 },
-                  { text: r.unidad || '', fontSize: 9 },
-                  { text: r.fechaStr || '', fontSize: 9 },
-                  { text: r.horaInicioStr || '', fontSize: 9 },
-                  { text: r.horaCierreStr || '', fontSize: 9 },
-                  { text: r.duracion || '', fontSize: 9, bold: true, color: '#3b82f6' }
-                ])
+      const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'tiempo_conexion.xls';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      UI.toast('Exportación completada');
+    });
+
+    // Función para exportar a PDF
+    async function exportarTiempoConexionPDF() {
+      const raw = tiempoConexionTbody?.dataset.rows;
+      if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
+      const rows = JSON.parse(raw);
+
+      try {
+        // Cargar logo
+        const logoUrl = 'logo_liberman.png';
+        const logoImg = await new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => resolve(img);
+          img.onerror = () => resolve(null);
+          img.src = logoUrl;
+        });
+
+        // Convertir imagen a base64
+        let logoBase64 = null;
+        if (logoImg) {
+          const canvas = document.createElement('canvas');
+          canvas.width = logoImg.width;
+          canvas.height = logoImg.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(logoImg, 0, 0);
+          logoBase64 = canvas.toDataURL('image/png');
+        }
+
+        // Crear documento PDF
+        const docDef = {
+          pageSize: 'A4',
+          pageMargins: [40, 60, 40, 40],
+          header: function () {
+            return {
+              columns: [
+                {
+                  image: logoBase64 || null,
+                  width: 50,
+                  height: 50,
+                  margin: [0, 0, 0, 0]
+                },
+                {
+                  text: 'REPORTE DE TIEMPO DE CONEXIÓN',
+                  fontSize: 16,
+                  bold: true,
+                  alignment: 'center',
+                  margin: [0, 15, 0, 0]
+                },
+                {
+                  text: 'LiderControl',
+                  fontSize: 10,
+                  alignment: 'right',
+                  margin: [0, 15, 0, 0]
+                }
               ]
-            },
-            layout: {
-              fillColor: function(i, node) {
-                return (i % 2 === 0 && i > 0) ? '#f5f5f5' : null;
-              }
-            }
+            };
           },
-          {
-            text: `Total de registros: ${rows.length}`,
-            fontSize: 10,
-            margin: [0, 20, 0, 0],
-            bold: true
-          }
-        ]
-      };
-
-      // Generar y descargar PDF
-      pdfMake.createPdf(docDef).download('tiempo_conexion.pdf');
-      UI.toast('PDF generado correctamente');
-    } catch (e) {
-      UI.toast('Error al generar PDF');
-    }
-  }
-
-  tiempoConexionBtnPdf?.addEventListener('click', () => {
-    exportarTiempoConexionPDF();
-  });
-
-  // ============================================================================
-  // 8) INICIALIZACIÓN PRINCIPAL DE LA APLICACIÓN
-  // ============================================================================
-  logoutBtn?.addEventListener('click', async () => {
-    try { await auth.signOut(); location.replace('index.html'); }
-    catch (e) {; UI.toast('No se pudo cerrar sesión'); }
-  });
-
-  // Cargar filtros de cuaderno una vez autenticado (y también por hook de navegación)
-  const tryLoadCuadernoFilters = () => {
-    if (!cuadernoFiltersLoaded) {
-      cuadernoFiltersLoaded = true;
-      loadCuadernoFilters();
-    }
-  };
-
-  // ============================================================================
-  // CONTROL DE ACCESO BASADO EN ROLES
-  // ============================================================================
-  window.accessControl = null;
-
-  /**
-   * Crea una query con filtro automático por cliente
-   * Si el usuario es CLIENTE, filtra por su cliente asignado
-   * Si es ADMIN, devuelve la query sin filtro
-   */
-  function getQueryWithClienteFilter(collectionName) {
-    let query = db.collection(collectionName);
-    const clienteFiltro = window.accessControl?.getClienteFilter();
-    if (clienteFiltro) {
-      // Soportar ambos campos: 'cliente' (minúsculas) y 'CLIENTE' (mayúsculas)
-      const isAccesoPeatonal = collectionName === 'ACCESO_PEATONAL';
-      const fieldName = isAccesoPeatonal ? 'CLIENTE' : 'cliente';
-      query = query.where(fieldName, '==', clienteFiltro);
-    } else {
-    }
-    return query;
-  }
-
-  // Monitor de seguridad: Impide que se muestren vistas sin permisos
-  const securityMonitor = setInterval(() => {
-    if (!window.accessControl) return;
-    
-    // Validar que NO se muestren vistas bloqueadas
-    window.accessControl.restrictedViews.forEach(restrictedView => {
-      const view = document.getElementById(restrictedView);
-      if (view && view.classList.contains('shown')) {
-        view.classList.remove('shown');
-        UI.showError(
-          '🔒 Violación de Seguridad',
-          'Se detectó un intento de acceso no autorizado. La sesión será cerrada.'
-        );
-        setTimeout(() => {
-          auth.signOut();
-          location.replace('index.html');
-        }, 2000);
-      }
-    });
-  }, 500); // Verifica cada 500ms
-
-  auth.onAuthStateChanged(async (user) => {
-    if (!user) {
-      location.replace('index.html');
-    } else {
-      currentUser = user;
-      const name = user.displayName || user.email || 'Usuario';
-      if (userNameEl) userNameEl.textContent = name;
-      if (userMetaEl) userMetaEl.textContent = 'Bienvenido(a)';
-      if (avatarEl) avatarEl.textContent = (name[0] || 'U').toUpperCase();
-
-      // ===== INICIALIZAR CONTROL DE ACCESO =====
-      window.accessControl = new AccessControl(db, auth);
-      const accessInitialized = await window.accessControl.initialize(user);
-      
-      if (accessInitialized) {
-        // Aplicar restricciones de vista al DOM
-        window.accessControl.applyDOMRestrictions();
-        
-        // Log de acceso para debug
-      } else {
-        // Por seguridad, cerrar sesión si no se puede verificar permisos
-        UI.showError('Error de Seguridad', 'No se pudo verificar tus permisos. Intenta de nuevo.');
-        setTimeout(() => {
-          auth.signOut();
-        }, 2000);
-        return;
-      }
-
-      // Filtros de cuaderno e incidencias al arranque (ligero)
-      tryLoadCuadernoFilters();
-      loadIncidenciasFilters();
-      
-      // Cargar clientes para Rondas y QR después de que accessControl esté listo
-      loadRondaClientes();
-      loadQRClientes();
-      loadRondas();
-
-      initResumenDashboard();
-    }
-  });
-
-  /* ===== DETALLE ACCESO DASHBOARD ===== */
-  let daCache = [];
-  let daCharts = {};
-  
-  function initDetalleAccesoDashboard(){
-    const daFecha = document.getElementById('da-fecha');
-    const daApply = document.getElementById('da-apply');
-    const daExport = document.getElementById('da-export');
-    const daSearch = document.getElementById('da-search');
-    const daSort = document.getElementById('da-sort');
-    
-    if (daFecha && typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
-      $(daFecha).daterangepicker({
-        startDate: moment().subtract(29, 'days'),
-        endDate: moment(),
-        locale: { format: 'DD/MM/YYYY' }
-      });
-    }
-    
-    queryDetalleAcceso();
-    daApply?.addEventListener('click', renderDetalleAcceso);
-    daExport?.addEventListener('click', exportarDetalleAccesoExcel);
-    daSearch?.addEventListener('input', ()=>renderDetalleAccesoTable(daCache));
-    daSort?.addEventListener('change', ()=>renderDetalleAccesoTable(daCache));
-  }
-  
-  async function queryDetalleAcceso(){
-    UI.showOverlay('Cargando accesos…', 'Consultando ACCESO_PEATONAL');
-    try {
-      const snap = await getQueryWithClienteFilter('ACCESO_PEATONAL').get();
-      daCache = snap.docs.map(d=>{
-        const x = d.data();
-        const inStr  = `${x.FECHA_INGRESO ?? ''} ${x.HORA_INGRESO ?? ''}`.trim();
-        const outStr = `${x.FECHA_SALIDA  ?? ''} ${x.HORA_FIN      ?? ''}`.trim();
-        const tsIn  = queryAccesoPeatonalDateParse(inStr);
-        const tsOut = queryAccesoPeatonalDateParse(outStr);
-        const ts    = tsIn || tsOut || null;
-        
-        let duracion = 'N/A';
-        if (tsIn && tsOut) {
-          const dur = moment(tsOut).diff(moment(tsIn), 'minutes');
-          const h = Math.floor(dur / 60);
-          const m = dur % 60;
-          duracion = h > 0 ? `${h}h ${m}m` : `${m}m`;
-        }
-        
-        return {
-          id: d.id,
-          FECHA_INGRESO: x.FECHA_INGRESO || '',
-          HORA_INGRESO: x.HORA_INGRESO || '',
-          FECHA_SALIDA: x.FECHA_SALIDA || '',
-          HORA_FIN: x.HORA_FIN || '',
-          CLIENTE:     (x.CLIENTE     || '').toString(),
-          UNIDAD:      (x.UNIDAD      || '').toString(),
-          TIPO_ACCESO: (x.TIPO_ACCESO || '').toString(),
-          ESTADO:      (x.ESTADO      || '').toString(),
-          EMPRESA:     (x.EMPRESA     || '').toString(),
-          USUARIO:     (x.USUARIO     || '').toString(),
-          _ts: ts,
-          duracion: duracion
+          footer: function (currentPage, pageCount) {
+            return {
+              text: `Página ${currentPage} de ${pageCount}`,
+              alignment: 'center',
+              fontSize: 10,
+              margin: [0, 0, 0, 20]
+            };
+          },
+          content: [
+            {
+              text: `Fecha de reporte: ${new Date().toLocaleDateString('es-PE')}`,
+              fontSize: 10,
+              margin: [0, 0, 0, 15],
+              color: '#666'
+            },
+            {
+              table: {
+                headerRows: 1,
+                widths: ['15%', '12%', '12%', '13%', '13%', '13%', '22%'],
+                body: [
+                  [
+                    { text: 'USUARIO', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
+                    { text: 'CLIENTE', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
+                    { text: 'UNIDAD', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
+                    { text: 'FECHA', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
+                    { text: 'HORA INICIO', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
+                    { text: 'HORA FIN', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' },
+                    { text: 'TIEMPO CONEXIÓN', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center' }
+                  ],
+                  ...rows.map((r, idx) => [
+                    { text: r.nombreUsuario || '', fontSize: 9 },
+                    { text: r.cliente || '', fontSize: 9 },
+                    { text: r.unidad || '', fontSize: 9 },
+                    { text: r.fechaStr || '', fontSize: 9 },
+                    { text: r.horaInicioStr || '', fontSize: 9 },
+                    { text: r.horaCierreStr || '', fontSize: 9 },
+                    { text: r.duracion || '', fontSize: 9, bold: true, color: '#3b82f6' }
+                  ])
+                ]
+              },
+              layout: {
+                fillColor: function (i, node) {
+                  return (i % 2 === 0 && i > 0) ? '#f5f5f5' : null;
+                }
+              }
+            },
+            {
+              text: `Total de registros: ${rows.length}`,
+              fontSize: 10,
+              margin: [0, 20, 0, 0],
+              bold: true
+            }
+          ]
         };
-      });
-      
-      populateDetalleAccesoFilters(daCache);
-      renderDetalleAcceso();
-    } finally {
-      UI.hideOverlay();
-    }
-  }
-  
-  function populateDetalleAccesoFilters(rows){
-    // Obtener filtros del usuario PRIMERO
-    const clienteDelUsuario = accessControl?.getClienteFilter();
-    const unidadDelUsuario = accessControl?.getUnidadFilter?.();
-    const esCliente = !!clienteDelUsuario; // Si hay clienteFiltro, es CLIENTE; si no, es ADMIN
-    
-    const clientes = [...new Set(rows.map(r=>r.CLIENTE).filter(Boolean))].sort();
-    
-    // CORRECCIÓN: Si es CLIENTE, filtrar UNIDADES solo por sus datos
-    let unidades = [...new Set(rows.map(r=>r.UNIDAD).filter(Boolean))].sort();
-    if (esCliente) {
-      // Si es CLIENTE, mostrar solo las unidades que aparecen en sus registros
-      unidades = [...new Set(rows.filter(r => r.CLIENTE === clienteDelUsuario).map(r=>r.UNIDAD).filter(Boolean))].sort();
-    }
-    
-    const tipos = [...new Set(rows.map(r=>r.TIPO_ACCESO).filter(Boolean))].sort();
-    const estados = [...new Set(rows.map(r=>r.ESTADO).filter(Boolean))].sort();
-    
-    const fillSelect = (el, values, preselectedValue = null, disabled = false) => {
-      if (!el) return;
-      el.disabled = disabled;
-      let html = '';
-      if (disabled && preselectedValue) {
-        // Si está deshabilitado, mostrar solo el valor seleccionado
-        html = `<option value="${preselectedValue}" selected disabled>${preselectedValue}</option>`;
-      } else {
-        if (!preselectedValue || !values.includes(preselectedValue)) {
-          html = '<option value="__ALL__">Todos</option>';
-        }
-        html += values.map(v=>{
-          const selected = preselectedValue && v === preselectedValue ? ' selected' : '';
-          return `<option value="${v}"${selected}>${v}</option>`;
-        }).join('');
-      }
-      el.innerHTML = html;
-    };
-    
-    // Si es CLIENTE: Cliente bloqueado, Unidad libre (mostrando SOLO sus unidades), Tipo libre, Estado libre
-    // Si es ADMIN: Todo libre
-    fillSelect(document.getElementById('da-cliente'), clientes, clienteDelUsuario, esCliente);
-    fillSelect(document.getElementById('da-unidad'), unidades, unidadDelUsuario, false);
-    fillSelect(document.getElementById('da-tipo'), tipos, null, false);
-    fillSelect(document.getElementById('da-estado'), estados, null, false);
-  }
-  
-  function getDetalleAccesoFilters(){
-    let start = moment().subtract(29,'days').startOf('day');
-    let end   = moment().endOf('day');
-    
-    const daFecha = document.getElementById('da-fecha');
-    if (daFecha && typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
-      const v = $(daFecha).val();
-      if (v && v.includes(' - ')) {
-        const [a,b] = v.split(' - ');
-        start = moment(a,'DD/MM/YYYY').startOf('day');
-        end   = moment(b,'DD/MM/YYYY').endOf('day');
-      }
-    }
-    
-    const cliente = document.getElementById('da-cliente')?.value || '__ALL__';
-    const unidad  = document.getElementById('da-unidad')?.value || '__ALL__';
-    const tipo    = document.getElementById('da-tipo')?.value || '__ALL__';
-    const estado  = document.getElementById('da-estado')?.value || '__ALL__';
-    
-    return { start, end, cliente, unidad, tipo, estado };
-  }
-  
-  function renderDetalleAcceso(){
-    const { start, end, cliente, unidad, tipo, estado } = getDetalleAccesoFilters();
-    
-    const filtered = daCache.filter(r=>{
-      const inRange = r._ts ? moment(r._ts).isBetween(start, end, undefined, '[]') : false;
-      const inCliente = (cliente==='__ALL__') || (r.CLIENTE===cliente);
-      const inUnidad  = (unidad==='__ALL__') || (r.UNIDAD===unidad);
-      const inTipo    = (tipo==='__ALL__') || (r.TIPO_ACCESO===tipo);
-      const inEstado  = (estado==='__ALL__') || (r.ESTADO===estado);
-      return inRange && inCliente && inUnidad && inTipo && inEstado;
-    });
-    
-    // Update summary cards
-    const countByType = (key) => filtered.reduce((a,c)=> a + (c.TIPO_ACCESO===key ? 1:0), 0);
-    
-    setCard(document.getElementById('da-total'), filtered.length);
-    setCard(document.getElementById('da-visita'), countByType('VISITA'));
-    setCard(document.getElementById('da-proveedor'), countByType('PROVEEDOR'));
-    setCard(document.getElementById('da-contratista'), countByType('CONTRATISTA'));
-    setCard(document.getElementById('da-empleado'), countByType('EMPLEADO'));
-    
-    // Chart 1: Línea por fecha
-    {
-      const labels = [];
-      const map = new Map();
-      for (let m = start.clone(); m.isSameOrBefore(end, 'day'); m.add(1,'day')) {
-        const key = m.format('DD/MM');
-        labels.push(key);
-        map.set(key, 0);
-      }
-      filtered.forEach(r=>{
-        const key = moment(r._ts).format('DD/MM');
-        if (map.has(key)) map.set(key, map.get(key)+1);
-      });
-      const dataValues = labels.map(l=>map.get(l)||0);
-      const totalAccesos = dataValues.reduce((a,b)=>a+b,0)||1;
-      
 
-      
-      drawDAChart('da-chart-fecha', {
-        type:'line',
-        data:{
-          labels,
-          datasets:[{
-            label:'Accesos por Fecha',
-            data: dataValues,
-            borderColor: PALETTE.blue,
-            backgroundColor:'rgba(59,130,246,.15)',
-            fill:true,
-            tension:.4,
-            pointRadius:8,
-            pointHoverRadius:11,
-            pointBorderWidth:3,
-            pointBorderColor:'#fff',
-            pointBackgroundColor: PALETTE.blue,
-            borderWidth:4,
-            segment: { borderDash: [] },
-            datalabels: {
-              display: function(context) {
-                return context.value > 0;
-              },
-              align: 'top',
-              anchor: 'end',
-              offset: 20,
-              font: { size: 13, weight: 'bold' },
-              color: '#fff',
-              backgroundColor: '#3b82f6',
-              borderRadius: 6,
-              padding: 8,
-              formatter: function(value) {
-                const pct = pf(value, totalAccesos);
-                return `${nf.format(value)}\n${pct}%`;
-              }
-            }
-          }]
-        },
-        options:{
-          responsive:true,
-          maintainAspectRatio:false,
-          layout: { padding: { top: 20, bottom: 20, left: 20, right: 20 } },
-          interaction: { mode: 'nearest', intersect: false },
-          plugins:{
-            legend:{ 
-              display:true,
-              position:'top',
-              labels: { font: { size: 13, weight: 'bold' }, padding: 20 }
-            },
-            tooltip:{
-              enabled: true,
-              backgroundColor: 'rgba(0,0,0,0.95)',
-              padding: 16,
-              cornerRadius: 10,
-              titleFont: { size: 15, weight: 'bold' },
-              bodyFont: { size: 14, weight: 'bold' },
-              displayColors: true,
-              borderColor: '#fff',
-              borderWidth: 2,
-              callbacks:{ 
-                label:(c)=> `${nf.format(c.raw)} accesos (${pf(c.raw,totalAccesos)}%)`
-              }
-            }
-          },
-          scales:{
-            y:{ 
-              ticks:{ color:themeInk(), font: { size: 13, weight: '600' }, stepSize: 1 }, 
-              grid:{ color:'rgba(0,0,0,0.08)' },
-              beginAtZero: true
-            },
-            x:{ 
-              ticks:{ color:themeInk(), font: { size: 12 } }, 
-              grid:{ display:false } 
-            }
-          }
-        }
-      });
+        // Generar y descargar PDF
+        pdfMake.createPdf(docDef).download('tiempo_conexion.pdf');
+        UI.toast('PDF generado correctamente');
+      } catch (e) {
+        UI.toast('Error al generar PDF');
+      }
     }
-    
-    // Chart 2: Pie - Distribución por Tipo
-    {
-      const map = new Map();
-      filtered.forEach(r=>{
-        const k = r.TIPO_ACCESO || 'SIN TIPO';
-        map.set(k, (map.get(k)||0)+1);
-      });
-      const labels = Array.from(map.keys());
-      const values = Array.from(map.values());
-      const sum = values.reduce((x,y)=>x+y,0)||1;
-      
-      drawDAChart('da-chart-tipo', {
-        type:'pie',
-        data:{
-          labels: labels.map((l, i) => `${l}\n${nf.format(values[i])} (${pf(values[i],sum)}%)`),
-          datasets:[{
-            data:values,
-            backgroundColor:[PALETTE.blue, PALETTE.amber, PALETTE.purple, PALETTE.red, PALETTE.green],
-            borderColor: '#fff',
-            borderWidth: 3,
-            hoverBorderWidth: 4,
-            hoverOffset: 12,
-            datalabels: {
-              color: '#fff',
-              font: { size: 14, weight: 'bold' },
-              formatter: function(value, context) {
-                return `${nf.format(value)}\n${pf(value, sum)}%`;
-              },
-              textStrokeColor: '#000',
-              textStrokeWidth: 2,
-              offset: 0,
-              align: 'center',
-              anchor: 'center'
-            }
-          }]
-        },
-        options:{
-          responsive:true,
-          maintainAspectRatio:false,
-          layout: { padding: { top: 40, bottom: 40, left: 20, right: 20 } },
-          interaction: { mode: 'point', intersect: true },
-          plugins:{
-            legend:{ 
-              position:'bottom', 
-              labels:{ 
-                color:themeInk(),
-                padding: 20,
-                font: { size: 14, weight: 'bold' },
-                usePointStyle: true,
-                pointStyle: 'circle',
-                generateLabels: (chart) => {
-                  const data = chart.data;
-                  return data.labels.map((label, i) => ({
-                    text: label,
-                    fillStyle: data.datasets[0].backgroundColor[i],
-                    hidden: false,
-                    index: i
-                  }));
-                }
-              } 
-            },
-            tooltip:{
-              enabled: true,
-              backgroundColor: 'rgba(0,0,0,0.95)',
-              padding: 16,
-              cornerRadius: 10,
-              titleFont: { size: 15, weight: 'bold' },
-              bodyFont: { size: 14, weight: 'bold' },
-              borderColor: '#fff',
-              borderWidth: 2,
-              callbacks:{ 
-                label:(c)=> `${nf.format(c.raw)} (${pf(c.raw,sum)}%)`
-              }
-            }
-          }
-        }
-      });
-    }
-    
-    // Chart 3: Bar - Top Clientes
-    {
-      const map = new Map();
-      filtered.forEach(r=>{
-        const k = r.CLIENTE || 'SIN CLIENTE';
-        map.set(k, (map.get(k)||0)+1);
-      });
-      const arr = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]).slice(0,10);
-      const labels = arr.map(x=>x[0]);
-      const values = arr.map(x=>x[1]);
-      const total = values.reduce((a,b)=>a+b,0)||1;
-      
-      drawDAChart('da-chart-clientes', {
-        type:'bar',
-        data:{
-          labels: labels.map((l, i) => `${l}\n${nf.format(values[i])}`),
-          datasets:[{
-            label:'Accesos',
-            data:values,
-            backgroundColor: PALETTE.blue,
-            borderRadius: 8,
-            borderSkipped: false,
-            hoverBackgroundColor: PALETTE.cyan,
-            hoverBorderRadius: 8,
-            datalabels: {
-              color: '#fff',
-              font: { size: 12, weight: 'bold' },
-              formatter: function(value) {
-                return `${nf.format(value)} (${pf(value, total)}%)`;
-              },
-              anchor: 'end',
-              align: 'end',
-              offset: 12,
-              backgroundColor: '#3b82f6',
-              borderRadius: 4,
-              padding: 8
-            }
-          }]
-        },
-        options:{
-          indexAxis:'y',
-          responsive:true,
-          maintainAspectRatio:false,
-          layout: { padding: { top: 20, bottom: 20, left: 20, right: 120 } },
-          interaction: { mode: 'index', intersect: false },
-          plugins:{
-            legend:{ display:true, position: 'top', labels: { font: { size: 13, weight: 'bold' }, padding: 15 } },
-            tooltip:{
-              enabled: true,
-              backgroundColor: 'rgba(0,0,0,0.95)',
-              padding: 16,
-              cornerRadius: 10,
-              titleFont: { size: 15, weight: 'bold' },
-              bodyFont: { size: 14, weight: 'bold' },
-              borderColor: '#fff',
-              borderWidth: 2,
-              callbacks:{ label:(c)=> `${nf.format(c.raw)} (${pf(c.raw,total)}%)` }
-            }
-          },
-          scales:{ 
-            x:{ 
-              ticks:{ color:themeInk(), font: { size: 13, weight: '600' } }, 
-              grid:{ color:'rgba(0,0,0,0.08)' },
-              beginAtZero: true
-            }, 
-            y:{ 
-              ticks:{ color:themeInk(), font: { size: 12, weight: 'bold' } }, 
-              grid:{ display:false }
-            } 
-          }
-        }
-      });
-    }
-    
-    // Chart 4: Doughnut - Estado de Accesos
-    {
-      const map = new Map();
-      filtered.forEach(r=>{
-        const k = r.ESTADO || 'SIN ESTADO';
-        map.set(k, (map.get(k)||0)+1);
-      });
-      const labels = Array.from(map.keys());
-      const values = Array.from(map.values());
-      const sum = values.reduce((x,y)=>x+y,0)||1;
-      
-      drawDAChart('da-chart-estado', {
-        type:'doughnut',
-        data:{
-          labels: labels.map((l, i) => `${l}\n${nf.format(values[i])} (${pf(values[i],sum)}%)`),
-          datasets:[{
-            data:values,
-            backgroundColor:[PALETTE.green, PALETTE.amber, PALETTE.red],
-            borderColor: '#fff',
-            borderWidth: 3,
-            hoverBorderWidth: 4,
-            hoverOffset: 12,
-            datalabels: {
-              color: '#fff',
-              font: { size: 14, weight: 'bold' },
-              formatter: function(value) {
-                return `${nf.format(value)}\n${pf(value, sum)}%`;
-              },
-              textStrokeColor: '#000',
-              textStrokeWidth: 2,
-              offset: 0,
-              align: 'center',
-              anchor: 'center'
-            }
-          }]
-        },
-        options:{
-          responsive:true,
-          maintainAspectRatio:false,
-          layout: { padding: { top: 40, bottom: 40, left: 20, right: 20 } },
-          cutout:'58%',
-          interaction: { mode: 'point', intersect: true },
-          plugins:{
-            legend:{ 
-              position:'bottom', 
-              labels:{ 
-                color:themeInk(),
-                padding: 20,
-                font: { size: 14, weight: 'bold' },
-                usePointStyle: true,
-                pointStyle: 'circle',
-                generateLabels: (chart) => {
-                  const data = chart.data;
-                  return data.labels.map((label, i) => ({
-                    text: label,
-                    fillStyle: data.datasets[0].backgroundColor[i],
-                    hidden: false,
-                    index: i
-                  }));
-                }
-              } 
-            },
-            tooltip:{
-              enabled: true,
-              backgroundColor: 'rgba(0,0,0,0.95)',
-              padding: 16,
-              cornerRadius: 10,
-              titleFont: { size: 15, weight: 'bold' },
-              bodyFont: { size: 14, weight: 'bold' },
-              borderColor: '#fff',
-              borderWidth: 2,
-              callbacks:{ 
-                label:(c)=> `${nf.format(c.raw)} (${pf(c.raw,sum)}%)`
-              }
-            }
-          }
-        }
-      });
-    }
-    
-    // Chart 5: Bar - Accesos por Unidad
-    {
-      const map = new Map();
-      filtered.forEach(r=>{
-        const k = r.UNIDAD || 'SIN UNIDAD';
-        map.set(k, (map.get(k)||0)+1);
-      });
-      const arr = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]);
-      const labels = arr.map(x=>x[0]);
-      const values = arr.map(x=>x[1]);
-      const total = values.reduce((a,b)=>a+b,0)||1;
-      
-      drawDAChart('da-chart-unidad', {
-        type:'bar',
-        data:{
-          labels: labels.map((l, i) => `${l}\n${nf.format(values[i])}`),
-          datasets:[{
-            label:'Accesos',
-            data:values,
-            backgroundColor: PALETTE.blueLt,
-            borderRadius: 8,
-            borderSkipped: false,
-            hoverBackgroundColor: PALETTE.blue,
-            hoverBorderRadius: 8,
-            datalabels: {
-              color: '#fff',
-              font: { size: 12, weight: 'bold' },
-              formatter: function(value) {
-                return `${nf.format(value)}\n${pf(value, total)}%`;
-              },
-              anchor: 'end',
-              align: 'top',
-              offset: 12,
-              backgroundColor: '#60a5fa',
-              borderRadius: 4,
-              padding: 8
-            }
-          }]
-        },
-        options:{
-          responsive:true,
-          maintainAspectRatio:false,
-          layout: { padding: { top: 20, bottom: 20, left: 20, right: 20 } },
-          interaction: { mode: 'index', intersect: false },
-          plugins:{
-            legend:{ display:true, position: 'top', labels: { font: { size: 13, weight: 'bold' }, padding: 15 } },
-            tooltip:{
-              enabled: true,
-              backgroundColor: 'rgba(0,0,0,0.95)',
-              padding: 16,
-              cornerRadius: 10,
-              titleFont: { size: 15, weight: 'bold' },
-              bodyFont: { size: 14, weight: 'bold' },
-              borderColor: '#fff',
-              borderWidth: 2,
-              callbacks:{ label:(c)=> `${nf.format(c.raw)} (${pf(c.raw,total)}%)` }
-            }
-          },
-          scales:{
-            y:{ 
-              ticks:{ color:themeInk(), font: { size: 13, weight: '600' } }, 
-              grid:{ color:'rgba(0,0,0,0.08)' },
-              beginAtZero: true
-            },
-            x:{ 
-              ticks:{ color:themeInk(), autoSkip:false, maxRotation:45, minRotation:0, font: { size: 12, weight: 'bold' } },
-              grid:{ display:false }
-            }
-          }
-        }
-      });
-    }
-    
-    // Chart 6: Bar - Accesos por Empresa
-    {
-      const map = new Map();
-      filtered.forEach(r=>{
-        const k = r.EMPRESA || 'SIN EMPRESA';
-        map.set(k, (map.get(k)||0)+1);
-      });
-      const arr = Array.from(map.entries()).sort((a,b)=>b[1]-a[1]).slice(0,15);
-      const labels = arr.map(x=>x[0]);
-      const values = arr.map(x=>x[1]);
-      const total = values.reduce((a,b)=>a+b,0)||1;
-      
-      drawDAChart('da-chart-empresa', {
-        type:'bar',
-        data:{
-          labels: labels.map((l, i) => `${l}\n${nf.format(values[i])}`),
-          datasets:[{
-            label:'Accesos',
-            data:values,
-            backgroundColor: PALETTE.purple,
-            borderRadius: 8,
-            borderSkipped: false,
-            hoverBackgroundColor: PALETTE.pink,
-            hoverBorderRadius: 8,
-            datalabels: {
-              color: '#fff',
-              font: { size: 12, weight: 'bold' },
-              formatter: function(value) {
-                return `${nf.format(value)}\n${pf(value, total)}%`;
-              },
-              anchor: 'end',
-              align: 'top',
-              offset: 12,
-              backgroundColor: '#8b5cf6',
-              borderRadius: 4,
-              padding: 8
-            }
-          }]
-        },
-        options:{
-          responsive:true,
-          maintainAspectRatio:false,
-          layout: { padding: { top: 20, bottom: 20, left: 20, right: 20 } },
-          interaction: { mode: 'index', intersect: false },
-          plugins:{
-            legend:{ display:true, position: 'top', labels: { font: { size: 13, weight: 'bold' }, padding: 15 } },
-            tooltip:{
-              enabled: true,
-              backgroundColor: 'rgba(0,0,0,0.95)',
-              padding: 16,
-              cornerRadius: 10,
-              titleFont: { size: 15, weight: 'bold' },
-              bodyFont: { size: 14, weight: 'bold' },
-              borderColor: '#fff',
-              borderWidth: 2,
-              callbacks:{ label:(c)=> `${nf.format(c.raw)} (${pf(c.raw,total)}%)` }
-            }
-          },
-          scales:{
-            y:{ 
-              ticks:{ color:themeInk(), font: { size: 13, weight: '600' } }, 
-              grid:{ color:'rgba(0,0,0,0.08)' },
-              beginAtZero: true
-            },
-            x:{ 
-              ticks:{ color:themeInk(), autoSkip:false, maxRotation:45, minRotation:0, font: { size: 12, weight: 'bold' } },
-              grid:{ display:false }
-            }
-          }
-        }
-      });
-    }
-    
-    // Render table
-    renderDetalleAccesoTable(filtered);
-  }
-  
-  function drawDAChart(canvasId, config){
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) return;
-    
-    const ctx = canvas.getContext('2d');
-    if (daCharts[canvasId]) daCharts[canvasId].destroy();
-    
-    // NO SOBRESCRIBIR opciones que ya existen
-    if (!config.options) config.options = {};
-    if (!config.options.plugins) config.options.plugins = {};
-    
-    // Solo aplicar valores por defecto si no existen
-    if (!config.options.responsive) config.options.responsive = true;
-    if (!config.options.maintainAspectRatio) config.options.maintainAspectRatio = false;
-    
-    // NO reemplazar tooltip ni legend si ya existen en config
-    // Solo agregar defaults si no están presentes
-    if (!config.options.plugins.tooltip) {
-      config.options.plugins.tooltip = {
-        enabled: true,
-        mode: 'index',
-        intersect: false,
-        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-        padding: 12
-      };
-    }
-    
-    if (!config.options.plugins.legend) {
-      config.options.plugins.legend = {
-        display: true,
-        position: 'top'
-      };
-    }
-    
-    daCharts[canvasId] = new Chart(ctx, config);
-  }
-  
-  function renderDetalleAccesoTable(filtered){
-    const tbody = document.getElementById('da-tbody');
-    if (!tbody) return;
-    
-    const search = document.getElementById('da-search')?.value.toUpperCase() || '';
-    const sort = document.getElementById('da-sort')?.value || 'fecha-desc';
-    
-    let data = filtered.filter(r=>{
-      const txt = `${r.CLIENTE}|${r.UNIDAD}|${r.USUARIO}`.toUpperCase();
-      return txt.includes(search);
+
+    tiempoConexionBtnPdf?.addEventListener('click', () => {
+      exportarTiempoConexionPDF();
     });
-    
-    if (sort === 'fecha-desc') {
-      data.sort((a,b)=> (b._ts || 0) - (a._ts || 0));
-    } else if (sort === 'fecha-asc') {
-      data.sort((a,b)=> (a._ts || 0) - (b._ts || 0));
-    } else if (sort === 'cliente') {
-      data.sort((a,b)=> a.CLIENTE.localeCompare(b.CLIENTE));
+
+    // ============================================================================
+    // 8) INICIALIZACIÓN PRINCIPAL DE LA APLICACIÓN
+    // ============================================================================
+    logoutBtn?.addEventListener('click', async () => {
+      try { await auth.signOut(); location.replace('index.html'); }
+      catch (e) { ; UI.toast('No se pudo cerrar sesión'); }
+    });
+
+    // Cargar filtros de cuaderno una vez autenticado (y también por hook de navegación)
+    const tryLoadCuadernoFilters = () => {
+      if (!cuadernoFiltersLoaded) {
+        cuadernoFiltersLoaded = true;
+        loadCuadernoFilters();
+      }
+    };
+
+    // ============================================================================
+    // CONTROL DE ACCESO BASADO EN ROLES
+    // ============================================================================
+    window.accessControl = null;
+
+    /**
+     * Crea una query con filtro automático por cliente
+     * Si el usuario es CLIENTE, filtra por su cliente asignado
+     * Si es ADMIN, devuelve la query sin filtro
+     */
+    function getQueryWithClienteFilter(collectionName) {
+      let query = db.collection(collectionName);
+      const clienteFiltro = window.accessControl?.getClienteFilter();
+      if (clienteFiltro) {
+        // Soportar ambos campos: 'cliente' (minúsculas) y 'CLIENTE' (mayúsculas)
+        const isAccesoPeatonal = collectionName === 'ACCESO_PEATONAL';
+        const fieldName = isAccesoPeatonal ? 'CLIENTE' : 'cliente';
+        query = query.where(fieldName, '==', clienteFiltro);
+      } else {
+      }
+      return query;
     }
-    
-    tbody.innerHTML = data.slice(0, 500).map(r=>`
+
+    // Monitor de seguridad: Impide que se muestren vistas sin permisos
+    const securityMonitor = setInterval(() => {
+      if (!window.accessControl) return;
+
+      // Validar que NO se muestren vistas bloqueadas
+      window.accessControl.restrictedViews.forEach(restrictedView => {
+        const view = document.getElementById(restrictedView);
+        if (view && view.classList.contains('shown')) {
+          view.classList.remove('shown');
+          UI.showError(
+            '🔒 Violación de Seguridad',
+            'Se detectó un intento de acceso no autorizado. La sesión será cerrada.'
+          );
+          setTimeout(() => {
+            auth.signOut();
+            location.replace('index.html');
+          }, 2000);
+        }
+      });
+    }, 500); // Verifica cada 500ms
+
+    auth.onAuthStateChanged(async (user) => {
+      if (!user) {
+        location.replace('index.html');
+      } else {
+        currentUser = user;
+        const name = user.displayName || user.email || 'Usuario';
+        if (userNameEl) userNameEl.textContent = name;
+        if (userMetaEl) userMetaEl.textContent = 'Bienvenido(a)';
+        if (avatarEl) avatarEl.textContent = (name[0] || 'U').toUpperCase();
+
+        // ===== INICIALIZAR CONTROL DE ACCESO =====
+        window.accessControl = new AccessControl(db, auth);
+        const accessInitialized = await window.accessControl.initialize(user);
+
+        if (accessInitialized) {
+          // Aplicar restricciones de vista al DOM
+          window.accessControl.applyDOMRestrictions();
+
+          // Log de acceso para debug
+        } else {
+          // Por seguridad, cerrar sesión si no se puede verificar permisos
+          UI.showError('Error de Seguridad', 'No se pudo verificar tus permisos. Intenta de nuevo.');
+          setTimeout(() => {
+            auth.signOut();
+          }, 2000);
+          return;
+        }
+
+        // Filtros de cuaderno e incidencias al arranque (ligero)
+        tryLoadCuadernoFilters();
+        loadIncidenciasFilters();
+
+        // Cargar clientes para Rondas y QR después de que accessControl esté listo
+        loadRondaClientes();
+        loadQRClientes();
+        loadRondas();
+
+        initResumenDashboard();
+      }
+    });
+
+    /* ===== DETALLE ACCESO DASHBOARD ===== */
+    let daCache = [];
+    let daCharts = {};
+
+    function initDetalleAccesoDashboard() {
+      const daFecha = document.getElementById('da-fecha');
+      const daApply = document.getElementById('da-apply');
+      const daExport = document.getElementById('da-export');
+      const daSearch = document.getElementById('da-search');
+      const daSort = document.getElementById('da-sort');
+
+      if (daFecha && typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
+        $(daFecha).daterangepicker({
+          startDate: moment().subtract(29, 'days'),
+          endDate: moment(),
+          locale: { format: 'DD/MM/YYYY' }
+        });
+      }
+
+      queryDetalleAcceso();
+      daApply?.addEventListener('click', renderDetalleAcceso);
+      daExport?.addEventListener('click', exportarDetalleAccesoExcel);
+      daSearch?.addEventListener('input', () => renderDetalleAccesoTable(daCache));
+      daSort?.addEventListener('change', () => renderDetalleAccesoTable(daCache));
+    }
+
+    async function queryDetalleAcceso() {
+      UI.showOverlay('Cargando accesos…', 'Consultando ACCESO_PEATONAL');
+      try {
+        const snap = await getQueryWithClienteFilter('ACCESO_PEATONAL').get();
+        daCache = snap.docs.map(d => {
+          const x = d.data();
+          const inStr = `${x.FECHA_INGRESO ?? ''} ${x.HORA_INGRESO ?? ''}`.trim();
+          const outStr = `${x.FECHA_SALIDA ?? ''} ${x.HORA_FIN ?? ''}`.trim();
+          const tsIn = queryAccesoPeatonalDateParse(inStr);
+          const tsOut = queryAccesoPeatonalDateParse(outStr);
+          const ts = tsIn || tsOut || null;
+
+          let duracion = 'N/A';
+          if (tsIn && tsOut) {
+            const dur = moment(tsOut).diff(moment(tsIn), 'minutes');
+            const h = Math.floor(dur / 60);
+            const m = dur % 60;
+            duracion = h > 0 ? `${h}h ${m}m` : `${m}m`;
+          }
+
+          return {
+            id: d.id,
+            FECHA_INGRESO: x.FECHA_INGRESO || '',
+            HORA_INGRESO: x.HORA_INGRESO || '',
+            FECHA_SALIDA: x.FECHA_SALIDA || '',
+            HORA_FIN: x.HORA_FIN || '',
+            CLIENTE: (x.CLIENTE || '').toString(),
+            UNIDAD: (x.UNIDAD || '').toString(),
+            TIPO_ACCESO: (x.TIPO_ACCESO || '').toString(),
+            ESTADO: (x.ESTADO || '').toString(),
+            EMPRESA: (x.EMPRESA || '').toString(),
+            USUARIO: (x.USUARIO || '').toString(),
+            _ts: ts,
+            duracion: duracion
+          };
+        });
+
+        populateDetalleAccesoFilters(daCache);
+        renderDetalleAcceso();
+      } finally {
+        UI.hideOverlay();
+      }
+    }
+
+    function populateDetalleAccesoFilters(rows) {
+      // Obtener filtros del usuario PRIMERO
+      const clienteDelUsuario = accessControl?.getClienteFilter();
+      const unidadDelUsuario = accessControl?.getUnidadFilter?.();
+      const esCliente = !!clienteDelUsuario; // Si hay clienteFiltro, es CLIENTE; si no, es ADMIN
+
+      const clientes = [...new Set(rows.map(r => r.CLIENTE).filter(Boolean))].sort();
+
+      // CORRECCIÓN: Si es CLIENTE, filtrar UNIDADES solo por sus datos
+      let unidades = [...new Set(rows.map(r => r.UNIDAD).filter(Boolean))].sort();
+      if (esCliente) {
+        // Si es CLIENTE, mostrar solo las unidades que aparecen en sus registros
+        unidades = [...new Set(rows.filter(r => r.CLIENTE === clienteDelUsuario).map(r => r.UNIDAD).filter(Boolean))].sort();
+      }
+
+      const tipos = [...new Set(rows.map(r => r.TIPO_ACCESO).filter(Boolean))].sort();
+      const estados = [...new Set(rows.map(r => r.ESTADO).filter(Boolean))].sort();
+
+      const fillSelect = (el, values, preselectedValue = null, disabled = false) => {
+        if (!el) return;
+        el.disabled = disabled;
+        let html = '';
+        if (disabled && preselectedValue) {
+          // Si está deshabilitado, mostrar solo el valor seleccionado
+          html = `<option value="${preselectedValue}" selected disabled>${preselectedValue}</option>`;
+        } else {
+          if (!preselectedValue || !values.includes(preselectedValue)) {
+            html = '<option value="__ALL__">Todos</option>';
+          }
+          html += values.map(v => {
+            const selected = preselectedValue && v === preselectedValue ? ' selected' : '';
+            return `<option value="${v}"${selected}>${v}</option>`;
+          }).join('');
+        }
+        el.innerHTML = html;
+      };
+
+      // Si es CLIENTE: Cliente bloqueado, Unidad libre (mostrando SOLO sus unidades), Tipo libre, Estado libre
+      // Si es ADMIN: Todo libre
+      fillSelect(document.getElementById('da-cliente'), clientes, clienteDelUsuario, esCliente);
+      fillSelect(document.getElementById('da-unidad'), unidades, unidadDelUsuario, false);
+      fillSelect(document.getElementById('da-tipo'), tipos, null, false);
+      fillSelect(document.getElementById('da-estado'), estados, null, false);
+    }
+
+    function getDetalleAccesoFilters() {
+      let start = moment().subtract(29, 'days').startOf('day');
+      let end = moment().endOf('day');
+
+      const daFecha = document.getElementById('da-fecha');
+      if (daFecha && typeof $ !== 'undefined' && typeof $.fn.daterangepicker !== 'undefined') {
+        const v = $(daFecha).val();
+        if (v && v.includes(' - ')) {
+          const [a, b] = v.split(' - ');
+          start = moment(a, 'DD/MM/YYYY').startOf('day');
+          end = moment(b, 'DD/MM/YYYY').endOf('day');
+        }
+      }
+
+      const cliente = document.getElementById('da-cliente')?.value || '__ALL__';
+      const unidad = document.getElementById('da-unidad')?.value || '__ALL__';
+      const tipo = document.getElementById('da-tipo')?.value || '__ALL__';
+      const estado = document.getElementById('da-estado')?.value || '__ALL__';
+
+      return { start, end, cliente, unidad, tipo, estado };
+    }
+
+    function renderDetalleAcceso() {
+      const { start, end, cliente, unidad, tipo, estado } = getDetalleAccesoFilters();
+
+      const filtered = daCache.filter(r => {
+        const inRange = r._ts ? moment(r._ts).isBetween(start, end, undefined, '[]') : false;
+        const inCliente = (cliente === '__ALL__') || (r.CLIENTE === cliente);
+        const inUnidad = (unidad === '__ALL__') || (r.UNIDAD === unidad);
+        const inTipo = (tipo === '__ALL__') || (r.TIPO_ACCESO === tipo);
+        const inEstado = (estado === '__ALL__') || (r.ESTADO === estado);
+        return inRange && inCliente && inUnidad && inTipo && inEstado;
+      });
+
+      // Update summary cards
+      const countByType = (key) => filtered.reduce((a, c) => a + (c.TIPO_ACCESO === key ? 1 : 0), 0);
+
+      setCard(document.getElementById('da-total'), filtered.length);
+      setCard(document.getElementById('da-visita'), countByType('VISITA'));
+      setCard(document.getElementById('da-proveedor'), countByType('PROVEEDOR'));
+      setCard(document.getElementById('da-contratista'), countByType('CONTRATISTA'));
+      setCard(document.getElementById('da-empleado'), countByType('EMPLEADO'));
+
+      // Chart 1: Línea por fecha
+      {
+        const labels = [];
+        const map = new Map();
+        for (let m = start.clone(); m.isSameOrBefore(end, 'day'); m.add(1, 'day')) {
+          const key = m.format('DD/MM');
+          labels.push(key);
+          map.set(key, 0);
+        }
+        filtered.forEach(r => {
+          const key = moment(r._ts).format('DD/MM');
+          if (map.has(key)) map.set(key, map.get(key) + 1);
+        });
+        const dataValues = labels.map(l => map.get(l) || 0);
+        const totalAccesos = dataValues.reduce((a, b) => a + b, 0) || 1;
+
+
+
+        drawDAChart('da-chart-fecha', {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Accesos por Fecha',
+              data: dataValues,
+              borderColor: PALETTE.blue,
+              backgroundColor: 'rgba(59,130,246,.15)',
+              fill: true,
+              tension: .4,
+              pointRadius: 8,
+              pointHoverRadius: 11,
+              pointBorderWidth: 3,
+              pointBorderColor: '#fff',
+              pointBackgroundColor: PALETTE.blue,
+              borderWidth: 4,
+              segment: { borderDash: [] },
+              datalabels: {
+                display: function (context) {
+                  return context.value > 0;
+                },
+                align: 'top',
+                anchor: 'end',
+                offset: 20,
+                font: { size: 13, weight: 'bold' },
+                color: '#fff',
+                backgroundColor: '#3b82f6',
+                borderRadius: 6,
+                padding: 8,
+                formatter: function (value) {
+                  const pct = pf(value, totalAccesos);
+                  return `${nf.format(value)}\n${pct}%`;
+                }
+              }
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 20, bottom: 20, left: 20, right: 20 } },
+            interaction: { mode: 'nearest', intersect: false },
+            plugins: {
+              legend: {
+                display: true,
+                position: 'top',
+                labels: { font: { size: 13, weight: 'bold' }, padding: 20 }
+              },
+              tooltip: {
+                enabled: true,
+                backgroundColor: 'rgba(0,0,0,0.95)',
+                padding: 16,
+                cornerRadius: 10,
+                titleFont: { size: 15, weight: 'bold' },
+                bodyFont: { size: 14, weight: 'bold' },
+                displayColors: true,
+                borderColor: '#fff',
+                borderWidth: 2,
+                callbacks: {
+                  label: (c) => `${nf.format(c.raw)} accesos (${pf(c.raw, totalAccesos)}%)`
+                }
+              }
+            },
+            scales: {
+              y: {
+                ticks: { color: themeInk(), font: { size: 13, weight: '600' }, stepSize: 1 },
+                grid: { color: 'rgba(0,0,0,0.08)' },
+                beginAtZero: true
+              },
+              x: {
+                ticks: { color: themeInk(), font: { size: 12 } },
+                grid: { display: false }
+              }
+            }
+          }
+        });
+      }
+
+      // Chart 2: Pie - Distribución por Tipo
+      {
+        const map = new Map();
+        filtered.forEach(r => {
+          const k = r.TIPO_ACCESO || 'SIN TIPO';
+          map.set(k, (map.get(k) || 0) + 1);
+        });
+        const labels = Array.from(map.keys());
+        const values = Array.from(map.values());
+        const sum = values.reduce((x, y) => x + y, 0) || 1;
+
+        drawDAChart('da-chart-tipo', {
+          type: 'pie',
+          data: {
+            labels: labels.map((l, i) => `${l}\n${nf.format(values[i])} (${pf(values[i], sum)}%)`),
+            datasets: [{
+              data: values,
+              backgroundColor: [PALETTE.blue, PALETTE.amber, PALETTE.purple, PALETTE.red, PALETTE.green],
+              borderColor: '#fff',
+              borderWidth: 3,
+              hoverBorderWidth: 4,
+              hoverOffset: 12,
+              datalabels: {
+                color: '#fff',
+                font: { size: 14, weight: 'bold' },
+                formatter: function (value, context) {
+                  return `${nf.format(value)}\n${pf(value, sum)}%`;
+                },
+                textStrokeColor: '#000',
+                textStrokeWidth: 2,
+                offset: 0,
+                align: 'center',
+                anchor: 'center'
+              }
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 40, bottom: 40, left: 20, right: 20 } },
+            interaction: { mode: 'point', intersect: true },
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: {
+                  color: themeInk(),
+                  padding: 20,
+                  font: { size: 14, weight: 'bold' },
+                  usePointStyle: true,
+                  pointStyle: 'circle',
+                  generateLabels: (chart) => {
+                    const data = chart.data;
+                    return data.labels.map((label, i) => ({
+                      text: label,
+                      fillStyle: data.datasets[0].backgroundColor[i],
+                      hidden: false,
+                      index: i
+                    }));
+                  }
+                }
+              },
+              tooltip: {
+                enabled: true,
+                backgroundColor: 'rgba(0,0,0,0.95)',
+                padding: 16,
+                cornerRadius: 10,
+                titleFont: { size: 15, weight: 'bold' },
+                bodyFont: { size: 14, weight: 'bold' },
+                borderColor: '#fff',
+                borderWidth: 2,
+                callbacks: {
+                  label: (c) => `${nf.format(c.raw)} (${pf(c.raw, sum)}%)`
+                }
+              }
+            }
+          }
+        });
+      }
+
+      // Chart 3: Bar - Top Clientes
+      {
+        const map = new Map();
+        filtered.forEach(r => {
+          const k = r.CLIENTE || 'SIN CLIENTE';
+          map.set(k, (map.get(k) || 0) + 1);
+        });
+        const arr = Array.from(map.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10);
+        const labels = arr.map(x => x[0]);
+        const values = arr.map(x => x[1]);
+        const total = values.reduce((a, b) => a + b, 0) || 1;
+
+        drawDAChart('da-chart-clientes', {
+          type: 'bar',
+          data: {
+            labels: labels.map((l, i) => `${l}\n${nf.format(values[i])}`),
+            datasets: [{
+              label: 'Accesos',
+              data: values,
+              backgroundColor: PALETTE.blue,
+              borderRadius: 8,
+              borderSkipped: false,
+              hoverBackgroundColor: PALETTE.cyan,
+              hoverBorderRadius: 8,
+              datalabels: {
+                color: '#fff',
+                font: { size: 12, weight: 'bold' },
+                formatter: function (value) {
+                  return `${nf.format(value)} (${pf(value, total)}%)`;
+                },
+                anchor: 'end',
+                align: 'end',
+                offset: 12,
+                backgroundColor: '#3b82f6',
+                borderRadius: 4,
+                padding: 8
+              }
+            }]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 20, bottom: 20, left: 20, right: 120 } },
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+              legend: { display: true, position: 'top', labels: { font: { size: 13, weight: 'bold' }, padding: 15 } },
+              tooltip: {
+                enabled: true,
+                backgroundColor: 'rgba(0,0,0,0.95)',
+                padding: 16,
+                cornerRadius: 10,
+                titleFont: { size: 15, weight: 'bold' },
+                bodyFont: { size: 14, weight: 'bold' },
+                borderColor: '#fff',
+                borderWidth: 2,
+                callbacks: { label: (c) => `${nf.format(c.raw)} (${pf(c.raw, total)}%)` }
+              }
+            },
+            scales: {
+              x: {
+                ticks: { color: themeInk(), font: { size: 13, weight: '600' } },
+                grid: { color: 'rgba(0,0,0,0.08)' },
+                beginAtZero: true
+              },
+              y: {
+                ticks: { color: themeInk(), font: { size: 12, weight: 'bold' } },
+                grid: { display: false }
+              }
+            }
+          }
+        });
+      }
+
+      // Chart 4: Doughnut - Estado de Accesos
+      {
+        const map = new Map();
+        filtered.forEach(r => {
+          const k = r.ESTADO || 'SIN ESTADO';
+          map.set(k, (map.get(k) || 0) + 1);
+        });
+        const labels = Array.from(map.keys());
+        const values = Array.from(map.values());
+        const sum = values.reduce((x, y) => x + y, 0) || 1;
+
+        drawDAChart('da-chart-estado', {
+          type: 'doughnut',
+          data: {
+            labels: labels.map((l, i) => `${l}\n${nf.format(values[i])} (${pf(values[i], sum)}%)`),
+            datasets: [{
+              data: values,
+              backgroundColor: [PALETTE.green, PALETTE.amber, PALETTE.red],
+              borderColor: '#fff',
+              borderWidth: 3,
+              hoverBorderWidth: 4,
+              hoverOffset: 12,
+              datalabels: {
+                color: '#fff',
+                font: { size: 14, weight: 'bold' },
+                formatter: function (value) {
+                  return `${nf.format(value)}\n${pf(value, sum)}%`;
+                },
+                textStrokeColor: '#000',
+                textStrokeWidth: 2,
+                offset: 0,
+                align: 'center',
+                anchor: 'center'
+              }
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 40, bottom: 40, left: 20, right: 20 } },
+            cutout: '58%',
+            interaction: { mode: 'point', intersect: true },
+            plugins: {
+              legend: {
+                position: 'bottom',
+                labels: {
+                  color: themeInk(),
+                  padding: 20,
+                  font: { size: 14, weight: 'bold' },
+                  usePointStyle: true,
+                  pointStyle: 'circle',
+                  generateLabels: (chart) => {
+                    const data = chart.data;
+                    return data.labels.map((label, i) => ({
+                      text: label,
+                      fillStyle: data.datasets[0].backgroundColor[i],
+                      hidden: false,
+                      index: i
+                    }));
+                  }
+                }
+              },
+              tooltip: {
+                enabled: true,
+                backgroundColor: 'rgba(0,0,0,0.95)',
+                padding: 16,
+                cornerRadius: 10,
+                titleFont: { size: 15, weight: 'bold' },
+                bodyFont: { size: 14, weight: 'bold' },
+                borderColor: '#fff',
+                borderWidth: 2,
+                callbacks: {
+                  label: (c) => `${nf.format(c.raw)} (${pf(c.raw, sum)}%)`
+                }
+              }
+            }
+          }
+        });
+      }
+
+      // Chart 5: Bar - Accesos por Unidad
+      {
+        const map = new Map();
+        filtered.forEach(r => {
+          const k = r.UNIDAD || 'SIN UNIDAD';
+          map.set(k, (map.get(k) || 0) + 1);
+        });
+        const arr = Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
+        const labels = arr.map(x => x[0]);
+        const values = arr.map(x => x[1]);
+        const total = values.reduce((a, b) => a + b, 0) || 1;
+
+        drawDAChart('da-chart-unidad', {
+          type: 'bar',
+          data: {
+            labels: labels.map((l, i) => `${l}\n${nf.format(values[i])}`),
+            datasets: [{
+              label: 'Accesos',
+              data: values,
+              backgroundColor: PALETTE.blueLt,
+              borderRadius: 8,
+              borderSkipped: false,
+              hoverBackgroundColor: PALETTE.blue,
+              hoverBorderRadius: 8,
+              datalabels: {
+                color: '#fff',
+                font: { size: 12, weight: 'bold' },
+                formatter: function (value) {
+                  return `${nf.format(value)}\n${pf(value, total)}%`;
+                },
+                anchor: 'end',
+                align: 'top',
+                offset: 12,
+                backgroundColor: '#60a5fa',
+                borderRadius: 4,
+                padding: 8
+              }
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 20, bottom: 20, left: 20, right: 20 } },
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+              legend: { display: true, position: 'top', labels: { font: { size: 13, weight: 'bold' }, padding: 15 } },
+              tooltip: {
+                enabled: true,
+                backgroundColor: 'rgba(0,0,0,0.95)',
+                padding: 16,
+                cornerRadius: 10,
+                titleFont: { size: 15, weight: 'bold' },
+                bodyFont: { size: 14, weight: 'bold' },
+                borderColor: '#fff',
+                borderWidth: 2,
+                callbacks: { label: (c) => `${nf.format(c.raw)} (${pf(c.raw, total)}%)` }
+              }
+            },
+            scales: {
+              y: {
+                ticks: { color: themeInk(), font: { size: 13, weight: '600' } },
+                grid: { color: 'rgba(0,0,0,0.08)' },
+                beginAtZero: true
+              },
+              x: {
+                ticks: { color: themeInk(), autoSkip: false, maxRotation: 45, minRotation: 0, font: { size: 12, weight: 'bold' } },
+                grid: { display: false }
+              }
+            }
+          }
+        });
+      }
+
+      // Chart 6: Bar - Accesos por Empresa
+      {
+        const map = new Map();
+        filtered.forEach(r => {
+          const k = r.EMPRESA || 'SIN EMPRESA';
+          map.set(k, (map.get(k) || 0) + 1);
+        });
+        const arr = Array.from(map.entries()).sort((a, b) => b[1] - a[1]).slice(0, 15);
+        const labels = arr.map(x => x[0]);
+        const values = arr.map(x => x[1]);
+        const total = values.reduce((a, b) => a + b, 0) || 1;
+
+        drawDAChart('da-chart-empresa', {
+          type: 'bar',
+          data: {
+            labels: labels.map((l, i) => `${l}\n${nf.format(values[i])}`),
+            datasets: [{
+              label: 'Accesos',
+              data: values,
+              backgroundColor: PALETTE.purple,
+              borderRadius: 8,
+              borderSkipped: false,
+              hoverBackgroundColor: PALETTE.pink,
+              hoverBorderRadius: 8,
+              datalabels: {
+                color: '#fff',
+                font: { size: 12, weight: 'bold' },
+                formatter: function (value) {
+                  return `${nf.format(value)}\n${pf(value, total)}%`;
+                },
+                anchor: 'end',
+                align: 'top',
+                offset: 12,
+                backgroundColor: '#8b5cf6',
+                borderRadius: 4,
+                padding: 8
+              }
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 20, bottom: 20, left: 20, right: 20 } },
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+              legend: { display: true, position: 'top', labels: { font: { size: 13, weight: 'bold' }, padding: 15 } },
+              tooltip: {
+                enabled: true,
+                backgroundColor: 'rgba(0,0,0,0.95)',
+                padding: 16,
+                cornerRadius: 10,
+                titleFont: { size: 15, weight: 'bold' },
+                bodyFont: { size: 14, weight: 'bold' },
+                borderColor: '#fff',
+                borderWidth: 2,
+                callbacks: { label: (c) => `${nf.format(c.raw)} (${pf(c.raw, total)}%)` }
+              }
+            },
+            scales: {
+              y: {
+                ticks: { color: themeInk(), font: { size: 13, weight: '600' } },
+                grid: { color: 'rgba(0,0,0,0.08)' },
+                beginAtZero: true
+              },
+              x: {
+                ticks: { color: themeInk(), autoSkip: false, maxRotation: 45, minRotation: 0, font: { size: 12, weight: 'bold' } },
+                grid: { display: false }
+              }
+            }
+          }
+        });
+      }
+
+      // Render table
+      renderDetalleAccesoTable(filtered);
+    }
+
+    function drawDAChart(canvasId, config) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+
+      const ctx = canvas.getContext('2d');
+      if (daCharts[canvasId]) daCharts[canvasId].destroy();
+
+      // NO SOBRESCRIBIR opciones que ya existen
+      if (!config.options) config.options = {};
+      if (!config.options.plugins) config.options.plugins = {};
+
+      // Solo aplicar valores por defecto si no existen
+      if (!config.options.responsive) config.options.responsive = true;
+      if (!config.options.maintainAspectRatio) config.options.maintainAspectRatio = false;
+
+      // NO reemplazar tooltip ni legend si ya existen en config
+      // Solo agregar defaults si no están presentes
+      if (!config.options.plugins.tooltip) {
+        config.options.plugins.tooltip = {
+          enabled: true,
+          mode: 'index',
+          intersect: false,
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          padding: 12
+        };
+      }
+
+      if (!config.options.plugins.legend) {
+        config.options.plugins.legend = {
+          display: true,
+          position: 'top'
+        };
+      }
+
+      daCharts[canvasId] = new Chart(ctx, config);
+    }
+
+    function renderDetalleAccesoTable(filtered) {
+      const tbody = document.getElementById('da-tbody');
+      if (!tbody) return;
+
+      const search = document.getElementById('da-search')?.value.toUpperCase() || '';
+      const sort = document.getElementById('da-sort')?.value || 'fecha-desc';
+
+      let data = filtered.filter(r => {
+        const txt = `${r.CLIENTE}|${r.UNIDAD}|${r.USUARIO}`.toUpperCase();
+        return txt.includes(search);
+      });
+
+      if (sort === 'fecha-desc') {
+        data.sort((a, b) => (b._ts || 0) - (a._ts || 0));
+      } else if (sort === 'fecha-asc') {
+        data.sort((a, b) => (a._ts || 0) - (b._ts || 0));
+      } else if (sort === 'cliente') {
+        data.sort((a, b) => a.CLIENTE.localeCompare(b.CLIENTE));
+      }
+
+      tbody.innerHTML = data.slice(0, 500).map(r => `
       <tr>
         <td>${r.FECHA_INGRESO} ${r.HORA_INGRESO}</td>
         <td>${r.CLIENTE}</td>
@@ -7733,23 +7751,23 @@ document.addEventListener('DOMContentLoaded', () => {
         <td>${r.duracion}</td>
       </tr>
     `).join('');
-  }
-  
-  function exportarDetalleAccesoExcel(){
-    const { start, end, cliente, unidad, tipo, estado } = getDetalleAccesoFilters();
-    const filtered = daCache.filter(r=>{
-      const inRange = r._ts ? moment(r._ts).isBetween(start, end, undefined, '[]') : false;
-      const inCliente = (cliente==='__ALL__') || (r.CLIENTE===cliente);
-      const inUnidad  = (unidad==='__ALL__') || (r.UNIDAD===unidad);
-      const inTipo    = (tipo==='__ALL__') || (r.TIPO_ACCESO===tipo);
-      const inEstado  = (estado==='__ALL__') || (r.ESTADO===estado);
-      return inRange && inCliente && inUnidad && inTipo && inEstado;
-    });
-    
-    let html = `<table><thead><tr><th>FECHA_INGRESO</th><th>HORA_INGRESO</th><th>FECHA_SALIDA</th><th>HORA_SALIDA</th><th>CLIENTE</th><th>UNIDAD</th><th>TIPO_ACCESO</th><th>ESTADO</th><th>EMPRESA</th><th>USUARIO</th><th>DURACION</th></tr></thead><tbody>`;
-    
-    filtered.forEach(r=>{
-      html += `<tr>
+    }
+
+    function exportarDetalleAccesoExcel() {
+      const { start, end, cliente, unidad, tipo, estado } = getDetalleAccesoFilters();
+      const filtered = daCache.filter(r => {
+        const inRange = r._ts ? moment(r._ts).isBetween(start, end, undefined, '[]') : false;
+        const inCliente = (cliente === '__ALL__') || (r.CLIENTE === cliente);
+        const inUnidad = (unidad === '__ALL__') || (r.UNIDAD === unidad);
+        const inTipo = (tipo === '__ALL__') || (r.TIPO_ACCESO === tipo);
+        const inEstado = (estado === '__ALL__') || (r.ESTADO === estado);
+        return inRange && inCliente && inUnidad && inTipo && inEstado;
+      });
+
+      let html = `<table><thead><tr><th>FECHA_INGRESO</th><th>HORA_INGRESO</th><th>FECHA_SALIDA</th><th>HORA_SALIDA</th><th>CLIENTE</th><th>UNIDAD</th><th>TIPO_ACCESO</th><th>ESTADO</th><th>EMPRESA</th><th>USUARIO</th><th>DURACION</th></tr></thead><tbody>`;
+
+      filtered.forEach(r => {
+        html += `<tr>
         <td>${r.FECHA_INGRESO}</td>
         <td>${r.HORA_INGRESO}</td>
         <td>${r.FECHA_SALIDA}</td>
@@ -7762,146 +7780,146 @@ document.addEventListener('DOMContentLoaded', () => {
         <td>${r.USUARIO}</td>
         <td>${r.duracion}</td>
       </tr>`;
-    });
-    
-    html += '</tbody></table>';
-    
-    const blob = new Blob([html], { type: 'application/vnd.ms-excel; charset=utf-8' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `Detalle_Acceso_${moment().format('YYYYMMDD_HHmmss')}.xls`;
-    link.click();
-  }
+      });
 
-  // ============================================================================
-  // CREAR RONDAS - PROGRAMADOR DE HORARIOS
-  // ============================================================================
-  const crearRondaForm = document.getElementById('crearRondaForm');
-  const rondaCliente = document.getElementById('ronda-cliente');
-  const rondaUnidad = document.getElementById('ronda-unidad');
-  const rondaNombre = document.getElementById('ronda-nombre');
-  const rondaPuntosContainer = document.getElementById('rondaPuntosContainer');
-  const rondaHorario = document.getElementById('ronda-horario');
-  const rondaTolerancia = document.getElementById('ronda-tolerancia');
-  const rondaToleranciaTipo = document.getElementById('ronda-tolerancia-tipo');
-  const rondaFrecuencia = document.getElementById('ronda-frecuencia');
-  const rondaDiasSemanales = document.getElementById('rondaDiasSemanales');
-  const rondaDiasMes = document.getElementById('rondaDiasMes');
-  const rondasListContainer = document.getElementById('rondasListContainer');
+      html += '</tbody></table>';
 
-  // Elementos de filtros de Rondas Creadas
-  const rondasFilterCliente = document.getElementById('rondas-filter-cliente');
-  const rondasFilterUnidad = document.getElementById('rondas-filter-unidad');
-  const rondasFilterClear = document.getElementById('rondas-filter-clear');
-
-  let rondaList = [];
-  let rondasFilters = {
-    cliente: '',
-    unidad: ''
-  };
-
-  // Cargar clientes para rondas
-  async function loadRondaClientes() {
-    try {
-      let snap;
-      
-      // Aplicar filtro de acceso según tipo de usuario
-      if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
-        // Si es cliente, solo mostrar su cliente asignado
-        const doc = await db.collection('CLIENTE_UNIDAD').doc(window.accessControl.clienteAsignado).get();
-        snap = { empty: !doc.exists, docs: doc.exists ? [doc] : [] };
-      } else {
-        // Si es admin, mostrar todos los clientes
-        snap = await db.collection('CLIENTE_UNIDAD').get();
-      }
-      
-      if (snap.empty) {
-        rondaCliente.innerHTML = '<option value="">No hay clientes</option>';
-        return;
-      }
-      const clientes = snap.docs.map(d => d.id).sort((a,b) => a.localeCompare(b, 'es'));
-      rondaCliente.innerHTML = '<option value="">Seleccionar Cliente</option>' +
-        clientes.map(c => `<option value="${c}">${c}</option>`).join('');
-    } catch (e) {
+      const blob = new Blob([html], { type: 'application/vnd.ms-excel; charset=utf-8' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `Detalle_Acceso_${moment().format('YYYYMMDD_HHmmss')}.xls`;
+      link.click();
     }
-  }
 
-  // Cargar unidades cuando cambia cliente en rondas
-  if (rondaCliente) {
-    rondaCliente.addEventListener('change', async () => {
-      const selectedCliente = rondaCliente.value;
-      if (!selectedCliente) {
-        if (rondaUnidad) rondaUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>';
-        rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">Selecciona un cliente y unidad primero</p>';
-        return;
-      }
+    // ============================================================================
+    // CREAR RONDAS - PROGRAMADOR DE HORARIOS
+    // ============================================================================
+    const crearRondaForm = document.getElementById('crearRondaForm');
+    const rondaCliente = document.getElementById('ronda-cliente');
+    const rondaUnidad = document.getElementById('ronda-unidad');
+    const rondaNombre = document.getElementById('ronda-nombre');
+    const rondaPuntosContainer = document.getElementById('rondaPuntosContainer');
+    const rondaHorario = document.getElementById('ronda-horario');
+    const rondaTolerancia = document.getElementById('ronda-tolerancia');
+    const rondaToleranciaTipo = document.getElementById('ronda-tolerancia-tipo');
+    const rondaFrecuencia = document.getElementById('ronda-frecuencia');
+    const rondaDiasSemanales = document.getElementById('rondaDiasSemanales');
+    const rondaDiasMes = document.getElementById('rondaDiasMes');
+    const rondasListContainer = document.getElementById('rondasListContainer');
 
+    // Elementos de filtros de Rondas Creadas
+    const rondasFilterCliente = document.getElementById('rondas-filter-cliente');
+    const rondasFilterUnidad = document.getElementById('rondas-filter-unidad');
+    const rondasFilterClear = document.getElementById('rondas-filter-clear');
+
+    let rondaList = [];
+    let rondasFilters = {
+      cliente: '',
+      unidad: ''
+    };
+
+    // Cargar clientes para rondas
+    async function loadRondaClientes() {
       try {
-        // Obtener unidades desde la SUBCOLECCIÓN UNIDADES del cliente
-        const unidadesSnapshot = await db
-          .collection('CLIENTE_UNIDAD')
-          .doc(selectedCliente)
-          .collection('UNIDADES')
-          .get();
-        
-        let unidades = [];
-        
-        // Extraer los IDs de los documentos (que son los nombres de las unidades)
-        unidadesSnapshot.forEach(doc => {
-          unidades.push(doc.id);
-        });
-        
-        // Ordenar alfabéticamente
-        unidades.sort((a, b) => a.localeCompare(b, 'es'));
-        
-        if (rondaUnidad) {
-          rondaUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>' +
-            unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+        let snap;
+
+        // Aplicar filtro de acceso según tipo de usuario
+        if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
+          // Si es cliente, solo mostrar su cliente asignado
+          const doc = await db.collection('CLIENTE_UNIDAD').doc(window.accessControl.clienteAsignado).get();
+          snap = { empty: !doc.exists, docs: doc.exists ? [doc] : [] };
+        } else {
+          // Si es admin, mostrar todos los clientes
+          snap = await db.collection('CLIENTE_UNIDAD').get();
         }
-      } catch (e) {
-        if (rondaUnidad) rondaUnidad.innerHTML = '<option value="">Error al cargar unidades</option>';
-      }
-    });
-  }
-
-  // Cargar QRs cuando cambia unidad
-  if (rondaUnidad) {
-    rondaUnidad.addEventListener('change', async () => {
-      const selectedCliente = rondaCliente?.value;
-      const selectedUnidad = rondaUnidad.value;
-
-      if (!selectedCliente || !selectedUnidad) {
-        rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">Selecciona cliente y unidad primero</p>';
-        return;
-      }
-
-      try {
-        const snap = await db.collection('QR_CODES')
-          .where('cliente', '==', selectedCliente)
-          .where('unidad', '==', selectedUnidad)
-          .get();
 
         if (snap.empty) {
-          rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">No hay QRs para esta unidad</p>';
+          rondaCliente.innerHTML = '<option value="">No hay clientes</option>';
+          return;
+        }
+        const clientes = snap.docs.map(d => d.id).sort((a, b) => a.localeCompare(b, 'es'));
+        rondaCliente.innerHTML = '<option value="">Seleccionar Cliente</option>' +
+          clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+      } catch (e) {
+      }
+    }
+
+    // Cargar unidades cuando cambia cliente en rondas
+    if (rondaCliente) {
+      rondaCliente.addEventListener('change', async () => {
+        const selectedCliente = rondaCliente.value;
+        if (!selectedCliente) {
+          if (rondaUnidad) rondaUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>';
+          rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">Selecciona un cliente y unidad primero</p>';
           return;
         }
 
-        let html = '';
-        snap.docs.forEach(doc => {
-          const qrData = doc.data();
-          
-          // Verificar si el QR tiene preguntas asignadas
-          const tienePreguntas = qrData.requireQuestion === 'si' && qrData.questions && qrData.questions.length > 0;
-          const preguntasTexto = tienePreguntas 
-            ? `<div style="margin-top: 8px; padding: 8px; background-color: #e8f4f8; border-left: 3px solid #0284c7; border-radius: 4px;">
+        try {
+          // Obtener unidades desde la SUBCOLECCIÓN UNIDADES del cliente
+          const unidadesSnapshot = await db
+            .collection('CLIENTE_UNIDAD')
+            .doc(selectedCliente)
+            .collection('UNIDADES')
+            .get();
+
+          let unidades = [];
+
+          // Extraer los IDs de los documentos (que son los nombres de las unidades)
+          unidadesSnapshot.forEach(doc => {
+            unidades.push(doc.id);
+          });
+
+          // Ordenar alfabéticamente
+          unidades.sort((a, b) => a.localeCompare(b, 'es'));
+
+          if (rondaUnidad) {
+            rondaUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>' +
+              unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+          }
+        } catch (e) {
+          if (rondaUnidad) rondaUnidad.innerHTML = '<option value="">Error al cargar unidades</option>';
+        }
+      });
+    }
+
+    // Cargar QRs cuando cambia unidad
+    if (rondaUnidad) {
+      rondaUnidad.addEventListener('change', async () => {
+        const selectedCliente = rondaCliente?.value;
+        const selectedUnidad = rondaUnidad.value;
+
+        if (!selectedCliente || !selectedUnidad) {
+          rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">Selecciona cliente y unidad primero</p>';
+          return;
+        }
+
+        try {
+          const snap = await db.collection('QR_CODES')
+            .where('cliente', '==', selectedCliente)
+            .where('unidad', '==', selectedUnidad)
+            .get();
+
+          if (snap.empty) {
+            rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">No hay QRs para esta unidad</p>';
+            return;
+          }
+
+          let html = '';
+          snap.docs.forEach(doc => {
+            const qrData = doc.data();
+
+            // Verificar si el QR tiene preguntas asignadas
+            const tienePreguntas = qrData.requireQuestion === 'si' && qrData.questions && qrData.questions.length > 0;
+            const preguntasTexto = tienePreguntas
+              ? `<div style="margin-top: 8px; padding: 8px; background-color: #e8f4f8; border-left: 3px solid #0284c7; border-radius: 4px;">
                  <small style="color: #0284c7; font-weight: 600;">📋 Preguntas asignadas:</small>
                  <ul style="margin: 6px 0 0 20px; padding: 0; font-size: 12px; color: #333;">
                    ${qrData.questions.map(q => `<li>${q}</li>`).join('')}
                  </ul>
                </div>`
-            : '';
-          
-          html += `
+              : '';
+
+            html += `
             <label style="display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; border-radius: 6px; transition: background 0.2s;">
               <input type="checkbox" class="ronda-punto-qr" value="${doc.id}" data-nombre="${qrData.nombre || 'N/A'}" data-id="${doc.id}" style="margin-top: 4px; cursor: pointer;" />
               <div style="flex: 1;">
@@ -7911,66 +7929,74 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
             </label>
           `;
-        });
-        rondaPuntosContainer.innerHTML = html;
-      } catch (e) {
-        rondaPuntosContainer.innerHTML = '<p style="color: red;">Error cargando QRs</p>';
-      }
-    });
-  }
+          });
+          rondaPuntosContainer.innerHTML = html;
+        } catch (e) {
+          rondaPuntosContainer.innerHTML = '<p style="color: red;">Error cargando QRs</p>';
+        }
+      });
+    }
 
-  // Mostrar/ocultar opciones de frecuencia
-  if (rondaFrecuencia) {
-    rondaFrecuencia.addEventListener('change', (e) => {
-      const value = e.target.value;
-      rondaDiasSemanales.style.display = value === 'semanal' ? 'block' : 'none';
-      rondaDiasMes.style.display = value === 'dias-especificos' ? 'block' : 'none';
-    });
-  }
+    // Mostrar/ocultar opciones de frecuencia
+    if (rondaFrecuencia) {
+      rondaFrecuencia.addEventListener('change', (e) => {
+        const value = e.target.value;
+        rondaDiasSemanales.style.display = value === 'semanal' ? 'block' : 'none';
+        rondaDiasMes.style.display = value === 'dias-especificos' ? 'block' : 'none';
+      });
+    }
 
-  // Guardar ronda
-  if (crearRondaForm) {
-    crearRondaForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
+    // Guardar ronda
+    if (crearRondaForm) {
+      crearRondaForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
 
-      const cliente = rondaCliente?.value;
-      const unidad = rondaUnidad?.value;
-      const nombre = rondaNombre?.value?.trim();
-      const horario = rondaHorario?.value;
-      const tolerancia = parseInt(rondaTolerancia?.value || 0);
-      const toleranciaTipo = rondaToleranciaTipo?.value;
-      const frecuencia = rondaFrecuencia?.value;
+        const cliente = rondaCliente?.value;
+        const unidad = rondaUnidad?.value;
+        const nombre = rondaNombre?.value?.trim();
+        const horario = rondaHorario?.value;
+        const tolerancia = parseInt(rondaTolerancia?.value || 0);
+        const toleranciaTipo = rondaToleranciaTipo?.value;
+        const frecuencia = rondaFrecuencia?.value;
 
-      if (!cliente || !unidad || !nombre || !horario || !frecuencia) {
-        if (UI && UI.toast) UI.toast('❌ Por favor completa todos los campos');
-        return;
-      }
+        if (!cliente || !unidad || !nombre || !horario || !frecuencia) {
+          if (UI && UI.toast) UI.toast('❌ Por favor completa todos los campos');
+          return;
+        }
 
-      // Obtener QRs seleccionados con sus preguntas
-      const checkboxes = document.querySelectorAll('.ronda-punto-qr:checked');
-      if (checkboxes.length === 0) {
-        if (UI && UI.toast) UI.toast('❌ Selecciona al menos un punto de ronda');
-        return;
-      }
+        // Obtener QRs seleccionados con sus preguntas
+        const checkboxes = document.querySelectorAll('.ronda-punto-qr:checked');
+        if (checkboxes.length === 0) {
+          if (UI && UI.toast) UI.toast('❌ Selecciona al menos un punto de ronda');
+          return;
+        }
 
-      // Construir puntos de ronda con información de QR incluyendo preguntas
-      const puntosRonda = [];
-      for (const cb of checkboxes) {
-        const qrId = cb.value;
-        const nombre = cb.dataset.nombre;
-        
-        try {
-          // Obtener documento del QR para traer sus preguntas
-          const qrDoc = await db.collection('QR_CODES').doc(qrId).get();
-          if (qrDoc.exists) {
-            const qrData = qrDoc.data();
-            puntosRonda.push({
-              qrId: qrId,
-              nombre: nombre,
-              requireQuestion: qrData.requireQuestion || 'no',
-              questions: qrData.questions || []
-            });
-          } else {
+        // Construir puntos de ronda con información de QR incluyendo preguntas
+        const puntosRonda = [];
+        for (const cb of checkboxes) {
+          const qrId = cb.value;
+          const nombre = cb.dataset.nombre;
+
+          try {
+            // Obtener documento del QR para traer sus preguntas
+            const qrDoc = await db.collection('QR_CODES').doc(qrId).get();
+            if (qrDoc.exists) {
+              const qrData = qrDoc.data();
+              puntosRonda.push({
+                qrId: qrId,
+                nombre: nombre,
+                requireQuestion: qrData.requireQuestion || 'no',
+                questions: qrData.questions || []
+              });
+            } else {
+              puntosRonda.push({
+                qrId: qrId,
+                nombre: nombre,
+                requireQuestion: 'no',
+                questions: []
+              });
+            }
+          } catch (e) {
             puntosRonda.push({
               qrId: qrId,
               nombre: nombre,
@@ -7978,174 +8004,166 @@ document.addEventListener('DOMContentLoaded', () => {
               questions: []
             });
           }
-        } catch (e) {
-          puntosRonda.push({
-            qrId: qrId,
-            nombre: nombre,
-            requireQuestion: 'no',
-            questions: []
-          });
         }
-      }
-      
-      console.log('DEBUG - puntosRonda después de construcción:', puntosRonda);
-      console.log('DEBUG - Es array?', Array.isArray(puntosRonda));
-      
-      // GARANTIZAR que puntosRonda es un array válido
-      if (!Array.isArray(puntosRonda) || puntosRonda.length === 0) {
-        console.warn('⚠️ ADVERTENCIA - puntosRonda no es array válido, convirtiendo a array vacío');
-        puntosRonda = [];
-      }
 
-      // Validar días según frecuencia
-      let diasConfig = null;
-      if (frecuencia === 'semanal') {
-        const diasSemanalesCbs = document.querySelectorAll('input[name="dia-semana"]:checked');
-        if (diasSemanalesCbs.length === 0) {
-          if (UI && UI.toast) UI.toast('❌ Selecciona al menos un día de la semana');
-          return;
+        console.log('DEBUG - puntosRonda después de construcción:', puntosRonda);
+        console.log('DEBUG - Es array?', Array.isArray(puntosRonda));
+
+        // GARANTIZAR que puntosRonda es un array válido
+        if (!Array.isArray(puntosRonda) || puntosRonda.length === 0) {
+          console.warn('⚠️ ADVERTENCIA - puntosRonda no es array válido, convirtiendo a array vacío');
+          puntosRonda = [];
         }
-        diasConfig = Array.from(diasSemanalesCbs).map(cb => cb.value);
-      } else if (frecuencia === 'dias-especificos') {
-        const diasMesInput = document.getElementById('ronda-dias-mes')?.value?.trim();
-        if (!diasMesInput) {
-          if (UI && UI.toast) UI.toast('❌ Ingresa los días del mes');
-          return;
-        }
-        diasConfig = diasMesInput.split(',').map(d => parseInt(d.trim())).filter(d => d >= 1 && d <= 31);
-        if (diasConfig.length === 0) {
-          if (UI && UI.toast) UI.toast('❌ Ingresa días válidos (1-31)');
-          return;
-        }
-      }
 
-      const submitBtn = crearRondaForm.querySelector('button[type="submit"]');
-      const editingId = submitBtn?.dataset.editingId;
-
-      const rondaData = {
-        cliente,
-        unidad,
-        nombre,
-        horario,
-        tolerancia,
-        toleranciaTipo,
-        frecuencia,
-        diasConfig,
-        puntosRonda: Array.isArray(puntosRonda) ? puntosRonda : [],
-        activa: true
-      };
-      
-      console.log('DEBUG - rondaData.puntosRonda:', rondaData.puntosRonda);
-      console.log('DEBUG - rondaData.puntosRonda es array?', Array.isArray(rondaData.puntosRonda));
-
-      try {
-        UI.showOverlay('Guardando...', editingId ? 'Actualizando ronda' : 'Creando ronda');
-        
-        if (editingId) {
-          // Actualizar ronda existente (sin tocar createdAt)
-          await db.collection('Rondas_QR').doc(editingId).update(rondaData);
-          const index = rondaList.findIndex(r => r.id === editingId);
-          if (index !== -1) {
-            rondaList[index] = { id: editingId, ...rondaList[index], ...rondaData };
+        // Validar días según frecuencia
+        let diasConfig = null;
+        if (frecuencia === 'semanal') {
+          const diasSemanalesCbs = document.querySelectorAll('input[name="dia-semana"]:checked');
+          if (diasSemanalesCbs.length === 0) {
+            if (UI && UI.toast) UI.toast('❌ Selecciona al menos un día de la semana');
+            return;
           }
-          if (UI && UI.toast) UI.toast('✅ Ronda actualizada exitosamente');
-        } else {
-          // Crear ronda nueva - Usar serverTimestamp para garantizar timestamp correcto en Firestore
-          const newRonda = {
-            id: `ronda_${Date.now()}`,
-            ...rondaData,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-          };
-          
-          // DEBUG: Verificar tipo de createdAt antes de guardar
-          console.log('DEBUG - Tipo de createdAt antes de guardar:', typeof newRonda.createdAt);
-          console.log('DEBUG - createdAt value:', newRonda.createdAt);
-          
-          await db.collection('Rondas_QR').doc(newRonda.id).set(newRonda);
-          rondaList.push(newRonda);
-          if (UI && UI.toast) UI.toast('✅ Ronda creada exitosamente');
+          diasConfig = Array.from(diasSemanalesCbs).map(cb => cb.value);
+        } else if (frecuencia === 'dias-especificos') {
+          const diasMesInput = document.getElementById('ronda-dias-mes')?.value?.trim();
+          if (!diasMesInput) {
+            if (UI && UI.toast) UI.toast('❌ Ingresa los días del mes');
+            return;
+          }
+          diasConfig = diasMesInput.split(',').map(d => parseInt(d.trim())).filter(d => d >= 1 && d <= 31);
+          if (diasConfig.length === 0) {
+            if (UI && UI.toast) UI.toast('❌ Ingresa días válidos (1-31)');
+            return;
+          }
         }
-        
+
+        const submitBtn = crearRondaForm.querySelector('button[type="submit"]');
+        const editingId = submitBtn?.dataset.editingId;
+
+        const rondaData = {
+          cliente,
+          unidad,
+          nombre,
+          horario,
+          tolerancia,
+          toleranciaTipo,
+          frecuencia,
+          diasConfig,
+          puntosRonda: Array.isArray(puntosRonda) ? puntosRonda : [],
+          activa: true
+        };
+
+        console.log('DEBUG - rondaData.puntosRonda:', rondaData.puntosRonda);
+        console.log('DEBUG - rondaData.puntosRonda es array?', Array.isArray(rondaData.puntosRonda));
+
+        try {
+          UI.showOverlay('Guardando...', editingId ? 'Actualizando ronda' : 'Creando ronda');
+
+          if (editingId) {
+            // Actualizar ronda existente (sin tocar createdAt)
+            await db.collection('Rondas_QR').doc(editingId).update(rondaData);
+            const index = rondaList.findIndex(r => r.id === editingId);
+            if (index !== -1) {
+              rondaList[index] = { id: editingId, ...rondaList[index], ...rondaData };
+            }
+            if (UI && UI.toast) UI.toast('✅ Ronda actualizada exitosamente');
+          } else {
+            // Crear ronda nueva - Usar serverTimestamp para garantizar timestamp correcto en Firestore
+            const newRonda = {
+              id: `ronda_${Date.now()}`,
+              ...rondaData,
+              createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            };
+
+            // DEBUG: Verificar tipo de createdAt antes de guardar
+            console.log('DEBUG - Tipo de createdAt antes de guardar:', typeof newRonda.createdAt);
+            console.log('DEBUG - createdAt value:', newRonda.createdAt);
+
+            await db.collection('Rondas_QR').doc(newRonda.id).set(newRonda);
+            rondaList.push(newRonda);
+            if (UI && UI.toast) UI.toast('✅ Ronda creada exitosamente');
+          }
+
+          // Resetear formulario
+          crearRondaForm.reset();
+          rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">Selecciona un cliente y unidad primero</p>';
+
+          // Resetear botón
+          if (submitBtn) {
+            submitBtn.textContent = '➕ Crear Ronda';
+            submitBtn.style.background = '';
+            delete submitBtn.dataset.editingId;
+          }
+          const formTitle = document.querySelector('[data-form-title]');
+          if (formTitle) {
+            formTitle.textContent = '📋 Crear Nueva Ronda';
+            formTitle.style.color = '';
+          }
+
+          renderRondasList();
+        } catch (error) {
+          if (UI && UI.toast) UI.toast('❌ Error: ' + error.message);
+        } finally {
+          UI.hideOverlay();
+        }
+      });
+    }
+
+    // Manejador del botón Cancelar Edición
+    const cancelBtn = document.getElementById('ronda-btn-cancelar');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => {
         // Resetear formulario
         crearRondaForm.reset();
         rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">Selecciona un cliente y unidad primero</p>';
-        
-        // Resetear botón
+
+        // Resetear botón submit
+        const submitBtn = crearRondaForm?.querySelector('button[type="submit"]');
         if (submitBtn) {
           submitBtn.textContent = '➕ Crear Ronda';
           submitBtn.style.background = '';
           delete submitBtn.dataset.editingId;
         }
+
+        // Resetear título
         const formTitle = document.querySelector('[data-form-title]');
         if (formTitle) {
           formTitle.textContent = '📋 Crear Nueva Ronda';
           formTitle.style.color = '';
         }
-        
-        renderRondasList();
-      } catch (error) {
-        if (UI && UI.toast) UI.toast('❌ Error: ' + error.message);
-      } finally {
-        UI.hideOverlay();
-      }
-    });
-  }
 
-  // Manejador del botón Cancelar Edición
-  const cancelBtn = document.getElementById('ronda-btn-cancelar');
-  if (cancelBtn) {
-    cancelBtn.addEventListener('click', () => {
-      // Resetear formulario
-      crearRondaForm.reset();
-      rondaPuntosContainer.innerHTML = '<p style="color: #999; text-align: center;">Selecciona un cliente y unidad primero</p>';
-      
-      // Resetear botón submit
-      const submitBtn = crearRondaForm?.querySelector('button[type="submit"]');
-      if (submitBtn) {
-        submitBtn.textContent = '➕ Crear Ronda';
-        submitBtn.style.background = '';
-        delete submitBtn.dataset.editingId;
+        // Ocultar botón cancelar
+        cancelBtn.style.display = 'none';
+        delete cancelBtn.dataset.editingId;
+
+        if (UI && UI.toast) UI.toast('❌ Edición cancelada');
+      });
+    }
+
+    // Renderizar lista de rondas
+    function renderRondasList() {
+      // Aplicar filtro de cliente según restricciones de usuario
+      let rondasFiltradas = rondaList;
+
+      if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
+        // Si es cliente, filtrar solo sus rondas
+        rondasFiltradas = rondaList.filter(r => r.cliente === window.accessControl.clienteAsignado);
       }
 
-      // Resetear título
-      const formTitle = document.querySelector('[data-form-title]');
-      if (formTitle) {
-        formTitle.textContent = '📋 Crear Nueva Ronda';
-        formTitle.style.color = '';
+      // Aplicar filtros de la UI
+      if (rondasFilters.cliente) {
+        rondasFiltradas = rondasFiltradas.filter(r => r.cliente === rondasFilters.cliente);
+      }
+      if (rondasFilters.unidad) {
+        rondasFiltradas = rondasFiltradas.filter(r => r.unidad === rondasFilters.unidad);
       }
 
-      // Ocultar botón cancelar
-      cancelBtn.style.display = 'none';
-      delete cancelBtn.dataset.editingId;
+      // Actualizar opciones de filtros
+      updateRondasFilterOptions();
 
-      if (UI && UI.toast) UI.toast('❌ Edición cancelada');
-    });
-  }
-
-  // Renderizar lista de rondas
-  function renderRondasList() {
-    // Aplicar filtro de cliente según restricciones de usuario
-    let rondasFiltradas = rondaList;
-    
-    if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
-      // Si es cliente, filtrar solo sus rondas
-      rondasFiltradas = rondaList.filter(r => r.cliente === window.accessControl.clienteAsignado);
-    }
-    
-    // Aplicar filtros de la UI
-    if (rondasFilters.cliente) {
-      rondasFiltradas = rondasFiltradas.filter(r => r.cliente === rondasFilters.cliente);
-    }
-    if (rondasFilters.unidad) {
-      rondasFiltradas = rondasFiltradas.filter(r => r.unidad === rondasFilters.unidad);
-    }
-    
-    // Actualizar opciones de filtros
-    updateRondasFilterOptions();
-    
-    if (rondasFiltradas.length === 0) {
-      rondasListContainer.innerHTML = `
+      if (rondasFiltradas.length === 0) {
+        rondasListContainer.innerHTML = `
         <div style="text-align: center; padding: 40px 20px; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); 
                     border-radius: 12px; border: 2px dashed #999;">
           <p style="color: #999; font-size: 16px; margin: 0;">
@@ -8156,22 +8174,22 @@ document.addEventListener('DOMContentLoaded', () => {
           </p>
         </div>
       `;
-      return;
-    }
+        return;
+      }
 
-    let html = `
+      let html = `
       <div style="display: grid; gap: 16px;">
     `;
-    rondasFiltradas.forEach((ronda, index) => {
-      try {
-        console.log('DEBUG - Renderizando ronda:', ronda.nombre);
-        console.log('DEBUG - ronda.puntosRonda:', ronda.puntosRonda);
-        console.log('DEBUG - Es array?', Array.isArray(ronda.puntosRonda));
-        const gradients = ['#e0f7fa', '#f3e5f5', '#e8f5e9', '#fff3e0', '#fce4ec'];
-        const gradient = gradients[index % gradients.length];
-        const borderColor = ['#00bcd4', '#9c27b0', '#4caf50', '#ff9800', '#e91e63'][index % 5];
-        
-        html += `
+      rondasFiltradas.forEach((ronda, index) => {
+        try {
+          console.log('DEBUG - Renderizando ronda:', ronda.nombre);
+          console.log('DEBUG - ronda.puntosRonda:', ronda.puntosRonda);
+          console.log('DEBUG - Es array?', Array.isArray(ronda.puntosRonda));
+          const gradients = ['#e0f7fa', '#f3e5f5', '#e8f5e9', '#fff3e0', '#fce4ec'];
+          const gradient = gradients[index % gradients.length];
+          const borderColor = ['#00bcd4', '#9c27b0', '#4caf50', '#ff9800', '#e91e63'][index % 5];
+
+          html += `
           <div style="background: ${gradient}; border-left: 5px solid ${borderColor}; 
                       border-radius: 12px; padding: 16px; 
                       box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: all 0.3s ease;
@@ -8256,8 +8274,8 @@ document.addEventListener('DOMContentLoaded', () => {
               </p>
               <div style="display: flex; flex-direction: column; gap: 8px;">
                 ${Array.isArray(ronda.puntosRonda) ? ronda.puntosRonda.map(p => {
-                  const tienePreguntas = p.requireQuestion === 'si' && p.questions && p.questions.length > 0;
-                  return `
+            const tienePreguntas = p.requireQuestion === 'si' && p.questions && p.questions.length > 0;
+            return `
                     <div style="padding: 8px; background: white; border-radius: 6px; border-left: 3px solid ${borderColor};">
                       <div style="display: flex; align-items: center; gap: 6px; margin-bottom: ${tienePreguntas ? '6px' : '0'};">
                         <span style="background: ${borderColor}; color: white; padding: 2px 6px; border-radius: 4px; 
@@ -8276,7 +8294,7 @@ document.addEventListener('DOMContentLoaded', () => {
                       ` : ''}
                     </div>
                   `;
-                }).join('') : '<div style="color: #999; font-size: 11px;">Sin puntos asignados</div>'}
+          }).join('') : '<div style="color: #999; font-size: 11px;">Sin puntos asignados</div>'}
               </div>
             </div>
 
@@ -8300,229 +8318,229 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
         </div>
       `;
-      } catch (e) {
-        console.error('ERROR - Error renderizando ronda:', ronda.nombre);
-        console.error('ERROR - Detalles del error:', e);
-        console.error('ERROR - Stack:', e.stack);
-      }
-    });
-    html += '</div>';
-    try {
-      rondasListContainer.innerHTML = html;
-    } catch (e) {
-      console.error('ERROR - Error al renderizar HTML de rondas:', e);
-      console.error('ERROR - HTML que causó error:', html.substring(0, 500));
-    }
-  }
-
-  // Actualizar opciones de filtros en Rondas Creadas
-  function updateRondasFilterOptions() {
-    // Obtener clientes únicos de rondaList respetando restricciones de usuario
-    let clientesUnicos = new Set();
-    let unidadesUnicos = new Set();
-    
-    let rondasAccesibles = rondaList;
-    if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
-      rondasAccesibles = rondaList.filter(r => r.cliente === window.accessControl.clienteAsignado);
-    }
-    
-    rondasAccesibles.forEach(ronda => {
-      if (ronda.cliente) clientesUnicos.add(ronda.cliente);
-      if (ronda.unidad) unidadesUnicos.add(ronda.unidad);
-    });
-    
-    // Actualizar select de cliente
-    if (rondasFilterCliente) {
-      const clienteActual = rondasFilterCliente.value;
-      rondasFilterCliente.innerHTML = '<option value="">Todos los Clientes</option>' +
-        Array.from(clientesUnicos).sort().map(c => `<option value="${c}">${c}</option>`).join('');
-      rondasFilterCliente.value = clienteActual;
-    }
-    
-    // Actualizar select de unidad
-    if (rondasFilterUnidad) {
-      const unidadActual = rondasFilterUnidad.value;
-      rondasFilterUnidad.innerHTML = '<option value="">Todas las Unidades</option>' +
-        Array.from(unidadesUnicos).sort().map(u => `<option value="${u}">${u}</option>`).join('');
-      rondasFilterUnidad.value = unidadActual;
-    }
-  }
-
-  // Aplicar filtros en Rondas Creadas
-  function applyRondasFilters() {
-    rondasFilters.cliente = rondasFilterCliente?.value || '';
-    rondasFilters.unidad = rondasFilterUnidad?.value || '';
-    renderRondasList();
-  }
-
-  // Event listeners para filtros de Rondas Creadas
-  if (rondasFilterCliente) {
-    rondasFilterCliente.addEventListener('change', applyRondasFilters);
-  }
-  if (rondasFilterUnidad) {
-    rondasFilterUnidad.addEventListener('change', applyRondasFilters);
-  }
-  if (rondasFilterClear) {
-    rondasFilterClear.addEventListener('click', () => {
-      rondasFilters = { cliente: '', unidad: '' };
-      if (rondasFilterCliente) rondasFilterCliente.value = '';
-      if (rondasFilterUnidad) rondasFilterUnidad.value = '';
-      renderRondasList();
-    });
-  }
-  window.showDeleteRondaModal = (rondaId, rondaNombre) => {
-    const modal = document.getElementById('deleteRondaModal');
-    const nameDisplay = document.getElementById('deleteRondaName');
-    const confirmBtn = document.getElementById('deleteRondaConfirm');
-    const cancelBtn = document.getElementById('deleteRondaCancel');
-    
-    nameDisplay.textContent = rondaNombre;
-    modal.style.display = 'flex';
-    
-    // Remover listeners anteriores
-    const newConfirmBtn = confirmBtn.cloneNode(true);
-    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
-    const newCancelBtn = cancelBtn.cloneNode(true);
-    cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
-    
-    // Agregar nuevos listeners
-    document.getElementById('deleteRondaConfirm').addEventListener('click', () => {
-      deleteRonda(rondaId);
-      modal.style.display = 'none';
-    });
-    document.getElementById('deleteRondaCancel').addEventListener('click', () => {
-      modal.style.display = 'none';
-    });
-  };
-
-  // Eliminar ronda
-  window.deleteRonda = async (rondaId) => {
-    try {
-      UI.showOverlay('Eliminando...', 'Borrando ronda');
-      await db.collection('Rondas_QR').doc(rondaId).delete();
-      rondaList = rondaList.filter(r => r.id !== rondaId);
-      renderRondasList();
-      if (UI && UI.toast) UI.toast('✅ Ronda eliminada');
-    } catch (error) {
-      if (UI && UI.toast) UI.toast('❌ Error: ' + error.message);
-    } finally {
-      UI.hideOverlay();
-    }
-  };
-
-  // Editar ronda
-  window.editRonda = (rondaId) => {
-    const ronda = rondaList.find(r => r.id === rondaId);
-    if (!ronda) {
-      if (UI && UI.toast) UI.toast('❌ Ronda no encontrada');
-      return;
-    }
-
-    // Llenar el formulario con los datos de la ronda
-    if (rondaCliente) rondaCliente.value = ronda.cliente;
-    
-    // Trigger change para cargar unidades
-    rondaCliente.dispatchEvent(new Event('change'));
-    
-    setTimeout(() => {
-      if (rondaUnidad) rondaUnidad.value = ronda.unidad;
-      rondaUnidad.dispatchEvent(new Event('change'));
-    }, 300);
-
-    setTimeout(() => {
-      if (rondaNombre) rondaNombre.value = ronda.nombre;
-      if (rondaHorario) rondaHorario.value = ronda.horario;
-      if (rondaTolerancia) rondaTolerancia.value = ronda.tolerancia;
-      if (rondaToleranciaTipo) rondaToleranciaTipo.value = ronda.toleranciaTipo;
-      if (rondaFrecuencia) {
-        rondaFrecuencia.value = ronda.frecuencia;
-        rondaFrecuencia.dispatchEvent(new Event('change'));
-      }
-
-      // Marcar los QRs seleccionados
-      setTimeout(() => {
-        document.querySelectorAll('.ronda-punto-qr').forEach(cb => {
-          cb.checked = ronda.puntosRonda.some(p => p.qrId === cb.value);
-        });
-      }, 100);
-
-      // Llenar días según frecuencia
-      if (ronda.frecuencia === 'semanal' && ronda.diasConfig) {
-        document.querySelectorAll('input[name="dia-semana"]').forEach(cb => {
-          cb.checked = ronda.diasConfig.includes(cb.value);
-        });
-      } else if (ronda.frecuencia === 'dias-especificos' && ronda.diasConfig) {
-        const diasMesInput = document.getElementById('ronda-dias-mes');
-        if (diasMesInput) {
-          diasMesInput.value = ronda.diasConfig.join(', ');
+        } catch (e) {
+          console.error('ERROR - Error renderizando ronda:', ronda.nombre);
+          console.error('ERROR - Detalles del error:', e);
+          console.error('ERROR - Stack:', e.stack);
         }
-      }
-    }, 600);
-
-    // Scroll al formulario
-    document.getElementById('crearRondaForm')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    
-    // Cambiar título temporalmente
-    const formTitle = document.querySelector('[data-form-title]');
-    if (formTitle) {
-      formTitle.textContent = `✏️ Editando: ${ronda.nombre}`;
-      formTitle.style.color = '#ff9800';
-    }
-
-    // Modificar el botón submit
-    const submitBtn = crearRondaForm?.querySelector('button[type="submit"]');
-    if (submitBtn) {
-      submitBtn.textContent = '💾 Actualizar Ronda';
-      submitBtn.style.background = '#ff9800';
-      submitBtn.dataset.editingId = rondaId;
-    }
-
-    // Mostrar botón de cancelar
-    const cancelBtn = document.getElementById('ronda-btn-cancelar');
-    if (cancelBtn) {
-      cancelBtn.style.display = 'inline-block';
-      cancelBtn.dataset.editingId = rondaId;
-    }
-
-    if (UI && UI.toast) UI.toast('📝 Ronda cargada en el formulario');
-  };
-
-  // Cargar rondas existentes
-  async function loadRondas() {
-    try {
-      const snap = await getQueryWithClienteFilter('Rondas_QR').get();
-      rondaList = snap.docs.map(doc => {
-        const data = doc.data();
-        console.log('DEBUG - Ronda desde Firestore:', data.id || data.nombre);
-        console.log('DEBUG - puntosRonda desde Firestore:', data.puntosRonda);
-        console.log('DEBUG - puntosRonda es array?', Array.isArray(data.puntosRonda));
-        console.log('DEBUG - Tipo de puntosRonda:', typeof data.puntosRonda);
-        
-        // GARANTIZAR que puntosRonda es siempre un array
-        const puntosRondaNormalizado = Array.isArray(data.puntosRonda) 
-          ? data.puntosRonda 
-          : (data.puntosRonda && typeof data.puntosRonda === 'object' 
-              ? Object.values(data.puntosRonda) 
-              : []);
-        
-        return {
-          id: doc.id,
-          ...data,
-          puntosRonda: puntosRondaNormalizado
-        };
       });
-      console.log('DEBUG - Total rondas cargadas:', rondaList.length);
-      updateRondasFilterOptions();
-      renderRondasList();
-    } catch (e) {
-      console.error('ERROR - Error al cargar rondas:', e);
+      html += '</div>';
+      try {
+        rondasListContainer.innerHTML = html;
+      } catch (e) {
+        console.error('ERROR - Error al renderizar HTML de rondas:', e);
+        console.error('ERROR - HTML que causó error:', html.substring(0, 500));
+      }
     }
-  }
 
-  // Inicializar cuando se carga
-  // Nota: loadRondaClientes(), loadQRClientes() y loadRondas() se llamarán después de que accessControl esté inicializado
-  // loadRondaClientes();
-  // loadRondas();
+    // Actualizar opciones de filtros en Rondas Creadas
+    function updateRondasFilterOptions() {
+      // Obtener clientes únicos de rondaList respetando restricciones de usuario
+      let clientesUnicos = new Set();
+      let unidadesUnicos = new Set();
+
+      let rondasAccesibles = rondaList;
+      if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
+        rondasAccesibles = rondaList.filter(r => r.cliente === window.accessControl.clienteAsignado);
+      }
+
+      rondasAccesibles.forEach(ronda => {
+        if (ronda.cliente) clientesUnicos.add(ronda.cliente);
+        if (ronda.unidad) unidadesUnicos.add(ronda.unidad);
+      });
+
+      // Actualizar select de cliente
+      if (rondasFilterCliente) {
+        const clienteActual = rondasFilterCliente.value;
+        rondasFilterCliente.innerHTML = '<option value="">Todos los Clientes</option>' +
+          Array.from(clientesUnicos).sort().map(c => `<option value="${c}">${c}</option>`).join('');
+        rondasFilterCliente.value = clienteActual;
+      }
+
+      // Actualizar select de unidad
+      if (rondasFilterUnidad) {
+        const unidadActual = rondasFilterUnidad.value;
+        rondasFilterUnidad.innerHTML = '<option value="">Todas las Unidades</option>' +
+          Array.from(unidadesUnicos).sort().map(u => `<option value="${u}">${u}</option>`).join('');
+        rondasFilterUnidad.value = unidadActual;
+      }
+    }
+
+    // Aplicar filtros en Rondas Creadas
+    function applyRondasFilters() {
+      rondasFilters.cliente = rondasFilterCliente?.value || '';
+      rondasFilters.unidad = rondasFilterUnidad?.value || '';
+      renderRondasList();
+    }
+
+    // Event listeners para filtros de Rondas Creadas
+    if (rondasFilterCliente) {
+      rondasFilterCliente.addEventListener('change', applyRondasFilters);
+    }
+    if (rondasFilterUnidad) {
+      rondasFilterUnidad.addEventListener('change', applyRondasFilters);
+    }
+    if (rondasFilterClear) {
+      rondasFilterClear.addEventListener('click', () => {
+        rondasFilters = { cliente: '', unidad: '' };
+        if (rondasFilterCliente) rondasFilterCliente.value = '';
+        if (rondasFilterUnidad) rondasFilterUnidad.value = '';
+        renderRondasList();
+      });
+    }
+    window.showDeleteRondaModal = (rondaId, rondaNombre) => {
+      const modal = document.getElementById('deleteRondaModal');
+      const nameDisplay = document.getElementById('deleteRondaName');
+      const confirmBtn = document.getElementById('deleteRondaConfirm');
+      const cancelBtn = document.getElementById('deleteRondaCancel');
+
+      nameDisplay.textContent = rondaNombre;
+      modal.style.display = 'flex';
+
+      // Remover listeners anteriores
+      const newConfirmBtn = confirmBtn.cloneNode(true);
+      confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+      const newCancelBtn = cancelBtn.cloneNode(true);
+      cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+
+      // Agregar nuevos listeners
+      document.getElementById('deleteRondaConfirm').addEventListener('click', () => {
+        deleteRonda(rondaId);
+        modal.style.display = 'none';
+      });
+      document.getElementById('deleteRondaCancel').addEventListener('click', () => {
+        modal.style.display = 'none';
+      });
+    };
+
+    // Eliminar ronda
+    window.deleteRonda = async (rondaId) => {
+      try {
+        UI.showOverlay('Eliminando...', 'Borrando ronda');
+        await db.collection('Rondas_QR').doc(rondaId).delete();
+        rondaList = rondaList.filter(r => r.id !== rondaId);
+        renderRondasList();
+        if (UI && UI.toast) UI.toast('✅ Ronda eliminada');
+      } catch (error) {
+        if (UI && UI.toast) UI.toast('❌ Error: ' + error.message);
+      } finally {
+        UI.hideOverlay();
+      }
+    };
+
+    // Editar ronda
+    window.editRonda = (rondaId) => {
+      const ronda = rondaList.find(r => r.id === rondaId);
+      if (!ronda) {
+        if (UI && UI.toast) UI.toast('❌ Ronda no encontrada');
+        return;
+      }
+
+      // Llenar el formulario con los datos de la ronda
+      if (rondaCliente) rondaCliente.value = ronda.cliente;
+
+      // Trigger change para cargar unidades
+      rondaCliente.dispatchEvent(new Event('change'));
+
+      setTimeout(() => {
+        if (rondaUnidad) rondaUnidad.value = ronda.unidad;
+        rondaUnidad.dispatchEvent(new Event('change'));
+      }, 300);
+
+      setTimeout(() => {
+        if (rondaNombre) rondaNombre.value = ronda.nombre;
+        if (rondaHorario) rondaHorario.value = ronda.horario;
+        if (rondaTolerancia) rondaTolerancia.value = ronda.tolerancia;
+        if (rondaToleranciaTipo) rondaToleranciaTipo.value = ronda.toleranciaTipo;
+        if (rondaFrecuencia) {
+          rondaFrecuencia.value = ronda.frecuencia;
+          rondaFrecuencia.dispatchEvent(new Event('change'));
+        }
+
+        // Marcar los QRs seleccionados
+        setTimeout(() => {
+          document.querySelectorAll('.ronda-punto-qr').forEach(cb => {
+            cb.checked = ronda.puntosRonda.some(p => p.qrId === cb.value);
+          });
+        }, 100);
+
+        // Llenar días según frecuencia
+        if (ronda.frecuencia === 'semanal' && ronda.diasConfig) {
+          document.querySelectorAll('input[name="dia-semana"]').forEach(cb => {
+            cb.checked = ronda.diasConfig.includes(cb.value);
+          });
+        } else if (ronda.frecuencia === 'dias-especificos' && ronda.diasConfig) {
+          const diasMesInput = document.getElementById('ronda-dias-mes');
+          if (diasMesInput) {
+            diasMesInput.value = ronda.diasConfig.join(', ');
+          }
+        }
+      }, 600);
+
+      // Scroll al formulario
+      document.getElementById('crearRondaForm')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      // Cambiar título temporalmente
+      const formTitle = document.querySelector('[data-form-title]');
+      if (formTitle) {
+        formTitle.textContent = `✏️ Editando: ${ronda.nombre}`;
+        formTitle.style.color = '#ff9800';
+      }
+
+      // Modificar el botón submit
+      const submitBtn = crearRondaForm?.querySelector('button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.textContent = '💾 Actualizar Ronda';
+        submitBtn.style.background = '#ff9800';
+        submitBtn.dataset.editingId = rondaId;
+      }
+
+      // Mostrar botón de cancelar
+      const cancelBtn = document.getElementById('ronda-btn-cancelar');
+      if (cancelBtn) {
+        cancelBtn.style.display = 'inline-block';
+        cancelBtn.dataset.editingId = rondaId;
+      }
+
+      if (UI && UI.toast) UI.toast('📝 Ronda cargada en el formulario');
+    };
+
+    // Cargar rondas existentes
+    async function loadRondas() {
+      try {
+        const snap = await getQueryWithClienteFilter('Rondas_QR').get();
+        rondaList = snap.docs.map(doc => {
+          const data = doc.data();
+          console.log('DEBUG - Ronda desde Firestore:', data.id || data.nombre);
+          console.log('DEBUG - puntosRonda desde Firestore:', data.puntosRonda);
+          console.log('DEBUG - puntosRonda es array?', Array.isArray(data.puntosRonda));
+          console.log('DEBUG - Tipo de puntosRonda:', typeof data.puntosRonda);
+
+          // GARANTIZAR que puntosRonda es siempre un array
+          const puntosRondaNormalizado = Array.isArray(data.puntosRonda)
+            ? data.puntosRonda
+            : (data.puntosRonda && typeof data.puntosRonda === 'object'
+              ? Object.values(data.puntosRonda)
+              : []);
+
+          return {
+            id: doc.id,
+            ...data,
+            puntosRonda: puntosRondaNormalizado
+          };
+        });
+        console.log('DEBUG - Total rondas cargadas:', rondaList.length);
+        updateRondasFilterOptions();
+        renderRondasList();
+      } catch (e) {
+        console.error('ERROR - Error al cargar rondas:', e);
+      }
+    }
+
+    // Inicializar cuando se carga
+    // Nota: loadRondaClientes(), loadQRClientes() y loadRondas() se llamarán después de que accessControl esté inicializado
+    // loadRondaClientes();
+    // loadRondas();
 
   } // <-- CIERRE DEL else { window.__wiredCuadernoInc__ = true; }
 
@@ -8538,7 +8556,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const qrGetLocationBtn = document.getElementById('qr-get-location');
   const qrListContainer = document.getElementById('qrListContainer');
   const qrPreviewContainer = document.getElementById('qr-preview-container');
-  
+
   // Elementos para preguntas
   const qrRequireQuestion = document.getElementById('qr-require-question');
   const qrQuestionsContainer = document.getElementById('qr-questions-container');
@@ -8568,7 +8586,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const qrData = `${nombre}|${lat}|${lng}`;
-    
+
     try {
       // Generar QR usando QRCode.js library (agregado dinámicamente)
       const canvas = document.createElement('canvas');
@@ -8615,7 +8633,7 @@ document.addEventListener('DOMContentLoaded', () => {
     qrRequireQuestion.addEventListener('change', (e) => {
       const requireQuestion = e.target.value === 'si';
       qrQuestionsContainer.style.display = requireQuestion ? 'block' : 'none';
-      
+
       if (requireQuestion) {
         // Limpiar lista y agregar primera pregunta vacía
         qrQuestionsList.innerHTML = '';
@@ -8633,7 +8651,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Función para agregar pregunta
   function addQuestion() {
     if (qrQuestionsCount >= 3) return; // Máximo 3 preguntas
-    
+
     const questionId = `qr-question-${qrQuestionsCount}`;
     const questionDiv = document.createElement('div');
     questionDiv.className = 'question-input-group';
@@ -8641,7 +8659,7 @@ document.addEventListener('DOMContentLoaded', () => {
     questionDiv.style.display = 'flex';
     questionDiv.style.gap = '8px';
     questionDiv.style.alignItems = 'flex-start';
-    
+
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'question-input';
@@ -8652,9 +8670,9 @@ document.addEventListener('DOMContentLoaded', () => {
     input.style.border = '1px solid #ddd';
     input.style.fontSize = '14px';
     input.name = `question_${qrQuestionsCount}`;
-    
+
     questionDiv.appendChild(input);
-    
+
     // Botón para eliminar pregunta (solo si hay más de una)
     if (qrQuestionsCount > 0) {
       const removeBtn = document.createElement('button');
@@ -8675,10 +8693,10 @@ document.addEventListener('DOMContentLoaded', () => {
       };
       questionDiv.appendChild(removeBtn);
     }
-    
+
     qrQuestionsList.appendChild(questionDiv);
     qrQuestionsCount++;
-    
+
     // Mostrar/ocultar botón agregar
     updateAddQuestionButton();
   }
@@ -8715,22 +8733,22 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!qrCliente) {
         return;
       }
-      
+
       // Esperar a que Firebase esté inicializado
       let attempts = 0;
       while (!firebase.apps.length && attempts < 10) {
         await new Promise(r => setTimeout(r, 100));
         attempts++;
       }
-      
+
       if (!firebase.apps.length) {
         if (UI && UI.toast) UI.toast('❌ Firebase no inicializado');
         return;
       }
-      
+
       const firestore = firebase.firestore();
       let snap;
-      
+
       // Aplicar filtro de acceso según tipo de usuario
       if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
         // Si es cliente, solo mostrar su cliente asignado
@@ -8740,17 +8758,17 @@ document.addEventListener('DOMContentLoaded', () => {
         // Si es admin, mostrar todos los clientes
         snap = await firestore.collection('CLIENTE_UNIDAD').get();
       }
-      
+
       if (snap.empty) {
         qrCliente.innerHTML = '<option value="">No hay clientes</option>';
         return;
       }
-      
-      const clientes = snap.docs.map(d => d.id).sort((a,b)=>a.localeCompare(b,'es'));
-      
+
+      const clientes = snap.docs.map(d => d.id).sort((a, b) => a.localeCompare(b, 'es'));
+
       qrCliente.innerHTML = '<option value="">Seleccionar Cliente</option>' +
         clientes.map(c => `<option value="${c}">${c}</option>`).join('');
-    } catch (e) { 
+    } catch (e) {
       if (UI && UI.toast) UI.toast('❌ Error al cargar clientes: ' + e.message);
     }
   }
@@ -8767,34 +8785,34 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         // Usar firebase.firestore() directamente para evitar problemas de scope
         const firestore = firebase.firestore();
-        
+
         // Obtener unidades desde la SUBCOLECCIÓN UNIDADES del cliente
         const unidadesSnapshot = await firestore
           .collection('CLIENTE_UNIDAD')
           .doc(selectedCliente)
           .collection('UNIDADES')
           .get();
-        
+
         let unidades = [];
-        
+
         // Extraer los IDs de los documentos (que son los nombres de las unidades)
         unidadesSnapshot.forEach(doc => {
           unidades.push(doc.id);
         });
-        
+
         // Ordenar alfabéticamente
         unidades.sort((a, b) => a.localeCompare(b, 'es'));
-        
+
         if (qrUnidad) {
           const html = '<option value="">Seleccionar Unidad</option>' +
             unidades.map(u => `<option value="${u}">${u}</option>`).join('');
           qrUnidad.innerHTML = html;
         }
-        
+
         if (unidades.length === 0) {
           if (UI && UI.toast) UI.toast('⚠️ No hay unidades disponibles para este cliente');
         }
-      } catch (e) { 
+      } catch (e) {
         if (UI && UI.toast) UI.toast('❌ Error al cargar unidades: ' + e.message);
         console.error('Error detallado:', e);
       }
@@ -8846,7 +8864,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function initMap() {
       if (mapInstance) mapInstance.remove();
-      
+
       // Usar valores actuales si existen
       if (qrLatitude?.value && qrLongitude?.value) {
         selectedLat = parseFloat(qrLatitude.value);
@@ -8912,10 +8930,10 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', (e) => {
           e.preventDefault();
           const layer = btn.dataset.layer;
-          
+
           // Remover capa actual
           mapInstance.removeLayer(tileLayers[currentLayer]);
-          
+
           // Agregar nueva capa
           tileLayers[layer].addTo(mapInstance);
           currentLayer = layer;
@@ -8970,7 +8988,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const address = addressSearch?.value?.trim();
         const searchType = document.getElementById('qr-search-type')?.value || 'address';
         const province = document.getElementById('qr-search-province')?.value || '';
-        
+
         if (!address) {
           if (UI && UI.toast) UI.toast('❌ Ingresa un término de búsqueda');
           return;
@@ -8981,7 +8999,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
           // Construir query según tipo de búsqueda
           let queryAddress = address;
-          
+
           if (searchType === 'company' || searchType === 'poi') {
             // Para empresas y lugares importantes
             queryAddress = address;
@@ -9019,9 +9037,9 @@ document.addEventListener('DOMContentLoaded', () => {
           const response = await fetch(
             `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(queryAddress)}&limit=5`
           );
-          
+
           const results = await response.json();
-          
+
           if (UI && UI.hideOverlay) UI.hideOverlay();
 
           if (results.length > 0) {
@@ -9071,7 +9089,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateFilterOptions() {
       // Obtener clientes únicos
       const clientes = [...new Set(qrList.map(q => q.cliente))].sort();
-      
+
       // Mantener valor seleccionado
       const selectedCliente = filterCliente?.value;
       if (filterCliente) {
@@ -9174,7 +9192,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (qrSizeForm) {
       qrSizeForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        
+
         const bulkWidth = parseInt(document.getElementById('qrBulkWidth')?.value || 80);
         const bulkHeight = parseInt(document.getElementById('qrBulkHeight')?.value || 80);
 
@@ -9214,7 +9232,7 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         // Esperar a que todas las imágenes QR se generen
         const qrImages = [];
-        
+
         for (const qr of qrsToDownload) {
           await new Promise(resolve => {
             const tempContainer = document.createElement('div');
@@ -9320,13 +9338,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Actualizar filtros cuando se agregan QRs
     const originalRenderQRList = renderQRList;
-    window.renderQRListWithFilters = function(filtered) {
+    window.renderQRListWithFilters = function (filtered) {
       updateFilterOptions();
       originalRenderQRList(filtered);
     };
 
     // Llamar a la función original pero con actualización de filtros
-    renderQRList = function(filtered) {
+    renderQRList = function (filtered) {
       updateFilterOptions();
       originalRenderQRList(filtered);
     };
@@ -9362,7 +9380,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (UI && UI.toast) UI.toast('❌ Por favor agrega al menos una pregunta');
           return;
         }
-        
+
         questions = Array.from(questionInputs).map((input, idx) => {
           const text = input.value?.trim();
           if (!text) {
@@ -9387,33 +9405,33 @@ document.addEventListener('DOMContentLoaded', () => {
         id: `qr_${Date.now()}`
       };
 
-    try {
-      // Guardar en Firebase
-      const firestore = firebase.firestore();
-      await firestore.collection('QR_CODES').doc(qrData.id).set(qrData);
-      
-      // Agregar a lista local
-      qrList.push(qrData);
-      
-      // Limpiar formulario
-      qrForm.reset();
-      qrQuestionsContainer.style.display = 'none';
-      qrQuestionsList.innerHTML = '';
-      qrQuestionsCount = 0;
-      
-      // Actualizar vista
-      renderQRList();
-      
-      if (UI && UI.toast) UI.toast('✅ QR creado y guardado en Firebase');
-    } catch (error) {
-      if (UI && UI.toast) UI.toast('❌ Error al guardar QR: ' + error.message);
-    }
+      try {
+        // Guardar en Firebase
+        const firestore = firebase.firestore();
+        await firestore.collection('QR_CODES').doc(qrData.id).set(qrData);
+
+        // Agregar a lista local
+        qrList.push(qrData);
+
+        // Limpiar formulario
+        qrForm.reset();
+        qrQuestionsContainer.style.display = 'none';
+        qrQuestionsList.innerHTML = '';
+        qrQuestionsCount = 0;
+
+        // Actualizar vista
+        renderQRList();
+
+        if (UI && UI.toast) UI.toast('✅ QR creado y guardado en Firebase');
+      } catch (error) {
+        if (UI && UI.toast) UI.toast('❌ Error al guardar QR: ' + error.message);
+      }
     });
   }
   // Renderizar lista de QR
   function renderQRList(filteredList = null) {
     const listToRender = filteredList !== null ? filteredList : qrList;
-    
+
     if (listToRender.length === 0) {
       qrListContainer.innerHTML = '<div class="qr-empty-state" style="grid-column:1/-1;"><strong>No hay QRs generados</strong><p>Completa el formulario y haz click en "Agregar QR"</p></div>';
       return;
@@ -9428,7 +9446,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Crear contenedor para el QR
       const qrContainer = document.createElement('div');
       qrContainer.className = 'qr-item-canvas';
-      
+
       // Generar QR en el contenedor - Solo con el ID único
       new QRCode(qrContainer, {
         text: qr.id,
@@ -9449,7 +9467,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Acciones
       const actions = document.createElement('div');
       actions.className = 'qr-item-actions';
-      
+
       const btnDescargar = document.createElement('button');
       btnDescargar.type = 'button';
       btnDescargar.className = 'btn-descargar';
@@ -9493,13 +9511,13 @@ document.addEventListener('DOMContentLoaded', () => {
             };
           });
           renderQRList();
-        } catch (e) {; }
+        } catch (e) { ; }
       })();
     }
   });
 
   // Funciones globales para eliminar y descargar
-  window.deleteQR = function(id) {
+  window.deleteQR = function (id) {
     const qr = qrList.find(q => q.id === id);
     if (!qr) {
       if (UI && UI.toast) UI.toast('❌ QR no encontrado');
@@ -9542,7 +9560,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   };
 
-  window.downloadQR = function(id, nombre) {
+  window.downloadQR = function (id, nombre) {
     const qr = qrList.find(q => q.id === id);
     if (!qr) {
       if (UI && UI.toast) UI.toast('❌ QR no encontrado');
@@ -9571,7 +9589,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Obtener canvas del QR
             let qrCanvas = null;
             const img = tempContainer.querySelector('img');
-            
+
             if (img) {
               // Si es imagen, convertir a canvas
               qrCanvas = document.createElement('canvas');
@@ -9579,7 +9597,7 @@ document.addEventListener('DOMContentLoaded', () => {
               qrCanvas.height = 256;
               const ctx = qrCanvas.getContext('2d');
               const tempImg = new Image();
-              tempImg.onload = function() {
+              tempImg.onload = function () {
                 ctx.drawImage(tempImg, 0, 0);
                 generatePDFWithQR(qrCanvas.toDataURL('image/png'));
               };
@@ -9600,7 +9618,7 @@ document.addEventListener('DOMContentLoaded', () => {
               }
 
               const timestamp = moment().format('DD/MM/YYYY HH:mm:ss');
-              
+
               const docDefinition = {
                 content: [
                   {
@@ -9719,7 +9737,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function fillControlVehicularTable() {
     const tbody = document.getElementById('cv-tbody');
     if (!tbody) return;
-    
+
     const fechaInicio = document.getElementById('cv-fecha-inicio')?.value;
     const fechaFin = document.getElementById('cv-fecha-fin')?.value;
     const cliente = document.getElementById('cv-cliente')?.value;
@@ -9837,10 +9855,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Total de registros (Ingresados = total de documentos)
     const total = filtered.length;
-    
+
     // Pendientes de Salida = registros con estado "ingreso"
     const pendientes = filtered.filter(r => r.estado === 'ingreso').length;
-    
+
     // Salidas = registros con estado "salida"
     const salidas = filtered.filter(r => r.estado === 'salida').length;
 
@@ -9964,13 +9982,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const cliente = document.getElementById('cv-cliente');
     const unidad = document.getElementById('cv-unidad');
     const estado = document.getElementById('cv-estado');
-    
+
     if (fechaInicio) fechaInicio.value = '';
     if (fechaFin) fechaFin.value = '';
     if (cliente) cliente.value = '';
     if (unidad) unidad.value = '';
     if (estado) estado.value = '';
-    
+
     cvData = [];
     loadControlVehicularData();
   });
@@ -9988,7 +10006,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const clientesSet = new Set();
       const unidadesSet = new Set();
-      
+
       try {
         const snapshot = await getQueryWithClienteFilter('ACCESO_VEHICULAR').get();
         snapshot.forEach(doc => {
@@ -10001,12 +10019,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const clienteSelect = document.getElementById('cv-cliente');
       const unidadSelect = document.getElementById('cv-unidad');
-      
+
       if (!clienteSelect || !unidadSelect) return;
-      
+
       const currentClienteValue = clienteSelect.value;
       const currentUnidadValue = unidadSelect.value;
-      
+
       // Cargar clientes
       clienteSelect.innerHTML = '<option value="">Todos</option>';
       Array.from(clientesSet).sort().forEach(cliente => {
@@ -10016,7 +10034,7 @@ document.addEventListener('DOMContentLoaded', () => {
         clienteSelect.appendChild(opt);
       });
       clienteSelect.value = currentClienteValue;
-      
+
       // Cargar unidades
       unidadSelect.innerHTML = '<option value="">Todas</option>';
       Array.from(unidadesSet).sort().forEach(unidad => {
@@ -10026,7 +10044,7 @@ document.addEventListener('DOMContentLoaded', () => {
         unidadSelect.appendChild(opt);
       });
       unidadSelect.value = currentUnidadValue;
-      
+
     } catch (err) {
     }
   }
@@ -10221,14 +10239,14 @@ document.addEventListener('DOMContentLoaded', () => {
           ]
         ],
         layout: {
-          hLineWidth: function() { return 1; },
-          vLineWidth: function() { return 1; },
-          hLineColor: function() { return '#e5e7eb'; },
-          vLineColor: function() { return '#e5e7eb'; },
-          paddingLeft: function() { return 8; },
-          paddingRight: function() { return 8; },
-          paddingTop: function() { return 10; },
-          paddingBottom: function() { return 10; }
+          hLineWidth: function () { return 1; },
+          vLineWidth: function () { return 1; },
+          hLineColor: function () { return '#e5e7eb'; },
+          vLineColor: function () { return '#e5e7eb'; },
+          paddingLeft: function () { return 8; },
+          paddingRight: function () { return 8; },
+          paddingTop: function () { return 10; },
+          paddingBottom: function () { return 10; }
         }
       };
 
@@ -10310,18 +10328,18 @@ document.addEventListener('DOMContentLoaded', () => {
           ...detailTableData
         ],
         layout: {
-          hLineWidth: function(i) { return i === 0 || i === 1 ? 2 : 0.5; },
-          vLineWidth: function() { return 0.5; },
-          hLineColor: function() { return '#e5e7eb'; },
-          vLineColor: function() { return '#e5e7eb'; },
-          fillColor: function(i) {
+          hLineWidth: function (i) { return i === 0 || i === 1 ? 2 : 0.5; },
+          vLineWidth: function () { return 0.5; },
+          hLineColor: function () { return '#e5e7eb'; },
+          vLineColor: function () { return '#e5e7eb'; },
+          fillColor: function (i) {
             if (i === 0) return '#2c5aa0';
             return i % 2 === 0 ? '#f9fafb' : 'white';
           },
-          paddingLeft: function() { return 4; },
-          paddingRight: function() { return 4; },
-          paddingTop: function() { return 5; },
-          paddingBottom: function() { return 5; }
+          paddingLeft: function () { return 4; },
+          paddingRight: function () { return 4; },
+          paddingTop: function () { return 5; },
+          paddingBottom: function () { return 5; }
         }
       };
 
@@ -10329,7 +10347,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const docDef = {
         pageSize: 'A4',
         pageMargins: [40, 80, 40, 40],
-        header: function(currentPage) {
+        header: function (currentPage) {
           if (currentPage === 1) {
             return {
               columns: [
@@ -10365,7 +10383,7 @@ document.addEventListener('DOMContentLoaded', () => {
             };
           }
         },
-        footer: function(currentPage, pageCount) {
+        footer: function (currentPage, pageCount) {
           return {
             columns: [
               {
@@ -10509,7 +10527,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function initIncidenciaQR() {
     const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
-    
+
     // Solo inicializar Choices si no están ya inicializados
     if (window.Choices && !iqrChoices.cliente) {
       try {
@@ -10531,7 +10549,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnLimpiar = document.getElementById('iqr-btn-limpiar');
     const btnExcel = document.getElementById('iqr-btn-excel');
     const btnPdf = document.getElementById('iqr-btn-pdf');
-    
+
     // Remover listeners anteriores para evitar duplicados
     if (btnAplicar) {
       btnAplicar.removeEventListener('click', loadAndRenderIncidenciaQR);
@@ -10539,17 +10557,17 @@ document.addEventListener('DOMContentLoaded', () => {
         await loadAndRenderIncidenciaQR();
       });
     }
-    
+
     if (btnLimpiar) {
       btnLimpiar.removeEventListener('click', limpiarFiltrosIQR);
       btnLimpiar.addEventListener('click', limpiarFiltrosIQR);
     }
-    
+
     if (btnExcel) {
       btnExcel.removeEventListener('click', exportIncidenciaQRExcel);
       btnExcel.addEventListener('click', exportIncidenciaQRExcel);
     }
-    
+
     if (btnPdf) {
       btnPdf.removeEventListener('click', exportIncidenciaQRPDF);
       btnPdf.addEventListener('click', exportIncidenciaQRPDF);
@@ -10567,7 +10585,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (clienteValue && clienteValue !== 'Todos') {
       // Cargar unidades directamente de CLIENTE_UNIDAD
       const unidades = await getUnidadesFromClienteUnidad(clienteValue);
-      
+
       if (iqrChoices.unidad) {
         try {
           iqrChoices.unidad.clearStore();
@@ -10639,7 +10657,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       iqrAllData = snapshot.docs.map(doc => {
         const data = doc.data();
-        
+
         // Parsear fecha - puede venir en varios formatos
         let fecha = new Date();
         if (data.fechaHora) {
@@ -10669,7 +10687,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       // Actualizar opciones de filtros
       populateIncidenciaQRFilters();
-      
+
       // Renderizar todo
       renderIncidenciaQR();
     } catch (e) {
@@ -10760,7 +10778,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return ts <= end;
       });
     }
-    
+
     // ORDENAR POR TIMESTAMP: MÁS RECIENTE PRIMERO (descendente)
     data.sort((a, b) => {
       let tsA = a.timestamp;
@@ -10771,7 +10789,7 @@ document.addEventListener('DOMContentLoaded', () => {
       else if (typeof tsB === 'string') tsB = new Date(tsB);
       return tsB - tsA; // Descendente: más reciente primero
     });
-    
+
     if (data.length > 0);
     return data;
   }
@@ -10893,7 +10911,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderChart(existingChart, canvasId, config, setChart) {
     const ctx = document.getElementById(canvasId)?.getContext('2d');
     if (!ctx) return;
-    
+
     if (existingChart) existingChart.destroy();
     const newChart = new Chart(ctx, config);
     setChart(newChart);
@@ -10913,7 +10931,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     data.forEach((d, index) => {
       const fila = document.createElement('tr');
-      
+
       // Parsear timestamp - FORMATO: dd/mm/yyyy hh:mm
       let timestampStr = '-';
       if (d.timestamp) {
@@ -10953,14 +10971,14 @@ document.addEventListener('DOMContentLoaded', () => {
       // Obtener primera pregunta y respuesta si existen
       let pregunta = '-';
       let respuesta = '-';
-      
+
       if (d.preguntas && typeof d.preguntas === 'object') {
         const preguntasKeys = Object.keys(d.preguntas);
         if (preguntasKeys.length > 0) {
           pregunta = d.preguntas[preguntasKeys[0]];
         }
       }
-      
+
       if (d.respuestas && typeof d.respuestas === 'object') {
         const respuestasKeys = Object.keys(d.respuestas);
         if (respuestasKeys.length > 0) {
@@ -10972,7 +10990,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // PUESTO: obtener el puesto del registro
       const puestoDisplay = d.puesto || '-';
-      
+
       // PUNTO: obtener el nombrePunto
       const puntoDisplay = d.nombrePunto || '-';
 
@@ -10990,7 +11008,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <td class="iqr-foto-cell">${fotoCell}</td>
       `;
       tbody.appendChild(fila);
-      
+
       if (index === 0) {
       }
     });
@@ -11000,7 +11018,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       UI.showOverlay('Exportando Excel…', 'Preparando documento...');
       const data = getFilteredIncidenciaQRData();
-      
+
       const ws_data = [
         ['LIDER CONTROL - Reporte de Incidencias QR'],
         [`Fecha Generación: ${new Date().toLocaleString('es-PE')}`],
@@ -11008,7 +11026,7 @@ document.addEventListener('DOMContentLoaded', () => {
         [],
         ['Timestamp', 'Usuario', 'Cliente', 'Unidad', 'QR', 'Pregunta', 'Respuesta', 'Puesto', 'Punto', 'Estado']
       ];
-      
+
       data.forEach(d => {
         // Parsear timestamp - FORMATO: dd/mm/yyyy hh:mm
         let timestampStr = '';
@@ -11041,14 +11059,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // Obtener primera pregunta y respuesta
         let pregunta = '';
         let respuesta = '';
-        
+
         if (d.preguntas && typeof d.preguntas === 'object') {
           const preguntasKeys = Object.keys(d.preguntas);
           if (preguntasKeys.length > 0) {
             pregunta = d.preguntas[preguntasKeys[0]];
           }
         }
-        
+
         if (d.respuestas && typeof d.respuestas === 'object') {
           const respuestasKeys = Object.keys(d.respuestas);
           if (respuestasKeys.length > 0) {
@@ -11059,10 +11077,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const codigoQR = d.codigoQRleido || d.qrId || '';
         const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
         const estado = tieneRespuestas ? 'Completada' : 'Pendiente';
-        
+
         // PUESTO: obtener el puesto del registro
         const puestoDisplay = d.puesto || '';
-        
+
         // PUNTO: obtener el nombrePunto
         const puntoDisplay = d.nombrePunto || '';
 
@@ -11081,7 +11099,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       const ws = XLSX.utils.aoa_to_sheet(ws_data);
-      
+
       // Configurar estilos y ancho de columnas
       ws['!cols'] = [
         { wch: 18 }, // Timestamp
@@ -11099,7 +11117,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Configurar el ancho de la primera fila (título)
       ws['A1'].alignment = { horizontal: 'center', vertical: 'center' };
       ws['A1'].font = { bold: true, size: 14, color: { rgb: 'FF2c5aa0' } };
-      
+
       // Configurar filas de información
       if (ws['A2']) {
         ws['A2'].font = { size: 10, color: { rgb: 'FF4a5568' } };
@@ -11131,7 +11149,7 @@ document.addEventListener('DOMContentLoaded', () => {
               left: { style: 'thin', color: { rgb: 'FFe2e8f0' } },
               right: { style: 'thin', color: { rgb: 'FFe2e8f0' } }
             };
-            
+
             // Colorear estado
             if (col === 8) {
               const estadoCell = ws[cellRef];
@@ -11150,7 +11168,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Incidencia QR');
       XLSX.writeFile(wb, `IncidenciaQR_${new Date().getTime()}.xlsx`);
-      
+
       UI.hideOverlay();
       UI.toast('✅ Excel exportado correctamente');
     } catch (err) {
@@ -11163,11 +11181,11 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       UI.showOverlay('Exportando PDF…', 'Preparando documento...');
       const data = getFilteredIncidenciaQRData();
-      
+
       // Convertir logo a base64 para incluirlo en el PDF
       const logoUrl = './logo_liberman.png';
       let logoImage = null;
-      
+
       try {
         const response = await fetch(logoUrl);
         if (response.ok) {
@@ -11222,14 +11240,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         let pregunta = '';
         let respuesta = '';
-        
+
         if (d.preguntas && typeof d.preguntas === 'object') {
           const preguntasKeys = Object.keys(d.preguntas);
           if (preguntasKeys.length > 0) {
             pregunta = d.preguntas[preguntasKeys[0]];
           }
         }
-        
+
         if (d.respuestas && typeof d.respuestas === 'object') {
           const respuestasKeys = Object.keys(d.respuestas);
           if (respuestasKeys.length > 0) {
@@ -11240,10 +11258,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const codigoQR = d.codigoQRleido || d.qrId || '';
         const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
         const estado = tieneRespuestas ? 'Completada' : 'Pendiente';
-        
+
         // PUESTO: obtener el puesto del registro
         const puestoDisplay = d.puesto || '';
-        
+
         // PUNTO: obtener el nombrePunto
         const puntoDisplay = d.nombrePunto || '';
 
@@ -11335,8 +11353,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 { text: row[6], style: 'tableCell', fontSize: 7 },
                 { text: row[7], style: 'tableCell' },
                 { text: row[8], style: 'tableCell' },
-                { 
-                  text: row[9], 
+                {
+                  text: row[9],
                   style: 'tableCell',
                   color: row[9] === 'Completada' ? '#10b981' : '#f59e0b',
                   bold: true,
@@ -11465,7 +11483,7 @@ function showImageModal(imageUrl) {
       padding: 20px;
       box-sizing: border-box;
     `;
-    
+
     const content = document.createElement('div');
     content.style.cssText = `
       position: relative;
@@ -11476,7 +11494,7 @@ function showImageModal(imageUrl) {
       overflow: auto;
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
     `;
-    
+
     const img = document.createElement('img');
     img.id = 'cv-modal-image';
     img.style.cssText = `
@@ -11485,7 +11503,7 @@ function showImageModal(imageUrl) {
       display: block;
       border-radius: 12px;
     `;
-    
+
     const closeBtn = document.createElement('button');
     closeBtn.innerHTML = '✕';
     closeBtn.style.cssText = `
@@ -11511,12 +11529,12 @@ function showImageModal(imageUrl) {
     closeBtn.onclick = () => {
       modal.style.display = 'none';
     };
-    
+
     content.appendChild(img);
     content.appendChild(closeBtn);
     modal.appendChild(content);
     document.body.appendChild(modal);
-    
+
     // Cerrar al hacer clic en el fondo
     modal.addEventListener('click', (e) => {
       if (e.target === modal) {
@@ -11524,11 +11542,11 @@ function showImageModal(imageUrl) {
       }
     });
   }
-  
+
   // Mostrar imagen
   document.getElementById('cv-modal-image').src = imageUrl;
   modal.style.display = 'flex';
-  
+
   // Cerrar con tecla Esc
   const handleKeyPress = (e) => {
     if (e.key === 'Escape') {
