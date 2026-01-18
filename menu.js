@@ -894,7 +894,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // ============= FUNCIÓN CORRECTA: OBTENER UNIDADES DIRECTAMENTE DE BD (NO DE INCIDENTES) =============
+    // ============= FUNCIÓN GLOBALES ÚTILES =============
     async function getUnidadesFromClienteUnidad(cliente) {
       try {
         const snap = await db
@@ -913,7 +913,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // ============= PASO 1: FUNCIÓN PARA CARGAR UNIDADES POR CLIENTE (ESPECÍFICA PARA KPI) =============
     async function loadResumenUnidadesByCliente(cliente) {
       if (!resumenChoices.unidad) return;
 
@@ -5847,6 +5846,10 @@ document.addEventListener('DOMContentLoaded', () => {
     // ============================================================================
 
     // --- USUARIOS ---
+    let usersPage = 1;
+    const ITEMS_PER_PAGE = 50;
+    let currentFilteredUsers = [];
+
     async function loadUsers() {
       if (!usersTbody) return;
       UI.showOverlay('Cargando usuarios…', 'Consultando base de datos');
@@ -5867,6 +5870,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         cachedUsers = usuarios;
+        currentFilteredUsers = cachedUsers; // Inicializar
         renderUsers(cachedUsers);
       } catch (e) {
         UI.confirm({ title: 'Error', message: 'No se pudo cargar la lista de usuarios.', kind: 'err' });
@@ -5877,8 +5881,18 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!usersTbody) return;
       usersTbody.innerHTML = '';
       if (usersCountEl) usersCountEl.textContent = `(${list.length})`;
+
+      // Paginación
+      const totalPages = Math.ceil(list.length / ITEMS_PER_PAGE) || 1;
+      if (usersPage > totalPages) usersPage = totalPages;
+      if (usersPage < 1) usersPage = 1;
+
+      const start = (usersPage - 1) * ITEMS_PER_PAGE;
+      const end = start + ITEMS_PER_PAGE;
+      const paginatedList = list.slice(start, end);
+
       const frag = document.createDocumentFragment();
-      list.forEach(u => {
+      paginatedList.forEach(u => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
         <td>${u.id || ''}</td>
@@ -5895,7 +5909,34 @@ document.addEventListener('DOMContentLoaded', () => {
         frag.appendChild(tr);
       });
       usersTbody.appendChild(frag);
+
+      // Actualizar controles de paginación
+      const btnPrev = document.getElementById('btn-prev-users');
+      const btnNext = document.getElementById('btn-next-users');
+      const pageInfo = document.getElementById('page-info-users');
+
+      if (btnPrev && btnNext && pageInfo) {
+        btnPrev.disabled = usersPage === 1;
+        btnNext.disabled = usersPage === totalPages;
+        pageInfo.textContent = `Página ${usersPage} de ${totalPages}`;
+      }
     }
+
+    // Listeners de Paginación Usuarios
+    document.getElementById('btn-prev-users')?.addEventListener('click', () => {
+      if (usersPage > 1) {
+        usersPage--;
+        renderUsers(currentFilteredUsers);
+      }
+    });
+
+    document.getElementById('btn-next-users')?.addEventListener('click', () => {
+      const totalPages = Math.ceil(currentFilteredUsers.length / ITEMS_PER_PAGE);
+      if (usersPage < totalPages) {
+        usersPage++;
+        renderUsers(currentFilteredUsers);
+      }
+    });
 
     // ===== FILTROS PREDICTIVOS PARA USUARIOS =====
     const filterInputs = {
@@ -5933,6 +5974,8 @@ document.addEventListener('DOMContentLoaded', () => {
         );
       });
 
+      currentFilteredUsers = filtered; // Actualizar lista actual
+      usersPage = 1; // Resetear página
       renderUsers(filtered);
     }
 
@@ -5950,6 +5993,8 @@ document.addEventListener('DOMContentLoaded', () => {
         Object.values(filterInputs).forEach(input => {
           if (input) input.value = '';
         });
+        currentFilteredUsers = cachedUsers;
+        usersPage = 1;
         renderUsers(cachedUsers);
       });
     }
@@ -5967,7 +6012,8 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           await db.collection(COLLECTIONS.USERS).doc(id).delete();
           cachedUsers = cachedUsers.filter(x => x.id !== id);
-          renderUsers(cachedUsers);
+          currentFilteredUsers = currentFilteredUsers.filter(x => x.id !== id);
+          renderUsers(currentFilteredUsers); // Renderizar lista actual
           UI.toast('Usuario eliminado');
         } catch (e) {
           UI.confirm({ title: 'Error', message: 'No se pudo eliminar.', kind: 'err' });
@@ -6028,7 +6074,9 @@ document.addEventListener('DOMContentLoaded', () => {
         await db.collection(COLLECTIONS.USERS).doc(editingUserId).set(payload, { merge: true });
         const u = cachedUsers.find(x => x.id === editingUserId);
         if (u) Object.assign(u, payload);
-        renderUsers(cachedUsers);
+        // Re-aplicar filtros para actualizar la vista
+        applyFilters();
+        // renderUsers(cachedUsers); // Ya no directo
         UI.toast('Usuario actualizado');
         closeModal(editModal);
       } catch (e) {
@@ -6037,13 +6085,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // --- CLIENTE/UNIDAD ---
-    async function loadClienteUnidad() {
-      if (!clienteUnidadTbody) return;
-      UI.showOverlay('Cargando cliente/unidad…', 'Consultando base de datos');
+    let clientUnitPage = 1;
+    let currentFilteredClientUnit = [];
+    // let cachedClientesUnidades = []; // Removed to avoid lint error (already declared in scope)
+
+    async function fetchClientsUnitsGlobal() {
+      // Evitar recargar si ya tenemos datos (opcional, pero seguro por ahora recargar)
+      // cachedClientesUnidades = []; // Limpiar antes de cargar
+
       try {
         // Obtener todos los CLIENTES desde CLIENTE_UNIDAD (límite 500)
         const clientesSnap = await db.collection(COLLECTIONS.CLIENT_UNITS).limit(500).get();
-        cachedClientesUnidades = [];
+        const tempData = [];
 
         // Para cada CLIENTE, obtener sus UNIDADES y PUESTOS
         for (const clienteDoc of clientesSnap.docs) {
@@ -6076,7 +6129,7 @@ document.addEventListener('DOMContentLoaded', () => {
               puestosSnap.docs.forEach(puestoDoc => {
                 const puestoId = puestoDoc.id;
                 const puestoData = puestoDoc.data();
-                cachedClientesUnidades.push({
+                tempData.push({
                   clienteId,
                   clienteData,
                   unidadId,
@@ -6087,7 +6140,7 @@ document.addEventListener('DOMContentLoaded', () => {
               });
             } else {
               // Si no hay puestos, agregar una entrada sin puesto
-              cachedClientesUnidades.push({
+              tempData.push({
                 clienteId,
                 clienteData,
                 unidadId,
@@ -6100,7 +6153,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
           // Si no hay unidades, agregar una entrada sin unidad
           if (unidadesSnap.size === 0) {
-            cachedClientesUnidades.push({
+            tempData.push({
               clienteId,
               clienteData,
               unidadId: null,
@@ -6111,16 +6164,43 @@ document.addEventListener('DOMContentLoaded', () => {
           }
         }
 
-        renderClienteUnidad(cachedClientesUnidades);
+        cachedClientesUnidades = tempData;
+        window.cachedClientesUnidades = tempData;
+        return true;
       } catch (e) {
         console.error('Error cargando Cliente/Unidad:', e);
+        throw e;
+      }
+    }
+
+    async function loadClienteUnidad() {
+      if (!clienteUnidadTbody) return;
+      UI.showOverlay('Cargando cliente/unidad…', 'Consultando base de datos');
+      try {
+        await fetchClientsUnitsGlobal();
+        currentFilteredClientUnit = cachedClientesUnidades; // Inicializar
+        renderClienteUnidad(cachedClientesUnidades);
+      } catch (e) {
         UI.confirm({ title: 'Error', message: 'No se pudo cargar Cliente/Unidad.', kind: 'err' });
       } finally { UI.hideOverlay(); }
     }
 
     function renderClienteUnidad(list) {
       if (!clienteUnidadTbody) return;
+
+      // Filtrar siempre sobre el array completo que se recibe, o confiar en que 'list' ya es el filtrado.
+      // En este diseño, 'renderClienteUnidad' recibe la lista YA filtrada si se llama desde el listener de búsqueda.
+      // Pero si se llama desde load, recibe todo.
+      // La paginación debe actuar sobre 'list'.
+
+      // REVISIÓN: El listener llama a renderClienteUnidad pasando 'cachedClientesUnidades'.
+      // Entonces el filtro se debe aplicar DENTRO de renderClienteUnidad O separar la lógica.
+      // El código original filtraba dentro de renderClienteUnidad. Mantendremos eso pero actualizando el 'currentFiltered'.
+
       const term = norm(clienteUnidadSearchInput?.value || '');
+      // Si la lista recibida es la global, aplicamos filtro.
+      // Si ya viene filtrada (e.g. por alguna otra razón), re-filtrar no daña si el término coincide.
+
       const filtered = term
         ? list.filter(x =>
           norm(x.clienteId || '').includes(term) ||
@@ -6129,10 +6209,23 @@ document.addEventListener('DOMContentLoaded', () => {
         )
         : list;
 
+      // Actualizar variable global de filtrados para que los botones de paginación sepan cuántos hay
+      currentFilteredClientUnit = filtered;
+
       clienteUnidadTbody.innerHTML = '';
+
+      // Paginación
+      const totalPages = Math.ceil(filtered.length / ITEMS_PER_PAGE) || 1;
+      if (clientUnitPage > totalPages) clientUnitPage = totalPages;
+      if (clientUnitPage < 1) clientUnitPage = 1;
+
+      const start = (clientUnitPage - 1) * ITEMS_PER_PAGE;
+      const end = start + ITEMS_PER_PAGE;
+      const paginatedList = filtered.slice(start, end);
+
       const frag = document.createDocumentFragment();
 
-      filtered.forEach(row => {
+      paginatedList.forEach(row => {
         const tr = document.createElement('tr');
         tr.innerHTML = `
         <td>${row.clienteId || ''}</td>
@@ -6148,8 +6241,41 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       clienteUnidadTbody.appendChild(frag);
+
+      // Actualizar controles de paginación
+      const btnPrev = document.getElementById('btn-prev-cu');
+      const btnNext = document.getElementById('btn-next-cu');
+      const pageInfo = document.getElementById('page-info-cu');
+
+      if (btnPrev && btnNext && pageInfo) {
+        btnPrev.disabled = clientUnitPage === 1;
+        btnNext.disabled = clientUnitPage === totalPages;
+        pageInfo.textContent = `Página ${clientUnitPage} de ${totalPages}`;
+      }
     }
-    clienteUnidadSearchInput?.addEventListener('input', () => renderClienteUnidad(cachedClientesUnidades));
+
+    // Listener de búsqueda
+    clienteUnidadSearchInput?.addEventListener('input', () => {
+      clientUnitPage = 1; // Resetear página al buscar
+      renderClienteUnidad(cachedClientesUnidades);
+    });
+
+    // Listeners de Paginación Cliente/Unidad
+    document.getElementById('btn-prev-cu')?.addEventListener('click', () => {
+      if (clientUnitPage > 1) {
+        clientUnitPage--;
+        // Renderizar usando la lista cached, el render filtrará de nuevo y usará la página actualizada
+        renderClienteUnidad(cachedClientesUnidades);
+      }
+    });
+
+    document.getElementById('btn-next-cu')?.addEventListener('click', () => {
+      const totalPages = Math.ceil(currentFilteredClientUnit.length / ITEMS_PER_PAGE);
+      if (clientUnitPage < totalPages) {
+        clientUnitPage++;
+        renderClienteUnidad(cachedClientesUnidades);
+      }
+    });
 
     // Función para convertir a mayúsculas
     const toUpperCase = (str) => (str || '').toUpperCase().trim();
@@ -6279,6 +6405,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Recargar datos
         clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver nuevo registro
+        clientUnitPage = 1;
         await loadClienteUnidad();
         UI.toast('✅ Cliente y unidad agregados correctamente');
         closeModal(cuAgregarClienteModal);
@@ -6322,6 +6449,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Recargar datos
         clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver nueva unidad
+        clientUnitPage = 1;
         await loadClienteUnidad();
         UI.toast('✅ Unidad agregada correctamente');
         closeModal(cuAgregarUnidadModal);
@@ -6372,6 +6500,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Recargar datos
         clienteUnidadSearchInput.value = ''; // Limpiar búsqueda para ver nuevo puesto
+        clientUnitPage = 1;
         await loadClienteUnidad();
         UI.toast('✅ Puesto agregado correctamente');
         closeModal(cuAgregarPuestoModal);
@@ -9085,44 +9214,62 @@ document.addEventListener('DOMContentLoaded', () => {
     const filterClearBtn = document.getElementById('qr-filter-clear');
     const downloadAllBtn = document.getElementById('qr-download-all');
 
-    // Actualizar opciones de filtros
-    function updateFilterOptions() {
-      // Obtener clientes únicos
-      const clientes = [...new Set(qrList.map(q => q.cliente))].sort();
+    // Cargar filtros directamente de Firestore (Mirroring loadQRClientes)
+    async function loadQRFiltersFromCache() {
+      try {
+        const firestore = firebase.firestore();
+        let snap;
+        if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
+          const doc = await firestore.collection('CLIENTE_UNIDAD').doc(window.accessControl.clienteAsignado).get();
+          snap = { empty: !doc.exists, docs: doc.exists ? [doc] : [] };
+        } else {
+          snap = await firestore.collection('CLIENTE_UNIDAD').get();
+        }
 
-      // Mantener valor seleccionado
-      const selectedCliente = filterCliente?.value;
-      if (filterCliente) {
-        filterCliente.innerHTML = '<option value="">Todos los Clientes</option>';
-        clientes.forEach(c => {
-          const opt = document.createElement('option');
-          opt.value = c;
-          opt.textContent = c;
-          filterCliente.appendChild(opt);
-        });
-        filterCliente.value = selectedCliente;
+        if (snap.empty) {
+          if (filterCliente) filterCliente.innerHTML = '<option value="">No hay clientes</option>';
+          return;
+        }
+
+        const clientes = snap.docs.map(d => d.id).sort((a, b) => a.localeCompare(b, 'es'));
+        const currentVal = filterCliente?.value || '';
+
+        if (filterCliente) {
+          filterCliente.innerHTML = '<option value="">Todos los Clientes</option>' +
+            clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+          if (currentVal && clientes.includes(currentVal)) {
+            filterCliente.value = currentVal;
+          }
+        }
+      } catch (e) { console.error('Error loading QR filters:', e); }
+
+      updateQRUnitFilter();
+    }
+
+    async function updateQRUnitFilter() {
+      const selectedCliente = filterCliente?.value || '';
+
+      if (!selectedCliente) {
+        if (filterUnidad) filterUnidad.innerHTML = '<option value="">Todas las Unidades</option>';
+        return;
       }
 
-      // Obtener unidades del cliente seleccionado
-      const selectedClienteValue = filterCliente?.value;
-      let unidades = [];
-      if (selectedClienteValue) {
-        unidades = [...new Set(qrList.filter(q => q.cliente === selectedClienteValue).map(q => q.unidad))].sort();
-      } else {
-        unidades = [...new Set(qrList.map(q => q.unidad))].sort();
-      }
+      try {
+        const firestore = firebase.firestore();
+        const snap = await firestore.collection('CLIENTE_UNIDAD').doc(selectedCliente).collection('UNIDADES').get();
+        const units = snap.docs.map(d => d.id).sort((a, b) => a.localeCompare(b, 'es'));
 
-      const selectedUnidad = filterUnidad?.value;
-      if (filterUnidad) {
-        filterUnidad.innerHTML = '<option value="">Todas las Unidades</option>';
-        unidades.forEach(u => {
-          const opt = document.createElement('option');
-          opt.value = u;
-          opt.textContent = u;
-          filterUnidad.appendChild(opt);
-        });
-        filterUnidad.value = selectedUnidad;
-      }
+        if (filterUnidad) {
+          const currentVal = filterUnidad.value;
+          filterUnidad.innerHTML = '<option value="">Todas las Unidades</option>' +
+            units.map(u => `<option value="${u}">${u}</option>`).join('');
+          if (currentVal && units.includes(currentVal)) {
+            filterUnidad.value = currentVal;
+          } else {
+            filterUnidad.value = '';
+          }
+        }
+      } catch (e) { console.error('Error loading QR units:', e); }
     }
 
     // Aplicar filtros
@@ -9145,9 +9292,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Event listeners de filtros
     if (filterCliente) {
-      filterCliente.addEventListener('change', () => {
-        updateFilterOptions();
+      filterCliente.addEventListener('change', async () => {
+        if (filterUnidad) filterUnidad.value = ''; // Reset unit on client change
         applyFilters();
+        await updateQRUnitFilter();
       });
     }
 
@@ -9286,46 +9434,76 @@ document.addEventListener('DOMContentLoaded', () => {
             margin: [0, 0, 0, 20]
           });
 
-          // QRs en tabla
-          const tableBody = [];
-          tableBody.push([
-            { text: 'QR', bold: true, alignment: 'center' },
-            { text: 'Nombre', bold: true },
-            { text: 'Cliente', bold: true },
-            { text: 'Unidad', bold: true },
-            { text: 'Ubicación', bold: true }
-          ]);
+          // GRID de QRs (4 columnas)
+          const body = [];
+          let currentRow = [];
+          const columns = 4;
 
           qrImages.forEach((item, idx) => {
-            // Usar los tamaños configurados en el formulario modal
-            tableBody.push([
-              { image: item.data, width: qrWidth, height: qrHeight, alignment: 'center' },
-              item.qr.nombre,
-              item.qr.cliente,
-              item.qr.unidad,
-              `${item.qr.latitude.toFixed(4)}\n${item.qr.longitude.toFixed(4)}`
-            ]);
+            // Cada celda contiene una tabla anidada para crear el efecto de "tarjeta" con bordes independientes
+            currentRow.push({
+              table: {
+                widths: ['*'],
+                body: [
+                  [
+                    {
+                      stack: [
+                        { text: item.qr.nombre || 'Sin Nombre', fontSize: 9, bold: true, alignment: 'center', margin: [0, 2, 0, 2] },
+                        { image: item.data, width: qrWidth, height: qrHeight, alignment: 'center', margin: [0, 0, 0, 2] }
+                      ],
+                      alignment: 'center',
+                      margin: [5, 5, 5, 5],
+                      fillColor: '#ffffff'
+                    }
+                  ]
+                ]
+              },
+              layout: {
+                hLineWidth: function () { return 1; },
+                vLineWidth: function () { return 1; },
+                hLineColor: function () { return 'black'; },
+                vLineColor: function () { return 'black'; }
+              },
+              margin: [5, 5, 5, 5], // Espaciado entre "tarjetas"
+              border: [false, false, false, false] // Sin borde en la celda contenedora
+            });
+
+            if (currentRow.length === columns) {
+              body.push(currentRow);
+              currentRow = [];
+            }
           });
 
-          docContent.push({
-            table: {
-              headerRows: 1,
-              widths: ['15%', '20%', '20%', '15%', '30%'],
-              body: tableBody
-            },
-            margin: [0, 0, 0, 0]
-          });
+          // Rellenar última fila
+          if (currentRow.length > 0) {
+            while (currentRow.length < columns) {
+              currentRow.push({ text: '', border: [false, false, false, false] });
+            }
+            body.push(currentRow);
+          }
+
+          if (body.length > 0) {
+            docContent.push({
+              table: {
+                headerRows: 0,
+                widths: ['25%', '25%', '25%', '25%'],
+                body: body
+              },
+              layout: 'noBorders', // Tabla principal invisible
+              margin: [0, 0, 0, 0]
+            });
+          }
 
           const docDefinition = {
             content: docContent,
             pageSize: 'A4',
-            pageOrientation: 'landscape',
-            margin: [20, 20, 20, 20]
+            pageOrientation: 'portrait',
+            pageMargins: [20, 20, 20, 20]
           };
 
-          const pdfName = `QRs_${moment().format('YYYYMMDD_HHmmss')}.pdf`;
+          const pdfName = `QRs_Grid_${moment().format('YYYYMMDD_HHmmss')}.pdf`;
           pdfMake.createPdf(docDefinition).download(pdfName);
-          if (UI && UI.toast) UI.toast('✅ PDF descargado con ' + qrsToDownload.length + ' QRs');
+          if (UI && UI.toast) UI.toast('✅ PDF de QRs descargado');
         } else {
           if (UI && UI.toast) UI.toast('❌ pdfMake no disponible');
         }
@@ -9339,18 +9517,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Actualizar filtros cuando se agregan QRs
     const originalRenderQRList = renderQRList;
     window.renderQRListWithFilters = function (filtered) {
-      updateFilterOptions();
+      // NO actualizamos opciones automáticamente para no perder estado de filtros, ni dependemos de la lista visual
       originalRenderQRList(filtered);
     };
 
     // Llamar a la función original pero con actualización de filtros
     renderQRList = function (filtered) {
-      updateFilterOptions();
+      // NO actualizamos opciones automáticamente, se cargan de cache global
       originalRenderQRList(filtered);
     };
 
     // Inicializar filtros
-    updateFilterOptions();
+    loadQRFiltersFromCache();
   }
 
   // Agregar QR
@@ -9510,7 +9688,7 @@ document.addEventListener('DOMContentLoaded', () => {
               ...data
             };
           });
-          renderQRList();
+          renderQRList(); // Renderizar al inicio
         } catch (e) { ; }
       })();
     }
@@ -10640,20 +10818,29 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadAndRenderIncidenciaQR() {
     UI.showOverlay('Cargando Incidencias QR…', 'Consultando RONDA_MANUAL');
     try {
-      // Primero intentamos con filtro de cliente, si no funciona cargamos todos
-      let snapshot;
-      try {
-        snapshot = await getQueryWithClienteFilter('RONDA_MANUAL')
-          .orderBy('__name__', 'desc')
-          .limit(10000)
-          .get();
-      } catch (e) {
-        // Si falla el filtro, cargar sin filtro (admin)
-        snapshot = await db.collection('RONDA_MANUAL')
-          .orderBy('__name__', 'desc')
-          .limit(10000)
-          .get();
+      const clienteSelect = document.getElementById('iqr-cliente');
+      const clienteVal = clienteSelect?.value;
+      const unidadSelect = document.getElementById('iqr-unidad');
+      const unidadVal = unidadSelect?.value;
+
+      let query = getQueryWithClienteFilter('RONDA_MANUAL');
+
+      // Aplicar filtro de cliente si está seleccionado
+      if (clienteVal && clienteVal !== 'Todos') {
+        query = query.where('cliente', '==', clienteVal);
       }
+
+      // Aplicar filtro de unidad si está seleccionado
+      if (unidadVal && unidadVal !== 'Todas') {
+        query = query.where('unidad', '==', unidadVal);
+      }
+
+      // NOTA: Se ha removido el orderBy('timestamp') para evitar el error de índice compuesto inexistente de Firestore.
+      // El ordenamiento se realizará en memoria después de obtener los datos.
+
+      query = query.limit(1000);
+
+      const snapshot = await query.get();
 
       iqrAllData = snapshot.docs.map(doc => {
         const data = doc.data();
@@ -11024,7 +11211,7 @@ document.addEventListener('DOMContentLoaded', () => {
         [`Fecha Generación: ${new Date().toLocaleString('es-PE')}`],
         [`Total de Registros: ${data.length}`],
         [],
-        ['Timestamp', 'Usuario', 'Cliente', 'Unidad', 'QR', 'Pregunta', 'Respuesta', 'Puesto', 'Punto', 'Estado']
+        ['Timestamp', 'Usuario', 'Cliente', 'Unidad', 'QR', 'Pregunta', 'Respuesta', 'Puesto', 'Punto de Control', 'Estado', 'Foto']
       ];
 
       data.forEach(d => {
@@ -11094,7 +11281,8 @@ document.addEventListener('DOMContentLoaded', () => {
           respuesta.substring(0, 50),
           puestoDisplay,
           puntoDisplay,
-          estado
+          estado,
+          d.foto || ''
         ]);
       });
 
@@ -11111,7 +11299,8 @@ document.addEventListener('DOMContentLoaded', () => {
         { wch: 20 }, // Respuesta
         { wch: 12 }, // Puesto
         { wch: 12 }, // Punto
-        { wch: 12 }  // Estado
+        { wch: 12 }, // Estado
+        { wch: 30 }  // Foto
       ];
 
       // Configurar el ancho de la primera fila (título)
@@ -11128,7 +11317,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Configurar fila de encabezados (fila 5)
       const headerRow = 5;
-      for (let col = 0; col < 10; col++) {
+      for (let col = 0; col < 11; col++) {
         const cellRef = XLSX.utils.encode_col(col) + headerRow;
         if (ws[cellRef]) {
           ws[cellRef].fill = { fgColor: { rgb: 'FF2c5aa0' } };
@@ -11139,10 +11328,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Configurar filas de datos
       for (let row = 6; row <= ws_data.length; row++) {
-        for (let col = 0; col < 9; col++) {
+        for (let col = 0; col < 11; col++) {
           const cellRef = XLSX.utils.encode_col(col) + row;
           if (ws[cellRef]) {
-            ws[cellRef].alignment = { horizontal: col === 8 ? 'center' : 'left', vertical: 'top', wrapText: true };
+            ws[cellRef].alignment = { horizontal: col === 9 ? 'center' : 'left', vertical: 'top', wrapText: true };
             ws[cellRef].border = {
               top: { style: 'thin', color: { rgb: 'FFe2e8f0' } },
               bottom: { style: 'thin', color: { rgb: 'FFe2e8f0' } },
@@ -11151,7 +11340,7 @@ document.addEventListener('DOMContentLoaded', () => {
             };
 
             // Colorear estado
-            if (col === 8) {
+            if (col === 9) {
               const estadoCell = ws[cellRef];
               if (estadoCell.v === 'Completada') {
                 estadoCell.fill = { fgColor: { rgb: 'FFd1fae5' } };
@@ -11275,7 +11464,8 @@ document.addEventListener('DOMContentLoaded', () => {
           respuesta.substring(0, 20),
           puestoDisplay,
           puntoDisplay,
-          estado
+          estado,
+          d.foto || ''
         ];
       });
 
@@ -11329,7 +11519,7 @@ document.addEventListener('DOMContentLoaded', () => {
         content.push({
           table: {
             headerRows: 1,
-            widths: ['10%', '8%', '10%', '8%', '7%', '8%', '8%', '7%', '7%', '8%'],
+            widths: ['10%', '8%', '10%', '8%', '7%', '8%', '8%', '7%', '7%', '8%', '9%'],
             body: [
               [
                 { text: 'Timestamp', style: 'tableHeader' },
@@ -11340,8 +11530,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 { text: 'Pregunta', style: 'tableHeader' },
                 { text: 'Respuesta', style: 'tableHeader' },
                 { text: 'Puesto', style: 'tableHeader' },
-                { text: 'Punto', style: 'tableHeader' },
-                { text: 'Estado', style: 'tableHeader' }
+                { text: 'Punto de Control', style: 'tableHeader' },
+                { text: 'Estado', style: 'tableHeader' },
+                { text: 'Foto', style: 'tableHeader' }
               ],
               ...tableBody.map((row, idx) => [
                 { text: row[0], style: 'tableCell' },
@@ -11359,6 +11550,13 @@ document.addEventListener('DOMContentLoaded', () => {
                   color: row[9] === 'Completada' ? '#10b981' : '#f59e0b',
                   bold: true,
                   alignment: 'center'
+                },
+                {
+                  text: row[10] ? 'Ver Foto' : '-',
+                  style: 'tableCell',
+                  color: row[10] ? '#3b82f6' : '#a0aec0',
+                  decoration: row[10] ? 'underline' : null,
+                  link: row[10] || null
                 }
               ])
             ]
@@ -11411,10 +11609,9 @@ document.addEventListener('DOMContentLoaded', () => {
             fontSize: 8,
             bold: true,
             color: '#ffffff',
-            backgroundColor: '#2c5aa0',
+            fillColor: '#2c5aa0',
             alignment: 'center',
-            margin: [4, 6, 4, 6],
-            padding: [6, 4]
+            margin: [4, 6, 4, 6]
           },
           tableCell: {
             fontSize: 8,
