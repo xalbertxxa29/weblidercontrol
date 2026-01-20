@@ -852,7 +852,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 'value', 'label', true
               );
               // Resetear la selección de unidad a "Todas"
-              choicesObj.unidad.clearStore();
+              // choicesObj.unidad.clearStore(); // REMOVED: Destroys the choices we just set
               choicesObj.unidad.setChoiceByValue('Todas');
             }
           } else {
@@ -1000,20 +1000,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const riesgoSelect = document.getElementById('resumen-filtro-riesgo');
 
         // PASO 2: Agregar onChange listener al cliente que cargue unidades
+
+        // PASO 2: Agregar onChange listener al cliente que cargue unidades
+        // [REMOVED] Redundant listener handled by loadClienteUnidadFiltersGenerico
+        /*
         if (clienteSelect) {
           clienteSelect.addEventListener('change', async () => {
-            console.log('Cliente cambió en Resumen');
-            const cliente = resumenChoices.cliente.getValue(true);
-            const clienteValue = Array.isArray(cliente) ? cliente[0] : cliente;
-
-            if (clienteValue && clienteValue !== 'Todos') {
-              console.log('Cargando unidades para:', clienteValue);
-              await loadResumenUnidadesByCliente(clienteValue);
-            }
-
-            renderResumen();
+             // ... Logic moved to generic loader ...
           });
         }
+        */
         if (unidadSelect) {
           unidadSelect.addEventListener('change', () => {
             console.log('Unidad cambió');
