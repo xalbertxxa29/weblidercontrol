@@ -154,6 +154,7 @@
             <button class="kpi-subnav-btn" data-target="kpi-detalle-acceso">Detalle Acceso</button>
             <button class="kpi-subnav-btn" data-target="kpi-control-vehicular">🚗 Control Vehicular</button>
             <button class="kpi-subnav-btn" data-target="kpi-incidencia-qr">🔲 Incidencia QR</button>
+            <button class="kpi-subnav-btn" data-target="kpi-incidencias-hm">Incidencias H&M</button>
           </nav>
 
           <div class="kpi-subviews-container">
@@ -336,6 +337,118 @@
                     <h4>🏪 Q° Accesos por Unidad</h4>
                     <canvas id="ap-chart-unidad"></canvas>
                   </div>
+                </div>
+              </div>
+            </div>
+            <!-- PESTAÑA 4: INCIDENCIAS H&M -->
+            <div id="kpi-incidencias-hm" class="kpi-subview" role="tabpanel">
+              <div class="page-head">
+                <h2>Dashboard Incidencias H&M</h2>
+                <form class="actions kpi-actions" style="margin-top: 10px;">
+                  <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <label style="font-weight: bold; color: #475569;">Rango de Fecha:</label>
+                    <input type="text" id="hm-filtro-fecha" class="date-picker" placeholder="DD/MM/YYYY - DD/MM/YYYY"
+                      style="width: 220px;" />
+
+                    <label style="font-weight: bold; color: #475569; margin-left: 10px;">Unidad:</label>
+                    <select id="hm-filtro-unidad"
+                      style="padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; outline: none;">
+                      <option value="">Todas las Unidades</option>
+                    </select>
+
+                    <button type="button" class="btn small" id="hm-btn-refresh">Aplicar</button>
+
+                    <!-- Export Buttons with Premium Look -->
+                    <button type="button" id="hm-btn-excel" title="Descargar reporte en Excel"
+                      style="background-color: #10b981; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 5px; font-weight: 500; transition: background 0.2s;">
+                      <span style="font-size: 16px;">📊</span> Excel
+                    </button>
+                    <button type="button" id="hm-btn-pdf" title="Descargar reporte en PDF"
+                      style="background-color: #ef4444; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 5px; font-weight: 500; transition: background 0.2s;">
+                      <span style="font-size: 16px;">📄</span> PDF
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              <!-- KPI Cards -->
+              <div class="kpi-stats-row" style="display: flex; gap: 20px; margin-top: 20px; flex-wrap: wrap;">
+                <div class="kpi-card stat-card" style="flex: 1; min-width: 200px; text-align: center; padding: 20px;">
+                  <h3 style="font-size: 14px; color: #64748b; text-transform: uppercase;">Cantidad de Incidencias</h3>
+                  <div id="hm-kpi-total" style="font-size: 32px; font-weight: bold; color: #3b82f6; margin-top: 10px;">0
+                  </div>
+                </div>
+                <div class="kpi-card stat-card" style="flex: 1; min-width: 200px; text-align: center; padding: 20px;">
+                  <h3 style="font-size: 14px; color: #64748b; text-transform: uppercase;">Cantidad V. de Producto</h3>
+                  <div id="hm-kpi-valor-producto"
+                    style="font-size: 32px; font-weight: bold; color: #ef4444; margin-top: 10px;">S/ 0.00</div>
+                </div>
+                <div class="kpi-card stat-card" style="flex: 1; min-width: 200px; text-align: center; padding: 20px;">
+                  <h3 style="font-size: 14px; color: #64748b; text-transform: uppercase;">Cantidad V. de Recupero</h3>
+                  <div id="hm-kpi-valor-recupero"
+                    style="font-size: 32px; font-weight: bold; color: #10b981; margin-top: 10px;">S/ 0.00</div>
+                </div>
+              </div>
+
+              <!-- Grid de Gráficos (Flexible) -->
+              <div class="resumen-grid"
+                style="margin-top: 20px; grid-template-columns: repeat(3, 1fr); grid-template-rows: 300px 300px; height: auto;">
+                <!-- 1. Torta: Cantidad de registros por categoría (tipoIncidente) -->
+                <div class="kpi-card">
+                  <h4>Incidentes por Categoría</h4>
+                  <canvas id="hm-chart-categoria"></canvas>
+                </div>
+
+                <!-- 2. Torta: Por sub categoría (subCategoria) -->
+                <div class="kpi-card">
+                  <h4>Incidentes por Subcategoría</h4>
+                  <canvas id="hm-chart-subcategoria"></canvas>
+                </div>
+
+                <!-- 3. Barras: Por unidad (unidad) -->
+                <div class="kpi-card">
+                  <h4>Incidentes por Unidad</h4>
+                  <canvas id="hm-chart-unidad"></canvas>
+                </div>
+
+                <!-- 5. Barras: Cantidad de incidentes registrados por fecha (fechaRegistro) -->
+                <div class="kpi-card">
+                  <h4>Incidentes por Fecha</h4>
+                  <canvas id="hm-chart-fecha"></canvas>
+                </div>
+
+                <!-- 4. Lineas: Comparación Valor Producto vs Valor Recuperación (por mes) -->
+                <div class="kpi-card" style="grid-column: span 2;">
+                  <h4>Comparativo Valor: Producto vs Recuperado (Mensual)</h4>
+                  <canvas id="hm-chart-valor"></canvas>
+                </div>
+              </div>
+
+              <!-- Tabla de Detalles -->
+              <div class="kpi-card" style="margin-top: 20px; overflow: hidden;">
+                <h4 style="margin-bottom: 15px;">Detalle de Registros</h4>
+                <div class="table-wrap" style="max-height: 400px; overflow-y: auto;">
+                  <table id="hm-tabla-datos" style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                    <thead style="background: #f1f5f9; position: sticky; top: 0;">
+                      <tr>
+                        <th style="padding: 10px; text-align: left; border-bottom: 2px solid #e2e8f0;">Fecha</th>
+                        <th style="padding: 10px; text-align: left; border-bottom: 2px solid #e2e8f0;">Unidad</th>
+                        <th style="padding: 10px; text-align: left; border-bottom: 2px solid #e2e8f0;">Persona que
+                          Registró</th>
+                        <th style="padding: 10px; text-align: left; border-bottom: 2px solid #e2e8f0;">Categoría</th>
+                        <th style="padding: 10px; text-align: left; border-bottom: 2px solid #e2e8f0;">Sub Categoría
+                        </th>
+                        <th style="padding: 10px; text-align: right; border-bottom: 2px solid #e2e8f0;">V. Producto</th>
+                        <th style="padding: 10px; text-align: right; border-bottom: 2px solid #e2e8f0;">V. Recuperación
+                        </th>
+                        <th style="padding: 10px; text-align: left; border-bottom: 2px solid #e2e8f0;">Observaciones
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody id="hm-tabla-body">
+                      <!-- Filled by JS -->
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>

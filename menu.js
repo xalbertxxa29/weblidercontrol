@@ -41,7 +41,8 @@ document.addEventListener('DOMContentLoaded', () => {
       USERS: 'USUARIOS',
       CLIENT_UNITS: 'CLIENTE_UNIDAD',
       LOGBOOK: 'CUADERNO',
-      INCIDENTS: 'INCIDENCIAS_REGISTRADAS'
+      INCIDENTS: 'INCIDENCIAS_REGISTRADAS',
+      HM_INCIDENTS: 'INCIDENCIASHYM_REGISTRADAS'
     };
 
     if (!firebase.apps.length) {
@@ -7167,6 +7168,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadRondas();
 
         initResumenDashboard();
+        initIncidenciasHmDashboard(); // Initialize H&M Dashboard
       }
     });
 
@@ -11651,6 +11653,754 @@ document.addEventListener('DOMContentLoaded', () => {
       loadControlVehicularFilters();
       loadControlVehicularData();
     });
+  }
+
+  // Cuando se selecciona H&M, cargar datos
+  // Cuando se selecciona H&M, cargar datos
+  const hmBtn = document.querySelector('[data-target="kpi-incidencias-hm"]');
+
+  function checkHmAccess() {
+    // 1. Si accessControl no está definido aún, retornamos false (seguro)
+    if (typeof accessControl === 'undefined' || !accessControl) return false;
+
+    // 2. ADMIN siempre tiene acceso
+    if (accessControl.userType === 'ADMIN') return true;
+
+    // 3. Cliente HM tiene acceso
+    if (accessControl.userType === 'CLIENTE') {
+      const cli = (accessControl.clienteAsignado || '').toUpperCase().replace(/\s+/g, '');
+      // Permitir 'HM', 'H&M'
+      return cli === 'HM' || cli === 'H&M';
+    }
+
+    // 4. Cualquier otro rol (Supervisores, Agentes sin rol admin, otros clientes) -> Denegado
+    return false;
+  }
+
+  function updateHmTabVisibility() {
+    if (!hmBtn) return;
+
+    if (checkHmAccess()) {
+      // Usuario autorizado: mostrar
+      hmBtn.style.display = '';
+      hmBtn.classList.remove('hidden');
+    } else {
+      // Usuario no autorizado: ocultar
+      hmBtn.style.display = 'none';
+      hmBtn.classList.add('hidden');
+    }
+  }
+
+  // Verificar visibilidad periódicamente para manejar la carga asíncrona de auth
+  setInterval(updateHmTabVisibility, 1500);
+
+  if (hmBtn) {
+    hmBtn.addEventListener('click', (e) => {
+      if (!checkHmAccess()) {
+        e.preventDefault();
+        e.stopPropagation();
+        UI.showError('Acceso Restringido', 'Solo administradores o personal de H&M pueden ver este dashboard.');
+        return;
+      }
+      initIncidenciasHmDashboard();
+    });
+  }
+
+  // ============================================================================
+  // DASHBOARD INCIDENCIAS H&M
+  // ============================================================================
+  let hmCharts = {};
+  let hmCachedData = [];
+  let hmLogoBase64 = null;
+
+  function initIncidenciasHmDashboard() {
+    // Fix: daterangepicker uses jQuery
+    const $datePicker = $('#hm-filtro-fecha');
+    const refreshBtn = document.getElementById('hm-btn-refresh');
+
+    if ($datePicker.length) {
+      // Default: last 30 days
+      const start = moment().subtract(29, 'days');
+      const end = moment();
+      // Initialize only if not already initialized
+      if (!$datePicker.data('daterangepicker')) {
+        $datePicker.daterangepicker({
+          startDate: start,
+          endDate: end,
+          locale: { format: 'DD/MM/YYYY', applyLabel: 'Aplicar', cancelLabel: 'Cancelar' }
+        });
+        $datePicker.val(`${start.format('DD/MM/YYYY')} - ${end.format('DD/MM/YYYY')}`);
+      }
+    }
+
+    refreshBtn?.addEventListener('click', queryAndRenderHmDashboard);
+
+    // Export Buttons
+    document.getElementById('hm-btn-excel')?.addEventListener('click', exportHmExcel);
+    document.getElementById('hm-btn-pdf')?.addEventListener('click', printHmPdf);
+
+    // Load Logo for PDF
+    loadHmLogoBase64();
+
+    // Initial load
+    queryAndRenderHmDashboard();
+  }
+
+  async function queryAndRenderHmDashboard() {
+    UI.showOverlay('Cargando Información...', 'Obteniendo datos');
+    try {
+      const dateRange = $('#hm-filtro-fecha').val();
+      let startDate = null, endDate = null;
+
+      if (dateRange) {
+        const parts = dateRange.split(' - ');
+        if (parts.length === 2) {
+          startDate = moment(parts[0], 'DD/MM/YYYY').toDate();
+          endDate = moment(parts[1], 'DD/MM/YYYY').endOf('day').toDate();
+        }
+      }
+
+      // Fetch data
+      // Fetch data
+      // Using string literal to avoid ReferenceError if COLLECTIONS is not in scope
+      let query = db.collection('INCIDENCIASHYM_REGISTRADAS');
+
+      const snap = await query.limit(2000).get(); // Limit for safety
+
+      // Process and Filter Data
+      const rawData = snap.docs.map(doc => {
+        const d = doc.data();
+        // Parse date - try Timestamp or String
+        let dateObj = null;
+        if (d.fechaRegistro && d.fechaRegistro.toDate) {
+          dateObj = d.fechaRegistro.toDate();
+        } else if (d.fechaRegistro) {
+          // Try parsing string YYYY-MM-DD or DD/MM/YYYY
+          dateObj = moment(d.fechaRegistro, ['YYYY-MM-DD', 'DD/MM/YYYY']).toDate();
+        }
+
+        return {
+          id: doc.id,
+          ...d,
+          fechaParsed: dateObj
+        };
+      });
+
+      // Filter by Date Range client-side to handle potential format variances safely
+      hmCachedData = rawData.filter(d => {
+        if (!d.fechaParsed) return false;
+        if (startDate && d.fechaParsed < startDate) return false;
+        if (endDate && d.fechaParsed > endDate) return false;
+        return true;
+      });
+
+      // Populate Unit Dropdown
+      const unitSelect = document.getElementById('hm-filtro-unidad');
+      const currentUnit = unitSelect ? unitSelect.value : '';
+
+      if (unitSelect) {
+        const uniqueUnits = [...new Set(rawData.map(d => d.unida || d.unidad || ''))].filter(u => u).sort();
+
+        // Save valid selection or reset if unavailable (optional, but better to keep previous if possible)
+        // Re-build options
+        // Keep "Todas"
+        unitSelect.innerHTML = '<option value="">Todas las Unidades</option>';
+        uniqueUnits.forEach(u => {
+          const option = document.createElement('option');
+          option.value = u;
+          option.textContent = u;
+          if (u === currentUnit) option.selected = true;
+          unitSelect.appendChild(option);
+        });
+      }
+
+      // Filter by Unit
+      if (currentUnit) {
+        hmCachedData = hmCachedData.filter(d => {
+          const u = d.unida || d.unidad || '';
+          return u === currentUnit;
+        });
+      }
+
+      console.log(`H&M Incidents: Loaded ${hmCachedData.length} (Total raw: ${rawData.length})`);
+
+      updateHmCharts();
+      updateHmStatsAndTable();
+
+    } catch (e) {
+      console.error('Error loading H&M Dashboard:', e);
+      UI.toast('Error al cargar datos H&M');
+    } finally {
+      UI.hideOverlay();
+    }
+  }
+
+  function updateHmCharts() {
+    const ctxCategoria = document.getElementById('hm-chart-categoria');
+    const ctxSubCategoria = document.getElementById('hm-chart-subcategoria');
+    const ctxUnidad = document.getElementById('hm-chart-unidad');
+    const ctxFecha = document.getElementById('hm-chart-fecha');
+    const ctxValor = document.getElementById('hm-chart-valor');
+
+    if (!ctxCategoria || !ctxSubCategoria || !ctxUnidad || !ctxFecha || !ctxValor) return;
+
+    // 1. Pie: Por Categoría (tipoIncidente)
+    const categorias = {};
+    hmCachedData.forEach(d => {
+      const cat = d.tipoIncidente || 'Sin Categoría';
+      categorias[cat] = (categorias[cat] || 0) + 1;
+    });
+    renderPieChart('hm-cat', ctxCategoria, categorias, 'Categoría');
+
+    // 2. Pie: Por Subcategoría (subCategoria)
+    const subcategorias = {};
+    hmCachedData.forEach(d => {
+      const sub = d.subCategoria || 'Sin Subcategoría';
+      subcategorias[sub] = (subcategorias[sub] || 0) + 1;
+    });
+    renderPieChart('hm-sub', ctxSubCategoria, subcategorias, 'Subcategoría');
+
+    // 3. Bar: Por Unidad (unidad)
+    const unidades = {};
+    hmCachedData.forEach(d => {
+      const u = d.unida || d.unidad || 'Sin Unidad'; // Check both 'unida' (requested) and 'unidad'
+      unidades[u] = (unidades[u] || 0) + 1;
+    });
+    renderBarChart('hm-unit', ctxUnidad, unidades, 'Incidentes por Unidad', '#3b82f6');
+
+    // 4. Bar: Por Fecha (fechaRegistro)
+    const fechas = {};
+    hmCachedData.forEach(d => {
+      if (d.fechaParsed) {
+        const fStr = moment(d.fechaParsed).format('DD/MM/YYYY');
+        fechas[fStr] = (fechas[fStr] || 0) + 1;
+      }
+    });
+    // Sort dates
+    const sortedDates = Object.keys(fechas).sort((a, b) => moment(a, 'DD/MM/YYYY') - moment(b, 'DD/MM/YYYY'));
+    const sortedFechaData = {};
+    sortedDates.forEach(k => sortedFechaData[k] = fechas[k]);
+    renderBarChart('hm-date', ctxFecha, sortedFechaData, 'Incidentes por Fecha', '#10b981');
+
+    // 5. Line: Comparativo Valor (Mensual)
+    const monthlyValues = {}; // { 'YYYY-MM': { producto: 0, recuperacion: 0 } }
+
+    hmCachedData.forEach(d => {
+      if (d.fechaParsed) {
+        const mStr = moment(d.fechaParsed).format('YYYY-MM'); // Sort key
+        const label = moment(d.fechaParsed).format('MMM YYYY');
+
+        if (!monthlyValues[mStr]) monthlyValues[mStr] = { label: label, producto: 0, recuperacion: 0 };
+
+        // Parse values safely
+        let valProd = parseHmValue(d.valorProductos) || parseHmValue(d.valorProducto);
+
+
+        let valRec = parseHmValue(d.valorRecuperacion);
+
+
+        monthlyValues[mStr].producto += valProd;
+        monthlyValues[mStr].recuperacion += valRec;
+      }
+    });
+
+    const sortedMonths = Object.keys(monthlyValues).sort();
+    const labels = sortedMonths.map(m => monthlyValues[m].label);
+    const dataProd = sortedMonths.map(m => parseFloat(monthlyValues[m].producto.toFixed(2)));
+    const dataRec = sortedMonths.map(m => parseFloat(monthlyValues[m].recuperacion.toFixed(2)));
+
+    renderLineComparisonChart('hm-val', ctxValor, labels, dataProd, dataRec);
+  }
+
+  function updateHmStatsAndTable() {
+    const tableBody = document.getElementById('hm-tabla-body');
+    const totalEl = document.getElementById('hm-kpi-total');
+    const valorProdEl = document.getElementById('hm-kpi-valor-producto');
+    const valorRecEl = document.getElementById('hm-kpi-valor-recupero');
+
+    if (!tableBody) return;
+
+    // Calculate Totals
+    let totalCount = hmCachedData.length;
+    let sumProd = 0;
+    let sumRec = 0;
+
+    let rowsHtml = '';
+
+    hmCachedData.forEach(d => {
+      // Validation for totals
+      let valProd = parseHmValue(d.valorProductos) || parseHmValue(d.valorProducto);
+
+
+      let valRec = parseHmValue(d.valorRecuperacion);
+
+
+      sumProd += valProd;
+      sumRec += valRec;
+
+      // Build Table Row
+      const fechaStr = d.fechaParsed ? moment(d.fechaParsed).format('DD/MM/YYYY HH:mm') : '-';
+      const unidad = d.unida || d.unidad || '-';
+      const usuario = d.usuarioNombre || d.usuario || '-';
+      const categoria = d.tipoIncidente || '-';
+      const subcategoria = d.subCategoria || '-';
+      const obs = d.observaciones || '-';
+
+      rowsHtml += `
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px;">${fechaStr}</td>
+                <td style="padding: 10px;">${unidad}</td>
+                <td style="padding: 10px;">${usuario}</td>
+                <td style="padding: 10px;">${categoria}</td>
+                <td style="padding: 10px;">${subcategoria}</td>
+                <td style="padding: 10px; text-align: right; color: #ef4444;">S/ ${valProd.toFixed(2)}</td>
+                <td style="padding: 10px; text-align: right; color: #10b981;">S/ ${valRec.toFixed(2)}</td>
+                <td style="padding: 10px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${obs}">${obs}</td>
+            </tr>
+        `;
+    });
+
+    // Update Stats UI
+    if (totalEl) totalEl.textContent = totalCount;
+    if (valorProdEl) valorProdEl.textContent = 'S/ ' + sumProd.toLocaleString('es-PE', { minimumFractionDigits: 2 });
+    if (valorRecEl) valorRecEl.textContent = 'S/ ' + sumRec.toLocaleString('es-PE', { minimumFractionDigits: 2 });
+
+    // Conditional Highlighting
+    if (valorProdEl && valorRecEl) {
+      // Assuming structure: .kpi-card > h3, div#id
+      // We need to find the card container.
+      const cardProd = valorProdEl.closest ? valorProdEl.closest('.kpi-card') : valorProdEl.parentElement;
+      const cardRec = valorRecEl.closest ? valorRecEl.closest('.kpi-card') : valorRecEl.parentElement;
+
+      const highlightStyle = { bg: '#fef9c3', border: '2px solid #facc15' };
+
+      // Reset
+      if (cardProd) { cardProd.style.backgroundColor = ''; cardProd.style.border = ''; }
+      if (cardRec) { cardRec.style.backgroundColor = ''; cardRec.style.border = ''; }
+
+      if (sumProd > sumRec) {
+        if (cardProd) {
+          cardProd.style.backgroundColor = highlightStyle.bg;
+          cardProd.style.border = highlightStyle.border;
+        }
+      } else if (sumRec > sumProd) {
+        if (cardRec) {
+          cardRec.style.backgroundColor = highlightStyle.bg;
+          cardRec.style.border = highlightStyle.border;
+        }
+      }
+    }
+
+    // Update Table UI
+    tableBody.innerHTML = rowsHtml;
+  }
+
+  function parseHmValue(val) {
+    if (val === undefined || val === null) return 0;
+
+    // Conversión inicial a número
+    let result = 0;
+
+    if (typeof val === 'number') {
+      result = val;
+    } else if (typeof val === 'string') {
+      let str = val.toString();
+      // Remove "S/." or "S/" and spaces
+      str = str.replace(/S\/\.?\s*/gi, '').trim();
+
+      // Heuristic for Comma vs Dot:
+      // 1. If it has a DOT, assume standard format (1,234.56). Remove commas.
+      if (str.indexOf('.') > -1) {
+        str = str.replace(/,/g, '');
+      }
+      // 2. If it has NO DOT and has a COMMA:
+      else if (str.indexOf(',') > -1) {
+        // Check if comma looks like a decimal (,XX or ,X)
+        if (/,\d{1,2}$/.test(str)) {
+          str = str.replace(',', '.');
+        }
+        // Else if it looks like thousands (,XXX), remove it
+        else {
+          str = str.replace(/,/g, '');
+        }
+      }
+      // Remove non-numeric chars (except dot and minus)
+      const clean = str.replace(/[^0-9.-]+/g, '');
+      result = parseFloat(clean) || 0;
+    } else {
+      result = 0;
+    }
+
+    // DEBUG: Log valores sospechosos
+    if (result >= 4000 && result <= 5000) {
+      console.warn('[parseHmValue] Valor sospechoso detectado:', result, '| Entrada:', val);
+    }
+
+    // CORRECCIÓN MEJORADA: Detectar si el valor está en centavos
+    // Casos a corregir:
+    // - Valores entre 100 y 9999 que sean divisibles por 100 (ej: 4995, 2990, 5000)
+    // - Estos son probablemente 49.95, 29.90, 50.00 en soles
+    if (result > 100 && result < 10000 && result % 100 === 0) {
+      const original = result;
+      result = result / 100;
+      console.log('[parseHmValue] CORRECCIÓN APLICADA:', original, '→', result);
+    }
+    // Caso más agresivo: si está entre 1000-99999 pero parece un valor en centavos
+    else if (result >= 1000 && result <= 99999 && result % 100 === 0) {
+      // Dividir para ver si resulta un número razonable (entre 10 y 999.99)
+      const divided = result / 100;
+      if (divided >= 10 && divided <= 999.99) {
+        console.log('[parseHmValue] CORRECCIÓN APLICADA (rango 1000-99999):', result, '→', divided);
+        result = divided;
+      }
+    }
+
+    return result;
+  }
+
+  function loadHmLogoBase64() {
+    const img = new Image();
+    img.crossOrigin = 'Anonymous';
+    img.onload = function () {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      try {
+        hmLogoBase64 = canvas.toDataURL('image/png');
+      } catch (e) { console.warn('Cannot convert logo to base64', e); }
+    };
+    img.onerror = function () { console.warn('Could not load logo_liberman.png'); };
+    // Assuming logo_liberman.png is in the root or accessible relative path
+    img.src = 'logo_liberman.png';
+  }
+
+  function exportHmExcel() {
+    if (!hmCachedData || hmCachedData.length === 0) {
+      UI.toast('No hay datos para exportar');
+      return;
+    }
+
+    let tableContent = `
+        <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+        <head>
+            <!--[if gte mso 9]>
+            <xml>
+            <x:ExcelWorkbook>
+                <x:ExcelWorksheets>
+                    <x:ExcelWorksheet>
+                        <x:Name>Incidencias H&M</x:Name>
+                        <x:WorksheetOptions>
+                            <x:DisplayGridlines/>
+                        </x:WorksheetOptions>
+                    </x:ExcelWorksheet>
+                </x:ExcelWorksheets>
+            </x:ExcelWorkbook>
+            </xml>
+            <![endif]-->
+            <style>
+                body { font-family: Arial, sans-serif; }
+                table { border-collapse: collapse; width: 100%; }
+                th, td { border: 1px solid #000000; padding: 8px; text-align: left; }
+                th { background-color: #CC0000; color: #FFFFFF; font-weight: bold; }
+                .currency { text-align: right; }
+                .title { font-size: 18px; font-weight: bold; text-align: center; margin-bottom: 20px; }
+                .red-text { color: #CC0000; }
+            </style>
+        </head>
+        <body>
+            <div style="text-align:center; padding: 20px;">
+                ${hmLogoBase64 ? `<img src="${hmLogoBase64}" width="150" />` : '<h1 class="red-text">LIBERMAN</h1>'}
+                <h2 class="title" style="color: #CC0000;">REPORTE DE INCIDENCIAS H&M</h2>
+                <p>Generado: ${moment().format('DD/MM/YYYY HH:mm')}</p>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Fecha</th>
+                        <th>Unidad</th>
+                        <th>Usuario</th>
+                        <th>Categoría</th>
+                        <th>Subcategoría</th>
+                        <th>Valor Producto</th>
+                        <th>Valor Recupero</th>
+                        <th>Observaciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+
+    hmCachedData.forEach(d => {
+      const fechaStr = d.fechaParsed ? moment(d.fechaParsed).format('DD/MM/YYYY HH:mm') : '-';
+      const unidad = d.unida || d.unidad || '-';
+      const usuario = d.usuarioNombre || d.usuario || '-';
+      const categoria = d.tipoIncidente || '-';
+      const subcategoria = d.subCategoria || '-';
+      const obs = d.observaciones || '-';
+
+      let valProd = parseHmValue(d.valorProductos) || parseHmValue(d.valorProducto);
+      let valRec = parseHmValue(d.valorRecuperacion);
+
+      tableContent += `
+            <tr>
+                <td>${fechaStr}</td>
+                <td>${unidad}</td>
+                <td>${usuario}</td>
+                <td>${categoria}</td>
+                <td>${subcategoria}</td>
+                <td class="currency">S/ ${valProd.toFixed(2)}</td>
+                <td class="currency">S/ ${valRec.toFixed(2)}</td>
+                <td>${obs}</td>
+            </tr>
+        `;
+    });
+
+    tableContent += `
+                </tbody>
+            </table>
+        </body>
+        </html>
+    `;
+
+    const blob = new Blob([tableContent], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Reporte_Incidencias_HM_${moment().format('YYYYMMDD')}.xls`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  function printHmPdf() {
+    if (!hmCachedData || hmCachedData.length === 0) {
+      UI.toast('No hay datos para exportar');
+      return;
+    }
+
+    const bodyData = [];
+    // Header
+    bodyData.push([
+      { text: 'Fecha', style: 'tableHeader' },
+      { text: 'Unidad', style: 'tableHeader' },
+      { text: 'Usuario', style: 'tableHeader' },
+      { text: 'Categoría', style: 'tableHeader' },
+      { text: 'Subcat.', style: 'tableHeader' },
+      { text: 'V. Prod.', style: 'tableHeader' },
+      { text: 'V. Rec.', style: 'tableHeader' },
+      { text: 'Obs.', style: 'tableHeader' }
+    ]);
+
+    let sumProd = 0;
+    let sumRec = 0;
+
+    hmCachedData.forEach(d => {
+      const fechaStr = d.fechaParsed ? moment(d.fechaParsed).format('DD/MM/YYYY') : '-';
+      const unidad = d.unida || d.unidad || '-';
+      const usuario = d.usuarioNombre || d.usuario || '-';
+      const categoria = d.tipoIncidente || '-';
+      const subcategoria = d.subCategoria || '-';
+      const obs = d.observaciones || '-';
+
+      let valProd = parseHmValue(d.valorProductos) || parseHmValue(d.valorProducto);
+      let valRec = parseHmValue(d.valorRecuperacion);
+
+      sumProd += valProd;
+      sumRec += valRec;
+
+      bodyData.push([
+        { text: fechaStr, fontSize: 9 },
+        { text: unidad, fontSize: 9 },
+        { text: usuario, fontSize: 9 },
+        { text: categoria, fontSize: 9 },
+        { text: subcategoria, fontSize: 9 },
+        { text: `S/ ${valProd.toFixed(2)}`, fontSize: 9, alignment: 'right' },
+        { text: `S/ ${valRec.toFixed(2)}`, fontSize: 9, alignment: 'right' },
+        { text: obs, fontSize: 8 }
+      ]);
+    });
+
+    // Totals Row
+    bodyData.push([
+      { text: 'TOTAL', colSpan: 5, alignment: 'right', bold: true },
+      {}, {}, {}, {},
+      { text: `S/ ${sumProd.toFixed(2)}`, alignment: 'right', bold: true },
+      { text: `S/ ${sumRec.toFixed(2)}`, alignment: 'right', bold: true },
+      {}
+    ]);
+
+    const docDefinition = {
+      pageSize: 'A4',
+      pageOrientation: 'landscape',
+      pageMargins: [20, 20, 20, 20],
+      content: [
+        {
+          columns: [
+            hmLogoBase64 ? { image: hmLogoBase64, width: 100 } : { text: 'LIBERMAN', fontSize: 20, bold: true, color: '#CC0000' },
+            { text: 'REPORTE DE INCIDENCIAS H&M', style: 'header', alignment: 'right', margin: [0, 10, 0, 0] }
+          ]
+        },
+        { text: `Generado el: ${moment().format('DD/MM/YYYY HH:mm')}`, alignment: 'right', margin: [0, 0, 0, 20], fontSize: 10 },
+        {
+          table: {
+            headerRows: 1,
+            widths: ['auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', '*'],
+            body: bodyData
+          },
+          layout: {
+            fillColor: function (rowIndex, node, columnIndex) {
+              return (rowIndex === 0) ? '#CC0000' : (rowIndex % 2 === 0) ? '#f3f4f6' : null;
+            }
+          }
+        }
+      ],
+      styles: {
+        header: {
+          fontSize: 18,
+          bold: true,
+          color: '#CC0000'
+        },
+        tableHeader: {
+          bold: true,
+          fontSize: 10,
+          color: 'white',
+          fillColor: '#CC0000',
+          alignment: 'center'
+        }
+      },
+      defaultStyle: {
+        font: 'Roboto'
+      }
+    };
+
+    pdfMake.createPdf(docDefinition).open();
+  }
+
+  function renderPieChart(id, canvas, dataObj, label) {
+    if (hmCharts[id]) hmCharts[id].destroy();
+    const labels = Object.keys(dataObj);
+    const data = Object.values(dataObj);
+    const bgColors = labels.map((_, i) => getColorByIndex(i));
+
+    hmCharts[id] = new Chart(canvas, {
+      type: 'pie',
+      data: {
+        labels: labels,
+        datasets: [{
+          data: data,
+          backgroundColor: bgColors
+        }]
+      },
+      options: {
+        plugins: {
+          legend: { position: 'right' },
+          datalabels: {
+            color: '#fff',
+            formatter: (val, ctx) => {
+              let sum = ctx.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+              let percentage = (val * 100 / sum).toFixed(1) + "%";
+              return percentage;
+            }
+          }
+        }
+      }
+    });
+  }
+
+  function renderBarChart(id, canvas, dataObj, label, color) {
+    if (hmCharts[id]) hmCharts[id].destroy();
+    const labels = Object.keys(dataObj);
+    const data = Object.values(dataObj);
+
+    hmCharts[id] = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: label,
+          data: data,
+          backgroundColor: color
+        }]
+      },
+      options: {
+        scales: {
+          y: { beginAtZero: true }
+        },
+        plugins: {
+          legend: { display: false }
+        }
+      }
+    });
+  }
+
+  function renderLineComparisonChart(id, canvas, labels, dataA, dataB) {
+    if (hmCharts[id]) hmCharts[id].destroy();
+
+    hmCharts[id] = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'Valor Producto',
+            data: dataA,
+            borderColor: '#ef4444', // Red
+            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            tension: 0.3,
+            fill: true
+          },
+          {
+            label: 'Valor Recuperación',
+            data: dataB,
+            borderColor: '#10b981', // Green
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            tension: 0.3,
+            fill: true
+          }
+        ]
+      },
+      options: {
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: function (value, index, values) {
+                return 'S/ ' + value.toLocaleString('es-PE', { minimumFractionDigits: 2 });
+              }
+            }
+          }
+        },
+        interaction: {
+          mode: 'index',
+          intersect: false,
+        },
+        plugins: {
+          tooltip: {
+            callbacks: {
+              label: function (context) {
+                let label = context.dataset.label || '';
+                if (label) {
+                  label += ': ';
+                }
+                if (context.parsed.y !== null) {
+                  label += 'S/ ' + context.parsed.y.toLocaleString('es-PE', { minimumFractionDigits: 2 });
+                }
+                return label;
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  function getColorByIndex(i) {
+    const colors = [
+      '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6',
+      '#ec4899', '#6366f1', '#14b8a6', '#f97316', '#06b6d4'
+    ];
+    return colors[i % colors.length];
   }
 
 }); // Cierre DOMContentLoaded

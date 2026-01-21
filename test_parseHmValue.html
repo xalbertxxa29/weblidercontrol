@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Test parseHmValue</title>
+    <style>
+        body { font-family: Arial; margin: 20px; }
+        .test-case { margin: 10px 0; padding: 10px; border: 1px solid #ddd; }
+        .pass { background-color: #d4edda; }
+        .fail { background-color: #f8d7da; }
+    </style>
+</head>
+<body>
+    <h1>Test de la función parseHmValue</h1>
+    <div id="results"></div>
+
+    <script>
+        function parseHmValue(val) {
+            if (val === undefined || val === null) return 0;
+            if (typeof val === 'number') {
+                // CORRECCIÓN: Si el valor es un número muy grande (probable error de centavos sin decimal)
+                // Si es > 100, asumir que está en centavos y dividir por 100
+                if (val > 100 && val % 100 === 0) {
+                    return val / 100;
+                }
+                return val;
+            }
+            let str = val.toString();
+            // Remove "S/." or "S/" and spaces
+            str = str.replace(/S\/\.?\s*/gi, '').trim();
+
+            // Heuristic for Comma vs Dot:
+            // 1. If it has a DOT, assume standard format (1,234.56). Remove commas.
+            if (str.indexOf('.') > -1) {
+                str = str.replace(/,/g, '');
+            }
+            // 2. If it has NO DOT and has a COMMA:
+            else if (str.indexOf(',') > -1) {
+                // Check if comma looks like a decimal (,XX or ,X)
+                if (/,\d{1,2}$/.test(str)) {
+                    str = str.replace(',', '.');
+                }
+                // Else if it looks like thousands (,XXX), remove it
+                else {
+                    str = str.replace(/,/g, '');
+                }
+            }
+            // Remove non-numeric chars (except dot and minus)
+            const clean = str.replace(/[^0-9.-]+/g, '');
+            let result = parseFloat(clean) || 0;
+            
+            // CORRECCIÓN: Si el valor parseado es muy grande (probable error de centavos)
+            // Si es > 100, asumir que está en centavos y dividir por 100
+            if (result > 100 && result % 100 === 0) {
+                result = result / 100;
+            }
+            
+            return result;
+        }
+
+        const testCases = [
+            { input: 49.95, expected: 49.95, description: "Número decimal correcto" },
+            { input: 4995, expected: 49.95, description: "Número en centavos (4995 -> 49.95)" },
+            { input: "49.95", expected: 49.95, description: "String decimal" },
+            { input: "S/ 49.95", expected: 49.95, description: "String con moneda" },
+            { input: "S/. 49.95", expected: 49.95, description: "String con moneda y punto" },
+            { input: "49,95", expected: 49.95, description: "String con coma como decimal" },
+            { input: "4995", expected: 49.95, description: "String en centavos" },
+            { input: "S/ 4995", expected: 49.95, description: "String en centavos con moneda" },
+            { input: 0, expected: 0, description: "Cero" },
+            { input: null, expected: 0, description: "null" },
+            { input: undefined, expected: 0, description: "undefined" },
+            { input: "1,234.56", expected: 1234.56, description: "Miles con decimales" },
+            { input: "1234.56", expected: 1234.56, description: "Miles con punto" },
+        ];
+
+        const resultsDiv = document.getElementById('results');
+        let passCount = 0;
+        let failCount = 0;
+
+        testCases.forEach((test, index) => {
+            const result = parseHmValue(test.input);
+            const passed = Math.abs(result - test.expected) < 0.01; // Comparar con tolerancia
+            if (passed) passCount++;
+            else failCount++;
+
+            const div = document.createElement('div');
+            div.className = 'test-case ' + (passed ? 'pass' : 'fail');
+            div.innerHTML = `
+                <strong>Test ${index + 1}: ${test.description}</strong><br>
+                Input: <code>${JSON.stringify(test.input)}</code><br>
+                Expected: <code>${test.expected}</code><br>
+                Got: <code>${result}</code><br>
+                Status: <strong>${passed ? '✓ PASS' : '✗ FAIL'}</strong>
+            `;
+            resultsDiv.appendChild(div);
+        });
+
+        const summary = document.createElement('div');
+        summary.style.marginTop = '20px';
+        summary.style.padding = '10px';
+        summary.style.backgroundColor = '#e7f3ff';
+        summary.style.border = '2px solid #2196F3';
+        summary.innerHTML = `<h2>Resumen: ${passCount} PASS, ${failCount} FAIL</h2>`;
+        resultsDiv.appendChild(summary);
+    </script>
+</body>
+</html>
