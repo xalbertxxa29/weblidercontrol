@@ -11663,8 +11663,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // 1. Si accessControl no está definido aún, retornamos false (seguro)
     if (typeof accessControl === 'undefined' || !accessControl) return false;
 
-    // 2. ADMIN siempre tiene acceso
-    if (accessControl.userType === 'ADMIN') return true;
+    // 2. ADMIN y SUPERVISOR siempre tienen acceso
+    if (accessControl.userType === 'ADMIN' || accessControl.userType === 'SUPERVISOR') return true;
 
     // 3. Cliente HM tiene acceso
     if (accessControl.userType === 'CLIENTE') {
