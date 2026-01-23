@@ -5398,201 +5398,126 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Función para generar PDF del Cuaderno (Cronología de Ocurrencias)
-    function generarPDFCuaderno() {
+    async function generarPDFCuaderno() {
       const raw = cuadernoTbody?.dataset.rows;
       if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
 
       const rows = JSON.parse(raw);
       if (rows.length === 0) { UI.toast('No hay registros para exportar'); return; }
 
-      // Obtener cliente y unidad seleccionados
-      const clienteSeleccionado = document.getElementById('cuaderno-cliente')?.value || '';
-      const unidadSeleccionada = document.getElementById('cuaderno-unidad')?.value || '';
-
       UI.showOverlay('Generando PDF...', 'Creando cuaderno de ocurrencias');
 
-      // Cargar logo como imagen local
-      fetch('logo_liberman.png')
-        .then(res => res.blob())
-        .then(blob => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const logoDataUrl = reader.result;
-            generarPDFCuadernoConLogo(rows, logoDataUrl, clienteSeleccionado, unidadSeleccionada);
-          };
-          reader.onerror = () => {
-            generarPDFCuadernoConLogo(rows, null, clienteSeleccionado, unidadSeleccionada);
-          };
-          reader.readAsDataURL(blob);
-        })
-        .catch(e => {
-          generarPDFCuadernoConLogo(rows, null, clienteSeleccionado, unidadSeleccionada);
-        });
-    }
-
-    function generarPDFCuadernoConLogo(rows, logoDataUrl, cliente, unidad) {
       try {
-        const colorPrimario = '#2c5aa0';
-        const colorSecundario = '#1a3d5c';
-        const content = [];
-
-        // ENCABEZADO CON LOGO
-        const encabezado = {
-          columns: [
-            {
-              stack: [
-                { text: 'LIDERMAN', fontSize: 16, bold: true, color: '#c41e3a' },
-                { text: 'SOLUCIONES TECNOLÓGICAS', fontSize: 10, color: colorPrimario },
-                { text: 'CUADERNO DE OCURRENCIAS DE SEGURIDAD', fontSize: 12, bold: true, color: colorPrimario, margin: [0, 5, 0, 0] }
-              ],
-              width: logoDataUrl ? '70%' : '100%'
-            }
-          ],
-          margin: [0, 0, 0, 15]
-        };
-
-        if (logoDataUrl) {
-          encabezado.columns.push({
-            image: logoDataUrl,
-            width: 70,
-            height: 70,
-            alignment: 'right',
-            margin: [10, 0, 0, 0]
-          });
+        // Cargar logo
+        let logoBase64 = null;
+        try {
+          const logoResponse = await fetch('logo_liberman.png');
+          if (logoResponse.ok) {
+            const logoBlob = await logoResponse.blob();
+            logoBase64 = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.readAsDataURL(logoBlob);
+            });
+          }
+        } catch (e) {
+          console.warn('No se pudo cargar logo PDF', e);
         }
 
-        content.push(encabezado);
-
-        // LÍNEA SEPARADORA
-        content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 2, lineColor: colorPrimario }], margin: [0, 0, 0, 12] });
-
-        // INFORMACIÓN DE FILTROS
-        const fechaInicio = cuadernoFechaInicio?.value || 'Sin filtro';
-        const fechaFin = cuadernoFechaFin?.value || 'Sin filtro';
-        const clienteDisplay = cliente || 'Todos';
-        const unidadDisplay = unidad || 'Todas';
-
-        content.push({
-          columns: [
-            { text: `Cliente: ${clienteDisplay} | Unidad: ${unidadDisplay}`, fontSize: 11, bold: true, color: '#c41e3a' },
-            { text: `Total de registros: ${rows.length}`, fontSize: 10, color: '#555', alignment: 'right' }
-          ],
-          margin: [0, 0, 0, 10]
-        });
-
-        content.push({
-          columns: [
-            { text: `Período: ${fechaInicio} hasta ${fechaFin}`, fontSize: 10, color: '#555' }
-          ],
-          margin: [0, 0, 0, 15]
-        });
-
-        // TABLA DE CONTENIDO / CRONOLOGÍA CON HEADERS MEJORADOS
         const tableBody = [];
 
-        // ENCABEZADOS CON STYLING SIMPLE
-        const headerRow = [
-          { text: 'Nº', bold: true, color: '#fff', fillColor: colorPrimario, alignment: 'center', fontSize: 10, margin: [2, 6, 2, 6] },
-          { text: 'FECHA Y HORA', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-          { text: 'CLIENTE', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-          { text: 'UNIDAD', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-          { text: 'TIPO', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-          { text: 'USR. ENTRANTE', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-          { text: 'USR. SALIENTE', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-          { text: 'USUARIO', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] },
-          { text: 'COMENTARIO', bold: true, color: '#fff', fillColor: colorPrimario, fontSize: 10, margin: [2, 6, 2, 6] }
+        // Encabezados
+        const headers = [
+          { text: 'FECHA', style: 'tableHeader' },
+          { text: 'CLIENTE', style: 'tableHeader' },
+          { text: 'TYPE', style: 'tableHeader' },
+          { text: 'ENTRANTE', style: 'tableHeader' },
+          { text: 'SALIENTE', style: 'tableHeader' },
+          { text: 'USUARIO', style: 'tableHeader' },
+          { text: 'COMENTARIO', style: 'tableHeader' }
         ];
-        tableBody.push(headerRow);
+        tableBody.push(headers);
 
-        // Agregar filas con datos
         rows.forEach((r, idx) => {
           const fechaHora = r.timestampStr || 'N/A';
-          const usuarioEntrante = r.usuarioEntrante?.nombre || r.usuarioEntrante?.id || '-';
-          const usuarioSaliente = r.usuarioSaliente?.nombre || r.usuarioSaliente?.id || '-';
+          const usuarioEntrante = r.usuarioEntrante?.id || r.usuarioEntrante?.nombre || '-';
+          const usuarioSaliente = r.usuarioSaliente?.id || r.usuarioSaliente?.nombre || '-';
           const usuario = r.usuario || usuarioEntrante || usuarioSaliente || '-';
-          const backgroundColor = idx % 2 === 0 ? '#fafafa' : '#ffffff';
 
           tableBody.push([
-            { text: idx + 1, alignment: 'center', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-            { text: fechaHora, fontSize: 8, fillColor: backgroundColor, bold: true, color: colorPrimario, margin: [2, 4, 2, 4] },
-            { text: r.cliente || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-            { text: r.unidad || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-            { text: r.tipoRegistro || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-            { text: usuarioEntrante, fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-            { text: usuarioSaliente, fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-            { text: usuario, fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] },
-            { text: r.comentario || '-', fontSize: 8, fillColor: backgroundColor, margin: [2, 4, 2, 4] }
+            { text: fechaHora, style: 'tableCell', fontSize: 8 },
+            { text: r.cliente || '-', style: 'tableCell', fontSize: 8 },
+            { text: r.tipoRegistro || '-', style: 'tableCell', fontSize: 8, alignment: 'center' },
+            { text: usuarioEntrante, style: 'tableCell', fontSize: 8 },
+            { text: usuarioSaliente, style: 'tableCell', fontSize: 8 },
+            { text: usuario, style: 'tableCell', fontSize: 8 },
+            { text: r.comentario || '', style: 'tableCell', fontSize: 8 }
           ]);
         });
 
-        content.push({
-          table: {
-            widths: ['4%', '12%', '12%', '12%', '10%', '14%', '14%', '12%', '14%'],
-            body: tableBody,
-            headerRows: 1
-          },
-          layout: {
-            fillColor: function (i, node) {
-              if (i === 0) return colorPrimario;  // Encabezado
-              return (i % 2 === 0) ? '#fafafa' : '#ffffff';
-            },
-            hLineWidth: (i) => i === 0 ? 2 : 0.5,
-            vLineWidth: () => 0.5,
-            hLineColor: () => '#ddd',
-            vLineColor: () => '#ddd',
-            paddingLeft: () => 6,
-            paddingRight: () => 6,
-            paddingTop: () => 6,
-            paddingBottom: () => 6
-          },
-          margin: [0, 0, 0, 20]
-        });
-
-        // PIE DE PÁGINA
-        content.push({ canvas: [{ type: 'line', x1: 0, y1: 0, x2: 515, y2: 0, lineWidth: 1, lineColor: '#ccc' }], margin: [0, 10, 0, 10] });
-
-        const fechaActual = new Date().toLocaleString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-        content.push({
-          columns: [
-            { text: `Generado: ${fechaActual}`, fontSize: 9, color: '#999' },
-            { text: 'Liderman - Soluciones Tecnológicas', fontSize: 9, color: '#999', alignment: 'right' }
-          ],
-          margin: [0, 0, 0, 0]
-        });
-
-        // ESTILOS DEL DOCUMENTO
-        const styles = {
-          reportNumber: { fontSize: 16, bold: true, color: colorPrimario },
-          sectionTitle: { fontSize: 13, bold: true, color: colorPrimario, border: [false, false, false, true], borderColor: colorSecundario }
-        };
-
-        // DEFINICIÓN DEL DOCUMENTO PDF
         const docDefinition = {
-          content: content,
-          styles: styles,
-          defaultStyle: { fontSize: 10 },
-          pageMargins: [40, 40, 40, 60],
-          footer: (currentPage, pageCount) => ({
-            text: `Página ${currentPage} de ${pageCount}`,
-            alignment: 'center',
-            fontSize: 9,
-            color: '#999',
-            margin: [0, 10, 0, 0]
-          })
+          pageSize: 'A4',
+          pageOrientation: 'landscape',
+          pageMargins: [30, 80, 30, 40],
+          header: {
+            margin: [30, 20, 30, 0],
+            columns: [
+              logoBase64 ? { image: logoBase64, width: 60 } : { text: '' },
+              {
+                stack: [
+                  { text: 'LIDER CONTROL', style: 'headerTitle', alignment: 'center' },
+                  { text: 'Cuaderno de Ocurrencias', style: 'headerSubtitle', alignment: 'center' }
+                ],
+                width: '*'
+              },
+              {
+                text: `Generado: ${new Date().toLocaleDateString('es-PE')}`,
+                alignment: 'right',
+                fontSize: 9,
+                margin: [0, 10, 0, 0]
+              }
+            ]
+          },
+          content: [
+            {
+              columns: [
+                { text: `Total de Registros: ${rows.length}`, style: 'infoText', width: '33%' },
+                { text: `Cliente: ${document.getElementById('cuaderno-cliente')?.value || 'Todos'}`, style: 'infoText', width: '33%' },
+                { text: `Unidad: ${document.getElementById('cuaderno-unidad')?.value || 'Todas'}`, style: 'infoText', width: '33%' }
+              ],
+              margin: [0, 0, 0, 15]
+            },
+            {
+              table: {
+                headerRows: 1,
+                widths: ['12%', '12%', '10%', '15%', '15%', '12%', '24%'],
+                body: tableBody
+              },
+              layout: {
+                fillColor: function (i, node) { return (i === 0) ? '#2c5aa0' : (i % 2 === 0) ? '#f3f4f6' : null; },
+                hLineWidth: function (i, node) { return (i === 0 || i === node.table.body.length) ? 1 : 0.5; },
+                vLineWidth: function (i, node) { return 0.5; },
+                hLineColor: function (i, node) { return '#e5e7eb'; },
+                vLineColor: function (i, node) { return '#e5e7eb'; }
+              }
+            }
+          ],
+          styles: {
+            headerTitle: { fontSize: 18, bold: true, color: '#1e3a8a' },
+            headerSubtitle: { fontSize: 14, color: '#4b5563', margin: [0, 5, 0, 0] },
+            infoText: { fontSize: 10, color: '#4a5568' },
+            tableHeader: { bold: true, fontSize: 9, color: 'white', alignment: 'center', margin: [0, 3, 0, 3] },
+            tableCell: { margin: [0, 2, 0, 2] }
+          }
         };
 
-        // Generar y descargar PDF
-        const nombreArchivo = `Cuaderno_Ocurrencias_${new Date().toISOString().split('T')[0]}.pdf`;
-        try {
-          pdfMake.createPdf(docDefinition).download(nombreArchivo);
-          UI.toast('✓ PDF descargado exitosamente');
-        } catch (e) {
-          UI.toast('Error al descargar PDF. Intenta nuevamente.');
-        }
-        UI.toast('PDF generado exitosamente');
-        UI.hideOverlay();
+        pdfMake.createPdf(docDefinition).download(`Cuaderno_${new Date().getTime()}.pdf`);
+        UI.toast('✅ PDF generado correctamente');
+
       } catch (error) {
-        UI.toast('Error al generar PDF: ' + error.message);
+        console.error(error);
+        UI.toast('❌ Error al generar PDF');
+      } finally {
         UI.hideOverlay();
       }
     }
@@ -5771,16 +5696,52 @@ document.addEventListener('DOMContentLoaded', () => {
         const rows = JSON.parse(raw);
         const wb = XLSX.utils.book_new();
 
-        // Preparar datos con formato de tabla
+        // Encabezados con metadatos
         const headers = ['FECHA', 'CLIENTE', 'UNIDAD', 'CATEGORÍA', 'SUB CATEGORÍA', 'NIVEL DE RIESGO', 'ESTADO', 'COMENTARIO'];
-        const data = [headers];
+        const ws_data = [
+          ['LIDER CONTROL - REPORTE DE INCIDENCIAS'],
+          [`Fecha Generación: ${new Date().toLocaleString('es-PE')}`],
+          [`Total Registros: ${rows.length}`],
+          [], // Espacio
+          headers
+        ];
 
         for (const r of rows) {
-          const f = r.timestamp?.toDate ? r.timestamp.toDate() : new Date(r.timestamp);
-          const fecha = (f instanceof Date && !Number.isNaN(f.getTime())) ? f.toLocaleDateString('es-PE') + ' ' + f.toLocaleTimeString('es-PE') : '';
+          // Parsear fecha robustamente
+          let fechaStr = '';
+          const parseDate = (val) => {
+            if (!val) return null;
+            if (val.toDate && typeof val.toDate === 'function') return val.toDate();
+            if (val instanceof Date) return val;
+            if (typeof val === 'number') return new Date(val);
+            if (typeof val === 'string') {
+              // Try ISO
+              let d = new Date(val);
+              if (!isNaN(d.getTime())) return d;
+              // Try DD/MM/YYYY
+              const parts = val.split(/[/\s,:-]+/);
+              if (parts.length >= 3) {
+                const day = parseInt(parts[0], 10);
+                const month = parseInt(parts[1], 10) - 1;
+                const year = parseInt(parts[2], 10);
+                const hour = parts.length > 3 ? parseInt(parts[3], 10) : 0;
+                const min = parts.length > 4 ? parseInt(parts[4], 10) : 0;
+                d = new Date(year, month, day, hour, min);
+                if (!isNaN(d.getTime())) return d;
+              }
+            }
+            return null;
+          };
 
-          data.push([
-            fecha,
+          const fechaObj = parseDate(r.timestampStr) || parseDate(r.timestamp);
+          if (fechaObj) {
+            fechaStr = fechaObj.toLocaleString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+          } else {
+            fechaStr = r.timestampStr || 'N/A';
+          }
+
+          ws_data.push([
+            fechaStr,
             r.cliente || '',
             r.unidad || '',
             r.tipoIncidente || '',
@@ -5791,69 +5752,61 @@ document.addEventListener('DOMContentLoaded', () => {
           ]);
         }
 
-        // Crear hoja con datos
-        const ws = XLSX.utils.aoa_to_sheet(data);
+        // Crear hoja
+        const ws = XLSX.utils.aoa_to_sheet(ws_data);
 
-        // Aplicar ancho de columnas
+        // Estilos de columnas
         ws['!cols'] = [
           { wch: 20 }, // FECHA
-          { wch: 18 }, // CLIENTE
-          { wch: 18 }, // UNIDAD
+          { wch: 20 }, // CLIENTE
+          { wch: 20 }, // UNIDAD
           { wch: 25 }, // CATEGORÍA
-          { wch: 25 }, // SUB CATEGORÍA
-          { wch: 18 }, // NIVEL DE RIESGO
+          { wch: 30 }, // SUB CATEGORÍA
+          { wch: 15 }, // RIESGO
           { wch: 15 }, // ESTADO
-          { wch: 30 }  // COMENTARIO
+          { wch: 40 }  // COMENTARIO
         ];
 
-        // Aplicar estilos a la cabecera
-        const headerStyle = {
-          font: { bold: true, color: { rgb: 'FFFFFF' } },
-          fill: { fgColor: { rgb: 'FF4472C4' } },
-          alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-          border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
-        };
+        // Estilo Título
+        ws['A1'].font = { bold: true, size: 14, color: { rgb: 'FF2c5aa0' } };
 
-        for (let i = 0; i < headers.length; i++) {
-          const cell = XLSX.utils.encode_cell({ r: 0, c: i });
-          if (ws[cell]) ws[cell].s = headerStyle;
+        // Estilo Encabezados Tabla (Fila 5)
+        const headerRow = 5;
+        const colCount = 8;
+        for (let c = 0; c < colCount; c++) {
+          const cellRef = XLSX.utils.encode_cell({ r: headerRow - 1, c: c });
+          if (!ws[cellRef]) ws[cellRef] = { v: '' }; // Asegurar celda
+          ws[cellRef].s = {
+            font: { bold: true, color: { rgb: 'FFFFFFFF' } },
+            fill: { fgColor: { rgb: 'FF2c5aa0' } },
+            alignment: { horizontal: 'center', vertical: 'center' }
+          };
         }
 
-        // Aplicar borde a todas las celdas
-        for (let r = 0; r < data.length; r++) {
-          for (let c = 0; c < headers.length; c++) {
-            const cell = XLSX.utils.encode_cell({ r, c });
-            if (ws[cell]) {
-              if (!ws[cell].s) ws[cell].s = {};
-              ws[cell].s.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
-              ws[cell].s.alignment = { wrapText: true };
+        // Estilos para celdas de datos (alineación superior y wrap text)
+        for (let r = headerRow; r < ws_data.length; r++) {
+          for (let c = 0; c < colCount; c++) {
+            const cellRef = XLSX.utils.encode_cell({ r: r, c: c });
+            if (ws[cellRef]) {
+              if (!ws[cellRef].s) ws[cellRef].s = {};
+              ws[cellRef].s.alignment = { vertical: 'top', wrapText: true };
+
+              // Colorear nivel de riesgo
+              if (c === 5) { // Columna RIESGO
+                const val = (ws[cellRef].v || '').toUpperCase();
+                if (val === 'ALTO' || val === 'CRÍTICO') ws[cellRef].s.font = { color: { rgb: 'FFdc2626' }, bold: true };
+                else if (val === 'MEDIO') ws[cellRef].s.font = { color: { rgb: 'FFd97706' }, bold: true };
+                else if (val === 'BAJO') ws[cellRef].s.font = { color: { rgb: 'FF16a34a' }, bold: true };
+              }
             }
           }
         }
 
         XLSX.utils.book_append_sheet(wb, ws, 'Incidencias');
-
-        // Hoja de metadatos
-        const metadata = [
-          ['REPORTE DE INCIDENCIAS'],
-          ['Fecha de Generación', new Date().toLocaleString('es-PE')],
-          ['Total de Registros', rows.length],
-          [],
-          ['Filtros Aplicados'],
-          ['Cliente', document.getElementById('incidencias-cliente')?.value || 'Todos'],
-          ['Unidad', document.getElementById('incidencias-unidad')?.value || 'Todas'],
-          ['Estado', document.getElementById('incidencias-estado')?.value || 'Todos'],
-          ['Rango de Fechas', document.getElementById('incidencias-fecha-inicio')?.value + ' a ' + document.getElementById('incidencias-fecha-fin')?.value || 'N/A']
-        ];
-
-        const metaWs = XLSX.utils.aoa_to_sheet(metadata);
-        metaWs['!cols'] = [{ wch: 25 }, { wch: 35 }];
-        XLSX.utils.book_append_sheet(wb, metaWs, 'Información');
-
-        // Descargar archivo
         XLSX.writeFile(wb, `incidencias_${new Date().toISOString().split('T')[0]}.xlsx`);
         UI.toast('Exportado a Excel correctamente');
       } catch (e) {
+        console.error(e);
         UI.toast('Error al exportar a Excel');
       }
     }
@@ -6779,34 +6732,75 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!raw) { UI.toast('Primero realiza una búsqueda'); return; }
       const rows = JSON.parse(raw);
 
-      // Crear libro XLS
-      let html = '<table border="1"><tr style="background-color:#2c5aa0;color:white;font-weight:bold;">';
-      html += '<th>FECHA Y HORA</th><th>CLIENTE</th><th>UNIDAD</th><th>TIPO</th><th>USUARIO ENTRANTE</th><th>USUARIO SALIENTE</th><th>USUARIO</th><th>COMENTARIO</th></tr>';
+      try {
+        const wb = XLSX.utils.book_new();
 
-      for (const r of rows) {
-        const fechaHora = r.timestampStr || 'N/A';
-        const usuarioEntrante = r.usuarioEntrante?.id || '';
-        const usuarioSaliente = r.usuarioSaliente?.id || '';
-        const usuario = r.usuario || usuarioEntrante || usuarioSaliente || '';
-        html += '<tr>';
-        html += `<td>${fechaHora}</td>`;
-        html += `<td>${r.cliente || ''}</td>`;
-        html += `<td>${r.unidad || ''}</td>`;
-        html += `<td>${r.tipoRegistro || ''}</td>`;
-        html += `<td>${usuarioEntrante}</td>`;
-        html += `<td>${usuarioSaliente}</td>`;
-        html += `<td>${usuario}</td>`;
-        html += `<td>${r.comentario || ''}</td>`;
-        html += '</tr>';
+        // Encabezados de metadatos
+        const ws_data = [
+          ['LIDER CONTROL - CUADERNO DE OCURRENCIAS'],
+          [`Fecha Generación: ${new Date().toLocaleString('es-PE')}`],
+          [`Total Registros: ${rows.length}`],
+          [], // Espacio
+          ['FECHA Y HORA', 'CLIENTE', 'UNIDAD', 'TIPO', 'USUARIO ENTRANTE', 'USUARIO SALIENTE', 'USUARIO', 'COMENTARIO']
+        ];
+
+        // Datos
+        rows.forEach(r => {
+          const fechaHora = r.timestampStr || 'N/A';
+          const usuarioEntrante = r.usuarioEntrante?.id || r.usuarioEntrante?.nombre || '';
+          const usuarioSaliente = r.usuarioSaliente?.id || r.usuarioSaliente?.nombre || '';
+          const usuario = r.usuario || usuarioEntrante || usuarioSaliente || '';
+
+          ws_data.push([
+            fechaHora,
+            r.cliente || '',
+            r.unidad || '',
+            r.tipoRegistro || '',
+            usuarioEntrante,
+            usuarioSaliente,
+            usuario,
+            r.comentario || ''
+          ]);
+        });
+
+        const ws = XLSX.utils.aoa_to_sheet(ws_data);
+
+        // Estilos de columnas
+        ws['!cols'] = [
+          { wch: 20 }, // Fecha
+          { wch: 15 }, // Cliente
+          { wch: 15 }, // Unidad
+          { wch: 12 }, // Tipo
+          { wch: 20 }, // Entrante
+          { wch: 20 }, // Saliente
+          { wch: 20 }, // Usuario
+          { wch: 40 }  // Comentario
+        ];
+
+        // Estilo Título
+        ws['A1'].font = { bold: true, size: 14, color: { rgb: 'FF2c5aa0' } };
+
+        // Estilo Encabezados Tabla (Fila 5)
+        const headerRow = 5;
+        const colCount = 8;
+        for (let c = 0; c < colCount; c++) {
+          const cellRef = XLSX.utils.encode_cell({ r: headerRow - 1, c: c });
+          if (!ws[cellRef]) ws[cellRef] = { v: '' }; // Asegurar celda
+          ws[cellRef].s = {
+            font: { bold: true, color: { rgb: 'FFFFFFFF' } },
+            fill: { fgColor: { rgb: 'FF2c5aa0' } },
+            alignment: { horizontal: 'center', vertical: 'center' }
+          };
+        }
+
+        XLSX.utils.book_append_sheet(wb, ws, 'Cuaderno');
+        XLSX.writeFile(wb, `Cuaderno_${moment().format('YYYYMMDD_HHmm')}.xlsx`);
+        UI.toast('✅ Excel exportado correctamente');
+
+      } catch (e) {
+        console.error(e);
+        UI.toast('❌ Error al exportar Excel');
       }
-      html += '</table>';
-
-      const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'cuaderno.xls';
-      a.click();
-      URL.revokeObjectURL(a.href);
     });
 
     cuadernoBtnImprimirPDF?.addEventListener('click', () => {
