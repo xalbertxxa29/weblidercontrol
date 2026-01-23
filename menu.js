@@ -3957,11 +3957,35 @@ document.addEventListener('DOMContentLoaded', () => {
           };
         });
 
-        // Ordenar por horarioInicio descendente
+        // Ordenar por horarioInicio descendente (robust date parsing)
         registros.sort((a, b) => {
-          const dateA = a.horarioInicio?.toDate?.() || new Date(a.horarioInicio || 0);
-          const dateB = b.horarioInicio?.toDate?.() || new Date(b.horarioInicio || 0);
-          return dateB - dateA;
+          const parseDate = (val) => {
+            if (!val) return 0;
+            if (val.toDate && typeof val.toDate === 'function') return val.toDate().getTime();
+            if (val instanceof Date) return val.getTime();
+            if (typeof val === 'number') return val;
+            if (typeof val === 'string') {
+              // Try ISO or standard
+              let d = new Date(val);
+              if (!isNaN(d.getTime())) return d.getTime();
+              // Try DD/MM/YYYY HH:mm
+              const parts = val.split(/[/\s,:-]+/);
+              if (parts.length >= 3) {
+                const day = parseInt(parts[0], 10);
+                const month = parseInt(parts[1], 10) - 1;
+                const year = parseInt(parts[2], 10);
+                const hour = parts.length > 3 ? parseInt(parts[3], 10) : 0;
+                const min = parts.length > 4 ? parseInt(parts[4], 10) : 0;
+                d = new Date(year, month, day, hour, min);
+                if (!isNaN(d.getTime())) return d.getTime();
+              }
+            }
+            return 0;
+          };
+
+          const timeA = parseDate(a.horarioInicio);
+          const timeB = parseDate(b.horarioInicio);
+          return timeB - timeA;
         });
 
         // Aplicar filtros de cliente, unidad, estado
@@ -10845,23 +10869,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Parsear fecha - puede venir en varios formatos
         let fecha = new Date();
-        if (data.fechaHora) {
-          if (typeof data.fechaHora === 'string') {
-            // Intentar parsear string en formato "DD/MM/YYYY, HH:MM:SS"
-            try {
-              fecha = new Date(data.fechaHora);
-              if (isNaN(fecha.getTime())) {
-                // Si falla, usar fecha actual
-                fecha = new Date();
+        const parseRobustDate = (val) => {
+          if (!val) return null;
+          if (val.toDate && typeof val.toDate === 'function') return val.toDate();
+          if (val instanceof Date) return val;
+          if (typeof val === 'number') return new Date(val);
+          if (typeof val === 'string') {
+            // Check for DD/MM/YYYY format specifically (with slashes)
+            if (val.includes('/')) {
+              const parts = val.split(/[/\s,:-]+/);
+              if (parts.length >= 3) {
+                const day = parseInt(parts[0], 10);
+                const month = parseInt(parts[1], 10) - 1;
+                const year = parseInt(parts[2], 10);
+                const hour = parts.length > 3 ? parseInt(parts[3], 10) : 0;
+                const min = parts.length > 4 ? parseInt(parts[4], 10) : 0;
+                const d = new Date(year, month, day, hour, min);
+                if (!isNaN(d.getTime())) return d;
               }
-            } catch (e) {
-              fecha = new Date();
             }
-          } else if (data.fechaHora.toDate) {
-            fecha = data.fechaHora.toDate();
+            // Fallback to ISO or other formats
+            let d = new Date(val);
+            if (!isNaN(d.getTime())) return d;
           }
+          return null;
+        };
+
+        if (data.fechaHora) {
+          fecha = parseRobustDate(data.fechaHora) || new Date();
         } else if (data.timestamp) {
-          fecha = data.timestamp.toDate ? data.timestamp.toDate() : new Date(data.timestamp);
+          fecha = parseRobustDate(data.timestamp) || new Date();
         }
 
         return {
@@ -10966,12 +11003,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ORDENAR POR TIMESTAMP: MÁS RECIENTE PRIMERO (descendente)
     data.sort((a, b) => {
-      let tsA = a.timestamp;
-      let tsB = b.timestamp;
-      if (tsA && tsA.toDate) tsA = tsA.toDate();
-      else if (typeof tsA === 'string') tsA = new Date(tsA);
-      if (tsB && tsB.toDate) tsB = tsB.toDate();
-      else if (typeof tsB === 'string') tsB = new Date(tsB);
+      let tsA = a.fecha || new Date(0);
+      let tsB = b.fecha || new Date(0);
       return tsB - tsA; // Descendente: más reciente primero
     });
 
@@ -10988,9 +11021,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // Gráfico de Incidencias por Fecha (usando timestamp)
     const byDate = {};
     data.forEach(d => {
-      let ts = d.timestamp;
-      if (ts && ts.toDate) ts = ts.toDate();
-      else if (typeof ts === 'string') ts = new Date(ts);
+      // Use normalized 'fecha' from loading step
+      let ts = d.fecha instanceof Date ? d.fecha : new Date();
+      // Safety check just in case
+      if (isNaN(ts.getTime())) ts = new Date();
+
       const dateKey = ts.toISOString().split('T')[0];
       byDate[dateKey] = (byDate[dateKey] || 0) + 1;
     });
@@ -11204,41 +11239,16 @@ document.addEventListener('DOMContentLoaded', () => {
       UI.showOverlay('Exportando Excel…', 'Preparando documento...');
       const data = getFilteredIncidenciaQRData();
 
-      const ws_data = [
-        ['LIDER CONTROL - Reporte de Incidencias QR'],
-        [`Fecha Generación: ${new Date().toLocaleString('es-PE')}`],
-        [`Total de Registros: ${data.length}`],
-        [],
-        ['Timestamp', 'Usuario', 'Cliente', 'Unidad', 'QR', 'Pregunta', 'Respuesta', 'Puesto', 'Punto de Control', 'Estado', 'Foto']
-      ];
+      // Preparar datos para Excel
+      const headers = ['Fecha/Hora', 'Usuario', 'Cliente', 'Unidad', 'QR', 'Pregunta', 'Respuesta', 'Puesto', 'Punto de Control', 'Estado'];
+      const excelData = [headers];
 
       data.forEach(d => {
-        // Parsear timestamp - FORMATO: dd/mm/yyyy hh:mm
-        let timestampStr = '';
-        if (d.timestamp) {
-          let ts = d.timestamp;
-          if (ts.toDate) {
-            ts = ts.toDate();
-          } else if (typeof ts === 'string') {
-            ts = new Date(ts);
-          }
-          if (ts instanceof Date && !Number.isNaN(ts.getTime())) {
-            const day = String(ts.getDate()).padStart(2, '0');
-            const month = String(ts.getMonth() + 1).padStart(2, '0');
-            const year = ts.getFullYear();
-            const hours = String(ts.getHours()).padStart(2, '0');
-            const minutes = String(ts.getMinutes()).padStart(2, '0');
-            timestampStr = `${day}/${month}/${year} ${hours}:${minutes}`;
-          }
-        } else if (d.fecha instanceof Date) {
-          const day = String(d.fecha.getDate()).padStart(2, '0');
-          const month = String(d.fecha.getMonth() + 1).padStart(2, '0');
-          const year = d.fecha.getFullYear();
-          const hours = String(d.fecha.getHours()).padStart(2, '0');
-          const minutes = String(d.fecha.getMinutes()).padStart(2, '0');
-          timestampStr = `${day}/${month}/${year} ${hours}:${minutes}`;
-        } else if (typeof d.fechaHora === 'string') {
-          timestampStr = d.fechaHora;
+        // Parsear fecha robustamente
+        let fechaStr = '';
+        const fechaObj = d.fecha instanceof Date ? d.fecha : new Date(d.fechaHora || d.timestamp || 0);
+        if (!isNaN(fechaObj.getTime())) {
+          fechaStr = fechaObj.toLocaleString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
         }
 
         // Obtener primera pregunta y respuesta
@@ -11263,104 +11273,47 @@ document.addEventListener('DOMContentLoaded', () => {
         const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
         const estado = tieneRespuestas ? 'Completada' : 'Pendiente';
 
-        // PUESTO: obtener el puesto del registro
-        const puestoDisplay = d.puesto || '';
-
-        // PUNTO: obtener el nombrePunto
-        const puntoDisplay = d.nombrePunto || '';
-
-        ws_data.push([
-          timestampStr,
+        excelData.push([
+          fechaStr,
           d.usuario || d.nombrePunto || '',
           d.cliente || '',
           d.unidad || '',
           codigoQR,
-          pregunta.substring(0, 50),
-          respuesta.substring(0, 50),
-          puestoDisplay,
-          puntoDisplay,
-          estado,
-          d.foto || ''
+          pregunta,
+          respuesta,
+          d.puesto || '',
+          d.nombrePunto || '',
+          estado
         ]);
       });
 
-      const ws = XLSX.utils.aoa_to_sheet(ws_data);
-
-      // Configurar estilos y ancho de columnas
-      ws['!cols'] = [
-        { wch: 18 }, // Timestamp
-        { wch: 15 }, // Usuario
-        { wch: 15 }, // Cliente
-        { wch: 12 }, // Unidad
-        { wch: 12 }, // QR
-        { wch: 20 }, // Pregunta
-        { wch: 20 }, // Respuesta
-        { wch: 12 }, // Puesto
-        { wch: 12 }, // Punto
-        { wch: 12 }, // Estado
-        { wch: 30 }  // Foto
-      ];
-
-      // Configurar el ancho de la primera fila (título)
-      ws['A1'].alignment = { horizontal: 'center', vertical: 'center' };
-      ws['A1'].font = { bold: true, size: 14, color: { rgb: 'FF2c5aa0' } };
-
-      // Configurar filas de información
-      if (ws['A2']) {
-        ws['A2'].font = { size: 10, color: { rgb: 'FF4a5568' } };
-      }
-      if (ws['A3']) {
-        ws['A3'].font = { size: 10, color: { rgb: 'FF4a5568' } };
-      }
-
-      // Configurar fila de encabezados (fila 5)
-      const headerRow = 5;
-      for (let col = 0; col < 11; col++) {
-        const cellRef = XLSX.utils.encode_col(col) + headerRow;
-        if (ws[cellRef]) {
-          ws[cellRef].fill = { fgColor: { rgb: 'FF2c5aa0' } };
-          ws[cellRef].font = { bold: true, color: { rgb: 'FFFFFFFF' }, size: 11 };
-          ws[cellRef].alignment = { horizontal: 'center', vertical: 'center', wrapText: true };
-        }
-      }
-
-      // Configurar filas de datos
-      for (let row = 6; row <= ws_data.length; row++) {
-        for (let col = 0; col < 11; col++) {
-          const cellRef = XLSX.utils.encode_col(col) + row;
-          if (ws[cellRef]) {
-            ws[cellRef].alignment = { horizontal: col === 9 ? 'center' : 'left', vertical: 'top', wrapText: true };
-            ws[cellRef].border = {
-              top: { style: 'thin', color: { rgb: 'FFe2e8f0' } },
-              bottom: { style: 'thin', color: { rgb: 'FFe2e8f0' } },
-              left: { style: 'thin', color: { rgb: 'FFe2e8f0' } },
-              right: { style: 'thin', color: { rgb: 'FFe2e8f0' } }
-            };
-
-            // Colorear estado
-            if (col === 9) {
-              const estadoCell = ws[cellRef];
-              if (estadoCell.v === 'Completada') {
-                estadoCell.fill = { fgColor: { rgb: 'FFd1fae5' } };
-                estadoCell.font = { color: { rgb: 'FF10b981' }, bold: true };
-              } else if (estadoCell.v === 'Pendiente') {
-                estadoCell.fill = { fgColor: { rgb: 'FFfef3c7' } };
-                estadoCell.font = { color: { rgb: 'FFf59e0b' }, bold: true };
-              }
-            }
-          }
-        }
-      }
-
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Incidencia QR');
+      const ws = XLSX.utils.aoa_to_sheet(excelData);
+
+      // Estilos básicos
+      const wscols = [
+        { wch: 20 }, // Fecha
+        { wch: 25 }, // Usuario
+        { wch: 20 }, // Cliente
+        { wch: 20 }, // Unidad
+        { wch: 15 }, // QR
+        { wch: 30 }, // Pregunta
+        { wch: 30 }, // Respuesta
+        { wch: 20 }, // Puesto
+        { wch: 20 }, // Punto
+        { wch: 15 }  // Estado
+      ];
+      ws['!cols'] = wscols;
+
+      XLSX.utils.book_append_sheet(wb, ws, 'Incidencias QR');
       XLSX.writeFile(wb, `IncidenciaQR_${new Date().getTime()}.xlsx`);
 
       UI.hideOverlay();
       UI.toast('✅ Excel exportado correctamente');
     } catch (err) {
+      console.error(err);
       UI.hideOverlay();
-      UI.toast('❌ Error al exportar Excel');
+      UI.toast('❌ Error al exportar Excel: ' + err.message);
     }
   }
 
@@ -11369,274 +11322,111 @@ document.addEventListener('DOMContentLoaded', () => {
       UI.showOverlay('Exportando PDF…', 'Preparando documento...');
       const data = getFilteredIncidenciaQRData();
 
-      // Convertir logo a base64 para incluirlo en el PDF
-      const logoUrl = './logo_liberman.png';
-      let logoImage = null;
-
+      // Cargar logo
+      let logoBase64 = null;
       try {
-        const response = await fetch(logoUrl);
-        if (response.ok) {
-          const blob = await response.blob();
-          logoImage = await new Promise((resolve) => {
+        const logoResponse = await fetch('logo_liberman.png');
+        if (logoResponse.ok) {
+          const logoBlob = await logoResponse.blob();
+          logoBase64 = await new Promise((resolve) => {
             const reader = new FileReader();
-            reader.onloadend = () => {
-              const result = reader.result;
-              // Asegurar que es un data URL válido
-              if (result && result.startsWith('data:')) {
-                resolve(result);
-              } else {
-                resolve(null);
-              }
-            };
-            reader.onerror = () => resolve(null);
-            reader.readAsDataURL(blob);
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(logoBlob);
           });
         }
       } catch (e) {
-        logoImage = null;
+        console.warn('No se pudo cargar el logo para PDF', e);
       }
 
-      const tableBody = data.map(d => {
-        // Parsear timestamp - FORMATO: dd/mm/yyyy hh:mm
-        let timestampStr = '';
-        if (d.timestamp) {
-          let ts = d.timestamp;
-          if (ts.toDate) {
-            ts = ts.toDate();
-          } else if (typeof ts === 'string') {
-            ts = new Date(ts);
-          }
-          if (ts instanceof Date && !Number.isNaN(ts.getTime())) {
-            const day = String(ts.getDate()).padStart(2, '0');
-            const month = String(ts.getMonth() + 1).padStart(2, '0');
-            const year = ts.getFullYear();
-            const hours = String(ts.getHours()).padStart(2, '0');
-            const minutes = String(ts.getMinutes()).padStart(2, '0');
-            timestampStr = `${day}/${month}/${year} ${hours}:${minutes}`;
-          }
-        } else if (d.fecha instanceof Date) {
-          const day = String(d.fecha.getDate()).padStart(2, '0');
-          const month = String(d.fecha.getMonth() + 1).padStart(2, '0');
-          const year = d.fecha.getFullYear();
-          const hours = String(d.fecha.getHours()).padStart(2, '0');
-          const minutes = String(d.fecha.getMinutes()).padStart(2, '0');
-          timestampStr = `${day}/${month}/${year} ${hours}:${minutes}`;
-        } else if (typeof d.fechaHora === 'string') {
-          timestampStr = d.fechaHora;
+      const tableBody = [];
+
+      // Headers de la tabla (SIN FOTO)
+      const headers = [
+        { text: 'FECHA', style: 'tableHeader' },
+        { text: 'USUARIO', style: 'tableHeader' },
+        { text: 'CLIENTE', style: 'tableHeader' },
+        { text: 'UNIDAD', style: 'tableHeader' },
+        { text: 'PUNTO CONTROL', style: 'tableHeader' },
+        { text: 'ESTADO', style: 'tableHeader' }
+      ];
+      tableBody.push(headers);
+
+      data.forEach(d => {
+        // Parsear fecha
+        let fechaStr = '';
+        const fechaObj = d.fecha instanceof Date ? d.fecha : new Date(d.fechaHora || d.timestamp || 0);
+        if (!isNaN(fechaObj.getTime())) {
+          fechaStr = fechaObj.toLocaleString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
         }
 
-        let pregunta = '';
-        let respuesta = '';
-
-        if (d.preguntas && typeof d.preguntas === 'object') {
-          const preguntasKeys = Object.keys(d.preguntas);
-          if (preguntasKeys.length > 0) {
-            pregunta = d.preguntas[preguntasKeys[0]];
-          }
-        }
-
-        if (d.respuestas && typeof d.respuestas === 'object') {
-          const respuestasKeys = Object.keys(d.respuestas);
-          if (respuestasKeys.length > 0) {
-            respuesta = d.respuestas[respuestasKeys[0]];
-          }
-        }
-
-        const codigoQR = d.codigoQRleido || d.qrId || '';
         const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
         const estado = tieneRespuestas ? 'Completada' : 'Pendiente';
+        const estadoColor = tieneRespuestas ? '#10b981' : '#f59e0b';
 
-        // PUESTO: obtener el puesto del registro
-        const puestoDisplay = d.puesto || '';
-
-        // PUNTO: obtener el nombrePunto
-        const puntoDisplay = d.nombrePunto || '';
-
-        return [
-          timestampStr,
-          d.usuario || d.nombrePunto || '',
-          d.cliente || '',
-          d.unidad || '',
-          codigoQR,
-          pregunta.substring(0, 20),
-          respuesta.substring(0, 20),
-          puestoDisplay,
-          puntoDisplay,
-          estado,
-          d.foto || ''
-        ];
+        tableBody.push([
+          { text: fechaStr, fontSize: 9 },
+          { text: d.usuario || d.nombrePunto || '-', fontSize: 9 },
+          { text: d.cliente || '-', fontSize: 9 },
+          { text: d.unidad || '-', fontSize: 9 },
+          { text: d.nombrePunto || '-', fontSize: 9 },
+          { text: estado, fontSize: 9, bold: true, color: estadoColor }
+        ]);
       });
 
-      // Construir el contenido del PDF
-      const content = [];
-
-      // Encabezado con logo
-      if (logoImage) {
-        content.push({
+      const docDefinition = {
+        pageSize: 'A4',
+        pageOrientation: 'landscape', // Horizontal para mejor visualización
+        pageMargins: [30, 80, 30, 40], // Margen superior amplio para logo
+        header: {
+          margin: [30, 20, 30, 0],
           columns: [
-            { image: logoImage, width: 60, height: 60 },
+            logoBase64 ? { image: logoBase64, width: 60 } : { text: '' },
             {
               stack: [
-                { text: 'LIDER CONTROL', style: 'company', alignment: 'center' },
-                { text: 'Reporte de Incidencias QR', style: 'reportTitle', alignment: 'center' }
+                { text: 'LIDER CONTROL', style: 'headerTitle', alignment: 'center' },
+                { text: 'Reporte de Rondas Manuales (Incidencia QR)', style: 'headerSubtitle', alignment: 'center' }
               ],
-              alignment: 'center',
               width: '*'
+            },
+            {
+              text: `Generado: ${new Date().toLocaleDateString('es-PE')}`,
+              alignment: 'right',
+              fontSize: 9,
+              margin: [0, 10, 0, 0]
             }
-          ],
-          columnGap: 20,
-          margin: [0, 0, 0, 20]
-        });
-      } else {
-        content.push({
-          text: 'LIDER CONTROL\nReporte de Incidencias QR',
-          style: 'reportTitle',
-          alignment: 'center',
-          margin: [0, 0, 0, 20]
-        });
-      }
-
-      // Información del reporte
-      content.push({
-        columns: [
-          { text: `Total de Registros: ${data.length}`, style: 'infoText', width: '33%' },
-          { text: `Fecha Generación: ${new Date().toLocaleString('es-PE')}`, style: 'infoText', width: '33%' },
-          { text: `Usuario: ${document.querySelector('.bienvenido-nombre')?.textContent || 'N/A'}`, style: 'infoText', width: '33%' }
-        ],
-        margin: [0, 0, 0, 20]
-      });
-
-      // Línea separadora
-      content.push({
-        canvas: [{ type: 'line', x1: 0, y1: 0, x2: 800, y2: 0, lineWidth: 2, lineColor: '#2c5aa0' }],
-        margin: [0, 0, 0, 15]
-      });
-
-      // Tabla de datos
-      if (data.length > 0) {
-        content.push({
-          table: {
-            headerRows: 1,
-            widths: ['10%', '8%', '10%', '8%', '7%', '8%', '8%', '7%', '7%', '8%', '9%'],
-            body: [
-              [
-                { text: 'Timestamp', style: 'tableHeader' },
-                { text: 'Usuario', style: 'tableHeader' },
-                { text: 'Cliente', style: 'tableHeader' },
-                { text: 'Unidad', style: 'tableHeader' },
-                { text: 'QR', style: 'tableHeader' },
-                { text: 'Pregunta', style: 'tableHeader' },
-                { text: 'Respuesta', style: 'tableHeader' },
-                { text: 'Puesto', style: 'tableHeader' },
-                { text: 'Punto de Control', style: 'tableHeader' },
-                { text: 'Estado', style: 'tableHeader' },
-                { text: 'Foto', style: 'tableHeader' }
-              ],
-              ...tableBody.map((row, idx) => [
-                { text: row[0], style: 'tableCell' },
-                { text: row[1], style: 'tableCell' },
-                { text: row[2], style: 'tableCell' },
-                { text: row[3], style: 'tableCell' },
-                { text: row[4], style: 'tableCell', alignment: 'center' },
-                { text: row[5], style: 'tableCell', fontSize: 7 },
-                { text: row[6], style: 'tableCell', fontSize: 7 },
-                { text: row[7], style: 'tableCell' },
-                { text: row[8], style: 'tableCell' },
-                {
-                  text: row[9],
-                  style: 'tableCell',
-                  color: row[9] === 'Completada' ? '#10b981' : '#f59e0b',
-                  bold: true,
-                  alignment: 'center'
-                },
-                {
-                  text: row[10] ? 'Ver Foto' : '-',
-                  style: 'tableCell',
-                  color: row[10] ? '#3b82f6' : '#a0aec0',
-                  decoration: row[10] ? 'underline' : null,
-                  link: row[10] || null
-                }
-              ])
-            ]
-          },
-          margin: [0, 0, 0, 20]
-        });
-      } else {
-        content.push({
-          text: 'No hay datos para mostrar',
-          style: 'noData',
-          alignment: 'center',
-          margin: [0, 20, 0, 20]
-        });
-      }
-
-      // Pie de página
-      content.push({
-        canvas: [{ type: 'line', x1: 0, y1: 0, x2: 800, y2: 0, lineWidth: 1, lineColor: '#cbd5e0' }],
-        margin: [0, 20, 0, 10]
-      });
-
-      content.push({
-        text: '© 2025 LIDER CONTROL - Sistema de Control Integrado',
-        style: 'footer',
-        alignment: 'center'
-      });
-
-      const docDef = {
-        pageOrientation: 'landscape',
-        pageSize: 'A4',
-        pageMargins: [40, 40, 40, 40],
-        content: content,
-        styles: {
-          company: {
-            fontSize: 14,
-            bold: true,
-            color: '#1a3a52'
-          },
-          reportTitle: {
-            fontSize: 16,
-            bold: true,
-            color: '#2c5aa0'
-          },
-          infoText: {
-            fontSize: 9,
-            color: '#4a5568',
-            margin: [5, 0, 5, 0]
-          },
-          tableHeader: {
-            fontSize: 8,
-            bold: true,
-            color: '#ffffff',
-            fillColor: '#2c5aa0',
-            alignment: 'center',
-            margin: [4, 6, 4, 6]
-          },
-          tableCell: {
-            fontSize: 8,
-            alignment: 'left',
-            margin: [4, 4, 4, 4],
-            padding: [4, 4],
-            border: [false, true, false, true],
-            borderColor: '#e2e8f0'
-          },
-          noData: {
-            fontSize: 12,
-            color: '#718096'
-          },
-          footer: {
-            fontSize: 8,
-            color: '#a0aec0',
-            italics: true
+          ]
+        },
+        content: [
+          {
+            table: {
+              headerRows: 1,
+              widths: ['15%', '20%', '15%', '15%', '20%', '15%'],
+              body: tableBody
+            },
+            layout: {
+              fillColor: function (i, node) { return (i === 0) ? '#2c5aa0' : (i % 2 === 0) ? '#f3f4f6' : null; },
+              hLineWidth: function (i, node) { return (i === 0 || i === node.table.body.length) ? 1 : 0.5; },
+              vLineWidth: function (i, node) { return 0.5; },
+              hLineColor: function (i, node) { return '#e5e7eb'; },
+              vLineColor: function (i, node) { return '#e5e7eb'; }
+            }
           }
+        ],
+        styles: {
+          headerTitle: { fontSize: 18, bold: true, color: '#1e3a8a' },
+          headerSubtitle: { fontSize: 14, color: '#4b5563', margin: [0, 5, 0, 0] },
+          tableHeader: { bold: true, fontSize: 10, color: 'white', alignment: 'center' }
         }
       };
 
+      pdfMake.createPdf(docDefinition).download(`Reporte_IncidenciaQR_${new Date().getTime()}.pdf`);
       UI.hideOverlay();
-      window.pdfMake.createPdf(docDef).download(`IncidenciaQR_${new Date().getTime()}.pdf`);
       UI.toast('✅ PDF exportado correctamente');
-    } catch (err) {
+
+    } catch (e) {
+      console.error(e);
       UI.hideOverlay();
-      UI.toast('❌ Error al exportar PDF: ' + err.message);
+      UI.toast('❌ Error al exportar PDF: ' + e.message);
     }
   }
 
