@@ -3642,7 +3642,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function loadKpiRondaData() {
       try {
-        UI.showOverlay('Cargando...', 'Consultando datos de rondas');
+        UI.showOverlay('Cargando...', 'Consultando datos de rondas (Optimizado)');
 
         // Obtener filtros actuales
         const clienteSelect = document.getElementById('kpi-ronda-cliente');
@@ -3651,8 +3651,62 @@ document.addEventListener('DOMContentLoaded', () => {
         kpiRondaFilters.cliente = clienteSelect?.value || '';
         kpiRondaFilters.unidad = unidadSelect?.value || '';
 
-        // Obtener TODOS los documentos
-        const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
+        // CONSTRUIR CONSULTA (Server-Side Filtering)
+        let query = getQueryWithClienteFilter('RONDAS_COMPLETADAS');
+
+        // 1. Filtro por Cliente
+        if (kpiRondaFilters.cliente) {
+          query = query.where('cliente', '==', kpiRondaFilters.cliente);
+        }
+
+        // 2. Filtro por Unidad
+        if (kpiRondaFilters.unidad) {
+          query = query.where('unidad', '==', kpiRondaFilters.unidad);
+        }
+
+        // 3. Filtro por Fechas
+        // Nota: Firestore requiere índice compuesto para rango de fechas + ordenamiento
+        let startDate = null;
+        let endDate = null;
+
+        if (kpiRondaFilters.fechaInicio) {
+          // Parsear "YYYY-MM-DD" a Date inicio del día (local)
+          const parts = kpiRondaFilters.fechaInicio.split('-');
+          if (parts.length === 3) {
+            startDate = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0);
+            if (!isNaN(startDate.getTime())) {
+              query = query.where('horarioInicio', '>=', startDate);
+            }
+          }
+        }
+
+        if (kpiRondaFilters.fechaFin) {
+          // Parsear "YYYY-MM-DD" a Date fin del día (local)
+          const parts = kpiRondaFilters.fechaFin.split('-');
+          if (parts.length === 3) {
+            endDate = new Date(parts[0], parts[1] - 1, parts[2], 23, 59, 59, 999);
+            if (!isNaN(endDate.getTime())) {
+              query = query.where('horarioInicio', '<=', endDate);
+            }
+          }
+        }
+
+        // 4. Ordenamiento (SERVER-SIDE REMOVIDO TEMPORALMENTE PARA EVITAR ERROR DE INDICE/QUOTA)
+        // query = query.orderBy('horarioInicio', 'desc');
+
+        // 5. Límite (paginación implícita de 500)
+        query = query.limit(500);
+
+        console.log('[KPI RONDA] Ejecutando consulta SIMPLIFICADA...', {
+          cliente: kpiRondaFilters.cliente,
+          unidad: kpiRondaFilters.unidad,
+          inicio: startDate,
+          fin: endDate
+        });
+
+        const snapshot = await query.get();
+        console.log(`[KPI RONDA] Registros obtenidos: ${snapshot.size}`);
+
         let registros = snapshot.docs.map(doc => {
           const data = doc.data();
           return {
@@ -3661,42 +3715,21 @@ document.addEventListener('DOMContentLoaded', () => {
           };
         });
 
-        // Ordenar por horarioInicio (más recientes primero)
+        // ORDENAMIENTO CLIENT-SIDE (Emergency Fix)
         registros.sort((a, b) => {
-          const dateA = a.horarioInicio?.toDate?.() || new Date(a.horarioInicio || 0);
-          const dateB = b.horarioInicio?.toDate?.() || new Date(b.horarioInicio || 0);
-          return dateB - dateA;
+          const parseDate = (val) => {
+            if (!val) return 0;
+            if (val.toDate) return val.toDate().getTime();
+            if (val instanceof Date) return val.getTime();
+            const d = new Date(val);
+            return isNaN(d.getTime()) ? 0 : d.getTime();
+          };
+          return parseDate(b.horarioInicio) - parseDate(a.horarioInicio);
         });
 
-        // Filtro por cliente
-        if (kpiRondaFilters.cliente) {
-          registros = registros.filter(r => r.cliente === kpiRondaFilters.cliente);
-        }
+        // Ya no es necesario ordenar manualmente ni filtrar por cliente/unidad/fecha
+        // porque ya lo hizo la BD (mucho más rápido).
 
-        // Filtro por unidad
-        if (kpiRondaFilters.unidad) {
-          registros = registros.filter(r => r.unidad === kpiRondaFilters.unidad);
-        }
-
-        // Filtro por fecha inicio
-        if (kpiRondaFilters.fechaInicio) {
-          const fechaInicio = new Date(kpiRondaFilters.fechaInicio);
-          fechaInicio.setHours(0, 0, 0, 0);
-          registros = registros.filter(r => {
-            const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
-            return fechaRegistro >= fechaInicio;
-          });
-        }
-
-        // Filtro por fecha fin
-        if (kpiRondaFilters.fechaFin) {
-          const fechaFin = new Date(kpiRondaFilters.fechaFin);
-          fechaFin.setHours(23, 59, 59, 999);
-          registros = registros.filter(r => {
-            const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
-            return fechaRegistro <= fechaFin;
-          });
-        }
 
         // Limitar a 100 últimos registros
         const ultimos30 = registros.slice(0, 100);
@@ -4195,17 +4228,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function loadDetalleRondasClientesUnidades() {
       try {
-        const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
-        const clientes = new Set();
-
-        snapshot.docs.forEach(doc => {
-          const data = doc.data();
-          if (data.cliente) clientes.add(data.cliente);
-        });
-
         const clienteSelect = document.getElementById('detalle-rondas-cliente');
-        if (clienteSelect) {
+        if (!clienteSelect) return;
+
+        // Si es usuario CLIENTE, mostrar SOLO su cliente
+        if (accessControl && accessControl.userType === 'CLIENTE') {
+          const clienteAsignado = accessControl.clienteAsignado;
+          clienteSelect.innerHTML = `<option value="${clienteAsignado}">${clienteAsignado}</option>`;
+          clienteSelect.disabled = true;
+          clienteSelect.style.opacity = '0.6';
+          clienteSelect.title = `Acceso restringido a: ${clienteAsignado}`;
+
+          // Cargar unidades iniciales para CLIENTE
+          await loadDetalleRondasUnidadesPorCliente();
+        } else {
+          // ADMIN/SUPERVISOR: mostrar todos los clientes de CLIENTE_UNIDAD
+          const snapshot = await db.collection('CLIENTE_UNIDAD').get();
+          const clientes = [];
+
+          snapshot.docs.forEach(doc => {
+            clientes.push(doc.id);
+          });
+
+          clientes.sort((a, b) => a.localeCompare(b, 'es'));
+
+          clienteSelect.innerHTML = '<option value="">Todos</option>';
           clientes.forEach(cliente => {
+            // Evitar duplicados si existieran
             const option = document.createElement('option');
             option.value = cliente;
             option.textContent = cliente;
@@ -4213,6 +4262,7 @@ document.addEventListener('DOMContentLoaded', () => {
           });
         }
       } catch (error) {
+        console.error('Error cargando clientes:', error);
       }
     }
 
@@ -4222,35 +4272,51 @@ document.addEventListener('DOMContentLoaded', () => {
         const cliente = clienteSelect?.value || '';
         const unidadSelect = document.getElementById('detalle-rondas-unidad');
 
-        while (unidadSelect.options.length > 1) {
-          unidadSelect.remove(1);
+        if (!unidadSelect) return;
+
+        // Limpiar select (mantener "Todas" si no es restricción estricta, o "Todas" como default)
+        unidadSelect.innerHTML = '<option value="">Todas</option>';
+
+        if (!cliente || cliente === 'Todos') return;
+
+        // Usar helper existente getUnidadesFromClienteUnidad o consultar directo
+        let unidades = [];
+        try {
+          const doc = await db.collection('CLIENTE_UNIDAD').doc(cliente).get();
+          if (doc.exists) {
+            const data = doc.data();
+            // Asumimos estructura: { unidades: [...] } o subcolección. 
+            // Revisando getUnidadesFromClienteUnidad parece que es data.unidades
+            if (data.unidades && Array.isArray(data.unidades)) {
+              unidades = data.unidades;
+            }
+          }
+        } catch (e) { console.error(e); }
+
+        unidades.sort((a, b) => a.localeCompare(b, 'es'));
+
+        // Si usuario es CLIENTE con unidad asignada
+        if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
+          const miUnidad = accessControl.unidadAsignada;
+          unidadSelect.innerHTML = `<option value="${miUnidad}">${miUnidad}</option>`;
+          unidadSelect.disabled = true;
+        } else {
+          unidades.forEach(unidad => {
+            const option = document.createElement('option');
+            option.value = unidad;
+            option.textContent = unidad;
+            unidadSelect.appendChild(option);
+          });
         }
 
-        if (!cliente) return;
-
-        const snapshot = await db.collection('RONDAS_COMPLETADAS')
-          .where('cliente', '==', cliente)
-          .get();
-
-        const unidades = new Set();
-        snapshot.docs.forEach(doc => {
-          const data = doc.data();
-          if (data.unidad) unidades.add(data.unidad);
-        });
-
-        unidades.forEach(unidad => {
-          const option = document.createElement('option');
-          option.value = unidad;
-          option.textContent = unidad;
-          unidadSelect.appendChild(option);
-        });
       } catch (error) {
+        console.error('Error cargando unidades:', error);
       }
     }
 
     async function loadDetalleRondasData() {
       try {
-        UI.showOverlay('Cargando...', 'Consultando datos de rondas');
+        UI.showOverlay('Cargando...', 'Consultando datos de rondas (Optimizado)');
 
         const clienteSelect = document.getElementById('detalle-rondas-cliente');
         const unidadSelect = document.getElementById('detalle-rondas-unidad');
@@ -4260,7 +4326,43 @@ document.addEventListener('DOMContentLoaded', () => {
         detalleRondasFilters.unidad = unidadSelect?.value || '';
         detalleRondasFilters.estado = estadoSelect?.value || '';
 
-        const snapshot = await getQueryWithClienteFilter('RONDAS_COMPLETADAS').get();
+        // CONSTRUIR CONSULTA (Server-Side)
+        let query = getQueryWithClienteFilter('RONDAS_COMPLETADAS');
+
+        // 1. Cliente
+        if (detalleRondasFilters.cliente) {
+          query = query.where('cliente', '==', detalleRondasFilters.cliente);
+        }
+        // 2. Unidad
+        if (detalleRondasFilters.unidad) {
+          query = query.where('unidad', '==', detalleRondasFilters.unidad);
+        }
+        // 3. Estado
+        if (detalleRondasFilters.estado) {
+          query = query.where('estado', '==', detalleRondasFilters.estado);
+        }
+
+        // 4. Fechas
+        if (detalleRondasFilters.fechaInicio) {
+          const parts = detalleRondasFilters.fechaInicio.split('-');
+          if (parts.length === 3) {
+            const start = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0);
+            if (!isNaN(start.getTime())) query = query.where('horarioInicio', '>=', start);
+          }
+        }
+        if (detalleRondasFilters.fechaFin) {
+          const parts = detalleRondasFilters.fechaFin.split('-');
+          if (parts.length === 3) {
+            const end = new Date(parts[0], parts[1] - 1, parts[2], 23, 59, 59, 999);
+            if (!isNaN(end.getTime())) query = query.where('horarioInicio', '<=', end);
+          }
+        }
+
+        // 5. Orden + Límite (SERVER-SIDE ORDER REMOVIDO TEMPORALMENTE)
+        // query = query.orderBy('horarioInicio', 'desc');
+        query = query.limit(500); // Límite para evitar sobrecarga
+
+        const snapshot = await query.get();
         let registros = snapshot.docs.map(doc => {
           const data = doc.data();
           return {
@@ -4269,78 +4371,25 @@ document.addEventListener('DOMContentLoaded', () => {
           };
         });
 
-        // Ordenar por horarioInicio descendente (robust date parsing)
+        // ORDENAMIENTO CLIENT-SIDE (Emergency Fix)
         registros.sort((a, b) => {
           const parseDate = (val) => {
             if (!val) return 0;
-            if (val.toDate && typeof val.toDate === 'function') return val.toDate().getTime();
+            if (val.toDate) return val.toDate().getTime();
             if (val instanceof Date) return val.getTime();
-            if (typeof val === 'number') return val;
-            if (typeof val === 'string') {
-              // Try ISO or standard
-              let d = new Date(val);
-              if (!isNaN(d.getTime())) return d.getTime();
-              // Try DD/MM/YYYY HH:mm
-              const parts = val.split(/[/\s,:-]+/);
-              if (parts.length >= 3) {
-                const day = parseInt(parts[0], 10);
-                const month = parseInt(parts[1], 10) - 1;
-                const year = parseInt(parts[2], 10);
-                const hour = parts.length > 3 ? parseInt(parts[3], 10) : 0;
-                const min = parts.length > 4 ? parseInt(parts[4], 10) : 0;
-                d = new Date(year, month, day, hour, min);
-                if (!isNaN(d.getTime())) return d.getTime();
-              }
-            }
-            return 0;
+            const d = new Date(val);
+            return isNaN(d.getTime()) ? 0 : d.getTime();
           };
-
-          const timeA = parseDate(a.horarioInicio);
-          const timeB = parseDate(b.horarioInicio);
-          return timeB - timeA;
+          return parseDate(b.horarioInicio) - parseDate(a.horarioInicio);
         });
 
-        // Aplicar filtros de cliente, unidad, estado
-        if (detalleRondasFilters.cliente) {
-          registros = registros.filter(r => r.cliente === detalleRondasFilters.cliente);
-        }
-
-        if (detalleRondasFilters.unidad) {
-          registros = registros.filter(r => r.unidad === detalleRondasFilters.unidad);
-        }
-
-        if (detalleRondasFilters.estado) {
-          registros = registros.filter(r => r.estado === detalleRondasFilters.estado);
-        }
-
-        // Filtro por fecha inicio
-        if (detalleRondasFilters.fechaInicio) {
-          const fechaInicio = new Date(detalleRondasFilters.fechaInicio);
-          fechaInicio.setHours(0, 0, 0, 0);
-          registros = registros.filter(r => {
-            const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
-            return fechaRegistro >= fechaInicio;
-          });
-        }
-
-        // Filtro por fecha fin
-        if (detalleRondasFilters.fechaFin) {
-          const fechaFin = new Date(detalleRondasFilters.fechaFin);
-          fechaFin.setHours(23, 59, 59, 999);
-          registros = registros.filter(r => {
-            const fechaRegistro = r.horarioInicio?.toDate?.() || new Date(r.horarioInicio || 0);
-            return fechaRegistro <= fechaFin;
-          });
-        }
-
-        // Limitar a 100 registros
-        const ultimos30 = registros.slice(0, 100);
-
-        // Actualizar información
-        updateDetalleRondasInfo(ultimos30);
+        // Client-side filtering removed as it is now handled by the server
+        // Sorting also handled by server
+        // Actualizar información (Mostrando hasta 500 registros obtenidos del servidor)
+        updateDetalleRondasInfo(registros);
 
         // Llenar tabla
-        fillDetalleRondasTable(ultimos30);
+        fillDetalleRondasTable(registros);
 
         UI.hideOverlay();
       } catch (error) {

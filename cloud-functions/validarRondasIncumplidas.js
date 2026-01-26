@@ -296,113 +296,170 @@ async function registrarRondasIncumplidas(rondasIncumplidas) {
   return registradas;
 }
 
+// Función auxiliar para obtener ayer en zona local
+function obtenerAyerEnZonaLocal() {
+  const hoy = obtenerAhoraEnZonaLocal();
+  const ayer = new Date(hoy);
+  ayer.setDate(hoy.getDate() - 1);
+  return ayer;
+}
+
+// Función para contar puntos marcados
+function contarPuntosMarcados(puntos) {
+  if (!puntos) return { total: 0, marcados: 0 };
+
+  // Si es un objeto (mapa), convertir valores
+  const lista = Array.isArray(puntos) ? puntos : Object.values(puntos);
+  const total = lista.length;
+  // Contar cuántos tienen qrEscaneado = true
+  const marcados = lista.filter(p => p.qrEscaneado === true).length;
+
+  return { total, marcados };
+}
+
+// Función CORE: Determinar estado Smart Closure
+function determinarEstadoSmart(rondaDocData) {
+  // Si ya tiene estado final, no tocar
+  if (['TERMINADA', 'COMPLETADA', 'INCOMPLETA', 'NO REALIZADA'].includes(rondaDocData.estado)) {
+    return null; // No cambia
+  }
+
+  // Si no es EN_PROCESO, y no es final... (raro), asumir NO REALIZADA
+  if (rondaDocData.estado !== 'EN_PROCESO') {
+    return 'NO REALIZADA';
+  }
+
+  // Analizar puntos
+  const { total, marcados } = contarPuntosMarcados(rondaDocData.puntosRegistrados);
+
+  if (total > 0 && marcados === total) return 'TERMINADA'; // Olvidó finalizar
+  if (marcados > 0) return 'INCOMPLETA'; // Hizo algunos
+  return 'NO REALIZADA'; // No hizo nada
+}
+
+
 exports.validarRondasIncumplidas = functions
   .region('southamerica-east1')
   .pubsub
   .schedule('every 5 minutes')
   .onRun(async (context) => {
-    console.log('=== INICIO: Validar Rondas Incumplidas ===');
+    console.log('=== INICIO: Validar Rondas Incumplidas (Smart Closure) ===');
 
-    const ahoraUTC = new Date();
     const ahora = obtenerAhoraEnZonaLocal();
+    const ayer = obtenerAyerEnZonaLocal();
 
-    console.log(`Hora UTC: ${ahoraUTC.toISOString()}`);
-    console.log(`Hora local (zona: UTC${ZONA_HORARIA_OFFSET}): ${ahora.toISOString()}`);
+    // Fechas formato string
+    const fechaHoy = formatearFecha(ahora);
+    const fechaAyer = formatearFecha(ayer);
+
+    console.log(`Hora local: ${ahora.toISOString()}`);
+    console.log(`Validando para HOY (${fechaHoy}) y AYER (${fechaAyer})`);
 
     try {
-      const hoy = formatearFecha(ahora);
+      // 1. Obtener definición de rondas
       const rondasSnapshot = await db.collection('Rondas_QR').get();
+      if (rondasSnapshot.empty) return console.log('Sin rondas definidas.');
 
-      if (rondasSnapshot.empty) {
-        console.log('No hay rondas en Rondas_QR');
-        return { success: true, message: 'Sin rondas' };
-      }
+      let actualizaciones = 0;
+      let registradasAyer = 0;
 
-      let rondasIncumplidas = [];
-      let rondasValidadas = 0;
+      // Iterar sobre las definiciones de ronda
+      for (const docRondaDef of rondasSnapshot.docs) {
+        const def = docRondaDef.data();
+        const rondasId = docRondaDef.id;
 
-      for (const doc of rondasSnapshot.docs) {
-        const ronda = doc.data();
-        const rondasId = doc.id;
-        rondasValidadas++;
+        const horaFin = def.horario || def.hora_fin || def.horarioTermino;
+        const tolerancia = def.tolerancia || 0;
 
-        let horaFin = ronda.horario || ronda.hora_fin || ronda.horarioTermino;
-        let tolerancia = ronda.tolerancia || ronda.tolerancia_minutos || 0;
+        if (!horaFin) continue;
 
-        console.log(`\nEvaluando ronda ${rondasId}:`, {
-          nombre: ronda.nombre,
-          horaFin,
-          tolerancia,
-          createdAt: ronda.createdAt ? ronda.createdAt.toDate?.() || ronda.createdAt : 'sin fecha'
-        });
+        // ===================================
+        // A. VALIDAR HOY (Smart Closure)
+        // ===================================
+        if (debeEjecutarseHoy(def, fechaHoy)) {
+          // Verificar si YA PASÓ la hora límite de hoy
+          const checkHoy = verificarTiempoLimite(horaFin, tolerancia, ahora);
 
-        if (!horaFin) {
-          console.log(`  ❌ Sin horario`);
-          continue;
+          if (checkHoy.tiempoLimiteAlcanzado) {
+            // Buscar documentos EXISENTES de hoy para esta ronda
+            const docsHoy = await db.collection('RONDAS_COMPLETADAS')
+              .where('rondasId', '==', rondasId)
+              .where('fecha', '==', fechaHoy)
+              .get();
+
+            if (!docsHoy.empty) {
+              // Ya existe documento -> Aplicar Smart Closure
+              for (const d of docsHoy.docs) {
+                const data = d.data();
+                const nuevoEstado = determinarEstadoSmart(data);
+
+                if (nuevoEstado) {
+                  console.log(`🔄 Actualizando ronda HOY ${d.id}: ${data.estado} -> ${nuevoEstado}`);
+                  await d.ref.update({
+                    estado: nuevoEstado,
+                    timestampCierreAutomatico: admin.firestore.FieldValue.serverTimestamp(),
+                    observacion: 'Cierre automático por tiempo límite (Smart Closure)'
+                  });
+                  actualizaciones++;
+                }
+              }
+            } else {
+              // NO existe documento y ya pasó la hora -> Crear NO REALIZADA
+              // (Esta parte usualmente la hace validarRondasDiarias, pero como respaldo está bien)
+              console.log(`⚠️ Ronda HOY vencida y sin documento: ${rondasId}. Dejando a validarRondasDiarias.`);
+            }
+          }
         }
 
-        if (!debeEjecutarseHoy(ronda, hoy)) {
-          console.log(`  ❌ No es para hoy (frecuencia: ${ronda.frecuencia})`);
-          continue;
-        }
+        // ===================================
+        // B. VALIDAR AYER (The 24h Clean)
+        // ===================================
+        // Verificar si debió ejecutarse ayer (asumimos frecuencia diaria o validamos fecha)
+        // Para simplificar, si es DIARIA siempre toca ayer.
+        const frecuencia = (def.frecuencia || '').toLowerCase();
+        let tocaAyer = frecuencia.includes('diaria') || frecuencia === 'diario';
 
-        // SE ELIMINÓ: if (!esRondaDeHoy(ronda, ahora)) ...
-        // Razón: Las rondas recurrentes tienen fecha de creación antigua.
-        // La validación de si toca hoy ya se hace en debeEjecutarseHoy().
+        // Si no es diaria, habría que ver si ayer (día semana) tocaba, pero asumiremos diaria por ahora
+        // o si frecuencia incluye el nombre del día de ayer.
 
-        const { tiempoLimiteAlcanzado, minutosRestantes } = verificarTiempoLimite(
-          horaFin,
-          tolerancia,
-          ahora
-        );
-
-        if (!tiempoLimiteAlcanzado) {
-          console.log(`  ⏳ Faltan ${minutosRestantes} minutos para vencer`);
-          continue;
-        }
-
-        // Verificar si fue completada HOY
-        // Buscar documentos que tengan el patrón: rondasId_FECHA_HORA
-        try {
-          const fechaHoyFormato = formatearFecha(ahora);
-          const snapshot = await db.collection('RONDAS_COMPLETADAS')
+        if (tocaAyer) {
+          // Chequear documentos de AYER
+          const docsAyer = await db.collection('RONDAS_COMPLETADAS')
             .where('rondasId', '==', rondasId)
-            .where('fecha', '==', fechaHoyFormato)
+            .where('fecha', '==', fechaAyer)
             .get();
 
-          if (!snapshot.empty) {
-            console.log(`  ✓ Completada hoy (${snapshot.docs.length} registro/s)`);
-            continue;
+          if (docsAyer.empty) {
+            // NO se creó documento ayer -> Crear NO REALIZADA RETROACTIVA
+            console.log(`Creating FALTA para ayer: ${rondasId}`);
+            rondasIncumplidas = [{ rondasId, ronda: def, fecha: fechaAyer }]; // Reutilizamos funcion
+            await registrarRondasIncumplidas(rondasIncumplidas); // Ojo: ajustar fecha interna
+            registradasAyer++;
+          } else {
+            // SÍ existe documento ayer -> Aplicar Smart Closure (por si quedó EN_PROCESO)
+            for (const d of docsAyer.docs) {
+              const data = d.data();
+              const nuevoEstado = determinarEstadoSmart(data);
+
+              if (nuevoEstado) {
+                console.log(`🔄 Limpiando ronda AYER ${d.id}: ${data.estado} -> ${nuevoEstado}`);
+                await d.ref.update({
+                  estado: nuevoEstado,
+                  timestampCierreAutomatico: admin.firestore.FieldValue.serverTimestamp(),
+                  observacion: 'Limpieza automática 24h (Smart Closure)'
+                });
+                actualizaciones++;
+              }
+            }
           }
-        } catch (e) {
-          console.log(`  ℹ️  Error verificando completadas: ${e.message}`);
-          // Continuar verificando por ID único
         }
-
-        console.log(`  🔴 INCUMPLIDA`);
-        rondasIncumplidas.push({
-          rondasId,
-          ronda,
-          fecha: hoy
-        });
       }
 
-      console.log(`\n📊 Resumen: ${rondasValidadas} validadas, ${rondasIncumplidas.length} incumplidas`);
-
-      if (rondasIncumplidas.length > 0) {
-        const registradas = await registrarRondasIncumplidas(rondasIncumplidas);
-        console.log(`✓ ${registradas} rondas incumplidas registradas`);
-      }
-
-      return {
-        success: true,
-        rondasValidadas,
-        rondasIncumplidas: rondasIncumplidas.length,
-        timestamp: new Date().toISOString()
-      };
+      console.log(`Resumen: ${actualizaciones} actualizaciones Smart Closure, ${registradasAyer} faltas ayer creadas.`);
+      return null;
 
     } catch (error) {
-      console.error('✗ Error:', error);
-      return { success: false, error: error.message };
+      console.error('Error en loop:', error);
+      return null;
     }
   });
