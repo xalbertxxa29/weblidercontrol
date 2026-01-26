@@ -16,7 +16,7 @@ exports.validarRondasIncumplidas = require('./validarRondasIncumplidas').validar
 exports.validarRondasDiarias = require('./validarRondasDiarias').validarRondasDiarias;
 exports.validarRondasDiariasHTTP = require('./validarRondasDiarias').validarRondasDiariasHTTP;
 exports.validarRondasManual = require('./validarManual').validarRondasManual;
-exports.crearRondaPrueba = require('./crearRondaPrueba').crearRondaPrueba;
+
 exports.crearRondaEn2Min = require('./crearRondaEn2Min').crearRondaEn2Min;
 exports.verDetallesRonda = require('./verDetallesRonda').verDetallesRonda;
 
@@ -38,7 +38,7 @@ exports.diagnostico = functions
       // Analizar cada colección
       for (const colRef of colecciones) {
         const docs = await colRef.limit(3).get();
-        
+
         resultado.colecciones[colRef.id] = {
           totalDocs: docs.size,
           primerosDocs: []

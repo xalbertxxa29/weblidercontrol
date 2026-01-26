@@ -598,12 +598,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // ============================================================================
     // 4) LÓGICA DE NAVEGACIÓN (MENÚ LATERAL Y PESTAÑAS KPI)
     // ============================================================================
-    burgerBtn?.addEventListener('click', () => {
-      const collapsed = sidebar.classList.toggle('collapsed');
-      burgerBtn.classList.toggle('active', collapsed);
-      localStorage.setItem('sidebarCollapsed', collapsed ? '1' : '0');
-      setTimeout(() => window.dispatchEvent(new Event('resize')), 200);
-    });
+    // ============================================================================
+    // 4) LÓGICA DE NAVEGACIÓN (MENÚ LATERAL Y PESTAÑAS KPI)
+    // ============================================================================
+
+    // FORZAR MENU EXPANDIDO SIEMPRE
+    if (sidebar) sidebar.classList.remove('collapsed');
+    if (burgerBtn) burgerBtn.style.display = 'none'; // Ocultar botón hamburguesa
+    localStorage.removeItem('sidebarCollapsed'); // Limpiar preferencia anterior
 
     const toggleMenuMobile = () => {
       sidebar?.classList.toggle('show');
@@ -611,14 +613,6 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     menuToggleBtn?.addEventListener('click', toggleMenuMobile);
     menuOverlay?.addEventListener('click', toggleMenuMobile);
-
-    if (localStorage.getItem('sidebarCollapsed') == null) {
-      localStorage.setItem('sidebarCollapsed', '1');
-    }
-    if (localStorage.getItem('sidebarCollapsed') === '1') {
-      sidebar?.classList.add('collapsed');
-      burgerBtn?.classList.add('active');
-    }
 
     navItems.forEach(btn => {
       btn.addEventListener('click', () => {
