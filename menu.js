@@ -7104,34 +7104,54 @@ document.addEventListener('DOMContentLoaded', () => {
       UI.showOverlay('Buscando…', 'Consultando cuaderno');
 
       try {
+        // CORRECCIÓN: Filtrar por FECHA en servidor y CLIENTE/UNIDAD en memoria
+        // Esto evita el error de "Índice Compuesto Requerido" si no existe en Firestore
         let q = getQueryWithClienteFilter(COLLECTIONS.LOGBOOK);
-        const fi = cuadernoFechaInicio?.value ? new Date(cuadernoFechaInicio.value) : null;
-        const ff = cuadernoFechaFin?.value ? new Date(cuadernoFechaFin.value) : null;
+
+        // Helper para parsear "YYYY-MM-DD" como medianoche LOCAL
+        const parseLocalDate = (dateStr) => {
+          if (!dateStr) return null;
+          const [y, m, d] = dateStr.split('-').map(Number);
+          return new Date(y, m - 1, d);
+        };
+
+        const fi = cuadernoFechaInicio?.value ? parseLocalDate(cuadernoFechaInicio.value) : null;
+        const ff = cuadernoFechaFin?.value ? parseLocalDate(cuadernoFechaFin.value) : null;
+
+        // Aplicar filtro de fecha al Query (Servidor)
         if (fi) q = q.where('timestamp', '>=', fi);
-        if (ff) q = q.where('timestamp', '<=', new Date(ff.getFullYear(), ff.getMonth(), ff.getDate() + 1));
+        if (ff) {
+          const nextDay = new Date(ff);
+          nextDay.setDate(nextDay.getDate() + 1);
+          q = q.where('timestamp', '<', nextDay);
+        }
+
+        // Obtener datos (hasta 1000)
+        const snap = await q.orderBy('timestamp', 'asc').limit(1000).get();
+
+        // Aplicar filtros de Cliente / Unidad en Memoria (Cliente)
+        let rawRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
         const cli = cuadernoClienteSelect?.value || '';
         const uni = cuadernoUnidadSelect?.value || '';
-        if (cli) q = q.where('cliente', '==', cli);
-        if (uni) q = q.where('unidad', '==', uni);
 
-        const snap = await q.get();
-        const rows = snap.docs.map(d => {
-          const data = d.data();
+        if (cli) rawRows = rawRows.filter(r => r.cliente === cli);
+        if (uni) rawRows = rawRows.filter(r => r.unidad === uni);
+
+        const rows = rawRows.map(data => {
           const f = data.timestamp?.toDate ? data.timestamp.toDate() : new Date(data.timestamp || 0);
           const fechaHoraStr = f instanceof Date && !Number.isNaN(f.getTime())
             ? f.toLocaleString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
             : 'N/A';
           return {
-            id: d.id,
             ...data,
-            timestampStr: fechaHoraStr // Agregar fecha formateada
+            timestampStr: fechaHoraStr
           };
         })
           .sort((a, b) => {
             const ad = a.timestamp?.toDate ? a.timestamp.toDate() : new Date(a.timestamp || 0);
             const bd = b.timestamp?.toDate ? b.timestamp.toDate() : new Date(b.timestamp || 0);
-            return ad.getTime() - bd.getTime(); // asc: más antiguo arriba
+            return ad.getTime() - bd.getTime();
           });
 
         cuadernoTbody.innerHTML = rows.map(r => {
