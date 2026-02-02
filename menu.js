@@ -1758,20 +1758,6 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     function drawUnidadChart(data) {
       if (!data || data.length === 0) {
         console.warn('No hay datos para gráfico de unidad');
@@ -12883,25 +12869,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const db = firebase.firestore();
-      const doc = await db.collection('CLIENTE_UNIDAD').doc(cliente).get();
+      // CORRECCIÓN: Usar subcolección UNIDADES directamente
+      // Esto asegura que coincida con el resto del sistema (getUnidadesFromClienteUnidad)
+      const snap = await db.collection('CLIENTE_UNIDAD')
+        .doc(cliente)
+        .collection('UNIDADES')
+        .get();
 
-      if (!doc.exists) {
-        inputs.unidad.innerHTML = '<option value="">Cliente no encontrado</option>';
-        return;
-      }
-
-      const data = doc.data();
       let listaUnidades = [];
-
-      if (data.unidades) {
-        if (Array.isArray(data.unidades)) {
-          // Caso Array: ["Unidad A", "Unidad B"]
-          listaUnidades = data.unidades;
-        } else if (typeof data.unidades === 'object') {
-          // Caso Mapa: { "Unidad A": [...], "Unidad B": [...] }
-          listaUnidades = Object.keys(data.unidades);
-        }
-      }
+      snap.forEach(doc => {
+        listaUnidades.push(doc.id);
+      });
 
       listaUnidades.sort();
       inputs.unidad.innerHTML = '<option value="">Seleccione Unidad</option>' +
