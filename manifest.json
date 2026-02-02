@@ -1,0 +1,21 @@
+{
+  "name": "LiderZonal - Sistema de Control",
+  "short_name": "LiderZonal",
+  "start_url": "./menu.html",
+  "display": "standalone",
+  "background_color": "#f4f7fa",
+  "theme_color": "#3b82f6",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "logo_liberman.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "logo_liberman.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

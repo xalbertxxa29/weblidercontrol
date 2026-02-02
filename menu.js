@@ -25,6 +25,13 @@
 
 document.addEventListener('DOMContentLoaded', () => {
 
+  // Registrar Service Worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => console.log('SW registrado:', reg.scope))
+      .catch(err => console.error('Error SW:', err));
+  }
+
   // Registrar plugins de Chart.js
   if (typeof ChartDataLabels !== 'undefined') {
     Chart.register(ChartDataLabels);
@@ -50,6 +57,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const auth = firebase.auth();
     const db = window.db = firebase.firestore();
+
+    // Habilitar persistencia Offline
+    db.enablePersistence({ synchronizeTabs: true })
+      .catch((err) => {
+        if (err.code == 'failed-precondition') {
+          console.warn('Persistencia falló: Multiples pestañas abiertas.');
+        } else if (err.code == 'unimplemented') {
+          console.warn('Persistencia no soportada por el navegador.');
+        }
+      });
 
     // ============================================================================
     // 2) SELECTORES DE ELEMENTOS DEL DOM Y ESTADO GLOBAL
@@ -487,6 +504,62 @@ document.addEventListener('DOMContentLoaded', () => {
     const cuAgregarPuestoCliente = document.getElementById('cuAgregarPuestoCliente');
     const cuAgregarPuestoUnidad = document.getElementById('cuAgregarPuestoUnidad');
     const cuNuevoPuesto = document.getElementById('cuNuevoPuesto');
+
+    // Modal Password Reset
+    const modalPasswordReset = document.getElementById('modal-password-reset');
+    const formPasswordReset = document.getElementById('form-password-reset');
+    const inputNewPass = document.getElementById('reset-new-password');
+    const inputConfirmPass = document.getElementById('reset-confirm-password');
+    const btnCancelReset = document.getElementById('btn-cancel-reset');
+    const btnSaveReset = document.getElementById('btn-save-reset');
+    let targetResetUserId = null; // ID del usuario a resetear
+
+    // --- Lógica Password Reset (Admin) ---
+    window.openPasswordReset = (userId) => {
+      targetResetUserId = userId;
+      if (formPasswordReset) formPasswordReset.reset();
+      openModal(modalPasswordReset);
+    };
+
+    btnSaveReset?.addEventListener('click', async () => {
+      const p1 = inputNewPass?.value;
+      const p2 = inputConfirmPass?.value;
+
+      if (!p1 || p1.length < 6) {
+        UI.toast('La contraseña debe tener al menos 6 caracteres.');
+        return;
+      }
+      if (p1 !== p2) {
+        UI.toast('Las contraseñas no coinciden.');
+        return;
+      }
+
+      try {
+        UI.showOverlay('Actualizando...', 'Procesando cambio de contraseña');
+
+        // Llamada a Cloud Function
+        const adminResetPassword = firebase.functions().httpsCallable('adminResetPassword');
+        const result = await adminResetPassword({
+          targetUid: targetResetUserId,
+          newPassword: p1
+        });
+
+        UI.toast('Contraseña actualizada correctamente.');
+        closeModal(modalPasswordReset);
+      } catch (error) {
+        console.error(error);
+        UI.toast(`Error: ${error.message}`);
+        /* Opcional: Mostrar modal de error detallado
+        UI.showError('Falló el cambio de contraseña', error.message);
+        */
+      } finally {
+        UI.hideOverlay();
+      }
+    });
+
+    btnCancelReset?.addEventListener('click', () => {
+      closeModal(modalPasswordReset);
+    });
 
     // --- Estado Global ---
     const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -6267,6 +6340,11 @@ document.addEventListener('DOMContentLoaded', () => {
         <td>${u.ESTADO || ''}</td>
         <td class="row-actions">
           <button class="btn small secondary" data-act="edit" data-id="${u.id}">Editar</button>
+          
+          ${(accessControl && (accessControl.userType === 'ADMIN' || accessControl.userType === 'SUPERVISOR')) ?
+            `<button class="btn small" style="background:#f59e0b; margin-left:4px;" data-act="reset" data-id="${u.id}" title="Restablecer Contraseña">🔑</button>`
+            : ''}
+
           <button class="btn small danger" data-act="del" data-id="${u.id}">Eliminar</button>
         </td>`;
         frag.appendChild(tr);
@@ -6371,6 +6449,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (act === 'del') {
         const ok = await UI.confirm({ title: 'Eliminar usuario', message: `¿Eliminar "${id}"?`, kind: 'err', confirmText: 'Eliminar' });
         if (!ok) return;
+
         UI.showOverlay('Eliminando…', 'Actualizando');
         try {
           await db.collection(COLLECTIONS.USERS).doc(id).delete();
@@ -6381,9 +6460,10 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {
           UI.confirm({ title: 'Error', message: 'No se pudo eliminar.', kind: 'err' });
         } finally { UI.hideOverlay(); }
-      }
 
-      if (act === 'edit') {
+      } else if (act === 'reset') {
+        openPasswordReset(id);
+      } else if (act === 'edit') {
         const u = cachedUsers.find(x => x.id === id);
         if (!u) return;
 
@@ -11467,7 +11547,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // Gráfico de Cantidad de Registros por Usuario
     const byUsuario = {};
     data.forEach(d => {
-      const usuario = d.usuario || 'Sin usuario';
+      let usuario = d.usuario || d.user || d.nombreUsuario || d.registradoPor;
+      if (!usuario && (d.uid || d.userId || d.idUsuario)) {
+        const uid = d.uid || d.userId || d.idUsuario;
+        const u = cachedUsers.find(x => x.id === uid);
+        if (u) usuario = `${u.NOMBRES} ${u.APELLIDOS}`;
+      }
+      usuario = usuario || 'Sin usuario';
       byUsuario[usuario] = (byUsuario[usuario] || 0) + 1;
     });
     if (iqrCharts.cliente) iqrCharts.cliente.destroy();
@@ -11597,9 +11683,19 @@ document.addEventListener('DOMContentLoaded', () => {
       // PUNTO: obtener el nombrePunto
       const puntoDisplay = d.nombrePunto || '-';
 
+      // USUARIO: Resolver nombre de usuario (sin fallback a nombrePunto)
+      let usuarioDisplay = d.usuario || d.user || d.nombreUsuario || d.registradoPor;
+      if (!usuarioDisplay && (d.uid || d.userId || d.idUsuario)) {
+        if (typeof cachedUsers !== 'undefined') {
+          const u = cachedUsers.find(x => x.id === (d.uid || d.userId || d.idUsuario));
+          if (u) usuarioDisplay = `${u.NOMBRES} ${u.APELLIDOS}`;
+        }
+      }
+      usuarioDisplay = usuarioDisplay || '-';
+
       fila.innerHTML = `
         <td>${timestampStr}</td>
-        <td>${d.usuario || d.nombrePunto || '-'}</td>
+        <td>${usuarioDisplay}</td>
         <td>${d.cliente || '-'}</td>
         <td>${d.unidad || '-'}</td>
         <td><span class="iqr-badge">${codigoQR}</span></td>
@@ -11656,9 +11752,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
         const estado = tieneRespuestas ? 'Completada' : 'Pendiente';
 
+        // Resolver usuario para Excel
+        let usuarioDisplay = d.usuario || d.user || d.nombreUsuario || d.registradoPor;
+        if (!usuarioDisplay && (d.uid || d.userId || d.idUsuario)) {
+          if (typeof cachedUsers !== 'undefined') {
+            const u = cachedUsers.find(x => x.id === (d.uid || d.userId || d.idUsuario));
+            if (u) usuarioDisplay = `${u.NOMBRES} ${u.APELLIDOS}`;
+          }
+        }
+        usuarioDisplay = usuarioDisplay || '';
+
         excelData.push([
           fechaStr,
-          d.usuario || d.nombrePunto || '',
+          usuarioDisplay,
           d.cliente || '',
           d.unidad || '',
           codigoQR,
@@ -11746,9 +11852,19 @@ document.addEventListener('DOMContentLoaded', () => {
         const estado = tieneRespuestas ? 'Completada' : 'Pendiente';
         const estadoColor = tieneRespuestas ? '#10b981' : '#f59e0b';
 
+        // Resolver usuario para PDF
+        let usuarioDisplay = d.usuario || d.user || d.nombreUsuario || d.registradoPor;
+        if (!usuarioDisplay && (d.uid || d.userId || d.idUsuario)) {
+          if (typeof cachedUsers !== 'undefined') {
+            const u = cachedUsers.find(x => x.id === (d.uid || d.userId || d.idUsuario));
+            if (u) usuarioDisplay = `${u.NOMBRES} ${u.APELLIDOS}`;
+          }
+        }
+        usuarioDisplay = usuarioDisplay || '-';
+
         tableBody.push([
           { text: fechaStr, fontSize: 9 },
-          { text: d.usuario || d.nombrePunto || '-', fontSize: 9 },
+          { text: usuarioDisplay, fontSize: 9 },
           { text: d.cliente || '-', fontSize: 9 },
           { text: d.unidad || '-', fontSize: 9 },
           { text: d.nombrePunto || '-', fontSize: 9 },
@@ -12701,3 +12817,348 @@ window.addEventListener('resize', () => {
   } catch (e) { /* noop */ }
 })();
 
+
+// ============================================================================
+// GESTIÓN DE TIPOS DE INCIDENCIAS (NUEVO MÓDULO)
+// ============================================================================
+document.addEventListener('DOMContentLoaded', () => {
+  // Referencias DOM
+  const views = {
+    main: document.getElementById('view-tipo-incidencias'),
+    content: document.getElementById('ti-content'),
+    catList: document.getElementById('ti-cat-list'),
+    detailsCard: document.getElementById('ti-details-card'),
+    subcatList: document.getElementById('ti-subcat-list'),
+    detailTitle: document.getElementById('ti-detail-title')
+  };
+
+  const inputs = {
+    cliente: document.getElementById('ti-cliente'),
+    unidad: document.getElementById('ti-unidad'),
+    newSub: document.getElementById('ti-new-sub')
+  };
+
+  const btns = {
+    cargar: document.getElementById('ti-btn-cargar'),
+    addCat: document.getElementById('ti-btn-add-cat'),
+    delCat: document.getElementById('ti-btn-del-cat'),
+    formSub: document.getElementById('ti-form-add-sub')
+  };
+
+  // Estado local
+  let currentCatId = null;
+
+  // 1. Cargar Clientes al Iniciar
+  async function loadTIClients() {
+    try {
+      const db = firebase.firestore();
+      const snap = await db.collection('CLIENTE_UNIDAD').get();
+      const clientes = [];
+
+      snap.forEach(doc => {
+        // El ID del documento ES el nombre del cliente
+        clientes.push(doc.id);
+      });
+
+      clientes.sort();
+      inputs.cliente.innerHTML = '<option value="">Seleccione Cliente</option>' +
+        clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+
+    } catch (error) {
+      console.error('Error cargando clientes:', error);
+      UI.toast('❌ Error al cargar clientes');
+    }
+  }
+
+  // 2. Cargar Unidades al Seleccionar Cliente
+  inputs.cliente.addEventListener('change', async () => {
+    const cliente = inputs.cliente.value;
+    inputs.unidad.innerHTML = '<option value="">Cargando...</option>';
+    inputs.unidad.disabled = true;
+
+    if (!cliente) {
+      inputs.unidad.innerHTML = '<option value="">Seleccione Unidad</option>';
+      return;
+    }
+
+    try {
+      const db = firebase.firestore();
+      const doc = await db.collection('CLIENTE_UNIDAD').doc(cliente).get();
+
+      if (!doc.exists) {
+        inputs.unidad.innerHTML = '<option value="">Cliente no encontrado</option>';
+        return;
+      }
+
+      const data = doc.data();
+      let listaUnidades = [];
+
+      if (data.unidades) {
+        if (Array.isArray(data.unidades)) {
+          // Caso Array: ["Unidad A", "Unidad B"]
+          listaUnidades = data.unidades;
+        } else if (typeof data.unidades === 'object') {
+          // Caso Mapa: { "Unidad A": [...], "Unidad B": [...] }
+          listaUnidades = Object.keys(data.unidades);
+        }
+      }
+
+      listaUnidades.sort();
+      inputs.unidad.innerHTML = '<option value="">Seleccione Unidad</option>' +
+        listaUnidades.map(u => `<option value="${u}">${u}</option>`).join('');
+      inputs.unidad.disabled = false;
+
+    } catch (error) {
+      console.error('Error cargando unidades:', error);
+      UI.toast('❌ Error al cargar unidades');
+      inputs.unidad.innerHTML = '<option value="">Error</option>';
+    }
+  });
+
+  // 3. Cargar Tipos (Categorías)
+  btns.cargar.addEventListener('click', async () => {
+    const cliente = inputs.cliente.value;
+    const unidad = inputs.unidad.value;
+
+    if (!cliente || !unidad) {
+      UI.toast('⚠️ Seleccione Cliente y Unidad primero');
+      return;
+    }
+
+    UI.showOverlay('Cargando Tipos...');
+    views.content.style.display = 'none'; // ocultar mientras carga
+
+    try {
+      const db = firebase.firestore();
+      // Ruta: TIPO_INCIDENCIAS/{cliente}/UNIDADES/{unidad}/TIPO
+      const tipoRef = db.collection('TIPO_INCIDENCIAS').doc(cliente)
+        .collection('UNIDADES').doc(unidad)
+        .collection('TIPO');
+
+      const snap = await tipoRef.get();
+
+      renderCategories(snap.docs);
+      views.content.style.cssText = 'display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start;';
+      views.detailsCard.style.display = 'none'; // reset detalle
+
+    } catch (error) {
+      console.error('Error cargando tipos:', error);
+      UI.toast('❌ Error consultando tipos de incidencia');
+    } finally {
+      UI.hideOverlay();
+    }
+  });
+
+  function renderCategories(docs) {
+    if (docs.length === 0) {
+      views.catList.innerHTML = '<div class="empty-state">No hay categorías configuradas.</div>';
+      return;
+    }
+
+    views.catList.innerHTML = '';
+    const ul = document.createElement('ul');
+    ul.style.cssText = 'list-style: none; padding: 0; margin: 0;';
+
+    docs.forEach(doc => {
+      const data = doc.data();
+      const li = document.createElement('li');
+      li.style.cssText = 'padding: 10px 15px; border-bottom: 1px solid #f1f5f9; cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s;';
+      li.innerHTML = `
+                <span class="cat-name" style="font-weight: 500;">${doc.id}</span>
+                <span class="muted" style="font-size: 12px;">${(data.DETALLES || []).length} items</span>
+            `;
+
+      li.onclick = () => {
+        // Highlight select
+        Array.from(ul.children).forEach(c => c.style.background = 'transparent');
+        li.style.background = '#eff6ff';
+        loadSubcategories(doc);
+      };
+
+      ul.appendChild(li);
+    });
+
+    views.catList.appendChild(ul);
+  }
+
+  // 4. Cargar Subcategorías
+  function loadSubcategories(docSnapshot) {
+    currentCatId = docSnapshot.id;
+    const data = docSnapshot.data();
+    const detalles = data.DETALLES || [];
+
+    views.detailTitle.textContent = currentCatId;
+    views.detailsCard.style.display = 'block';
+
+    views.subcatList.innerHTML = '';
+    if (detalles.length === 0) {
+      views.subcatList.innerHTML = '<li class="muted" style="padding: 10px; font-style: italic;">Sin sub-tipos registrados.</li>';
+    } else {
+      detalles.forEach(sub => {
+        const li = document.createElement('li');
+        li.style.cssText = 'padding: 8px 0; border-bottom: 1px dashed #e2e8f0; display: flex; justify-content: space-between; align-items: center;';
+
+        const span = document.createElement('span');
+        span.textContent = sub;
+
+        const btnDel = document.createElement('button');
+        btnDel.innerHTML = '✕';
+        btnDel.className = 'btn icon-btn danger small';
+        btnDel.style.cssText = 'padding: 2px 8px; font-size: 12px; margin-left: 10px;';
+        btnDel.onclick = () => deleteSubcategory(sub);
+
+        li.appendChild(span);
+        li.appendChild(btnDel);
+        views.subcatList.appendChild(li);
+      });
+    }
+  }
+
+  // 5. Agregar Categoría
+  btns.addCat.addEventListener('click', async () => {
+    const cliente = inputs.cliente.value;
+    const unidad = inputs.unidad.value;
+
+    if (!cliente || !unidad) return UI.toast('⚠️ Seleccione Cliente y Unidad');
+
+    const name = prompt('Nombre de la Nueva Categoría (ej. ROBO):');
+    if (!name || !name.trim()) return;
+
+    const cleanName = name.trim().toUpperCase();
+
+    UI.showOverlay('Creando categoría...');
+    try {
+      const db = firebase.firestore();
+      const docRef = db.collection('TIPO_INCIDENCIAS').doc(cliente)
+        .collection('UNIDADES').doc(unidad)
+        .collection('TIPO').doc(cleanName);
+
+      // Verificar si existe para no sobrescribir sin querer (aunque set merge es seguro)
+      const doc = await docRef.get();
+      if (doc.exists) {
+        UI.toast('⚠️ Esa categoría ya existe');
+      } else {
+        await docRef.set({
+          DETALLES: [],
+          actualizadoEn: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        UI.toast('✅ Categoría creada');
+        // Recargar lista
+        btns.cargar.click();
+      }
+
+    } catch (error) {
+      console.error(error);
+      UI.toast('❌ Error al crear categoría');
+    } finally {
+      UI.hideOverlay();
+    }
+  });
+
+  // 6. Eliminar Categoría
+  btns.delCat.addEventListener('click', async () => {
+    if (!currentCatId) return;
+    const confirmDel = confirm(`¿Estás seguro de eliminar la categoría "${currentCatId}" y todos sus detalles? esta acción no se puede deshacer.`);
+    if (!confirmDel) return;
+
+    const cliente = inputs.cliente.value;
+    const unidad = inputs.unidad.value;
+
+    UI.showOverlay('Eliminando...');
+    try {
+      const db = firebase.firestore();
+      await db.collection('TIPO_INCIDENCIAS').doc(cliente)
+        .collection('UNIDADES').doc(unidad)
+        .collection('TIPO').doc(currentCatId)
+        .delete();
+
+      UI.toast('🗑️ Categoría eliminada');
+      views.detailsCard.style.display = 'none';
+      currentCatId = null;
+      // Recargar lista
+      btns.cargar.click();
+
+    } catch (error) {
+      console.error(error);
+      UI.toast('❌ Error eliminando categoría');
+    } finally {
+      UI.hideOverlay();
+    }
+  });
+
+  // 7. Agregar Subcategoría
+  btns.formSub.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!currentCatId) return;
+
+    const val = inputs.newSub.value.trim().toUpperCase();
+    if (!val) return;
+
+    const cliente = inputs.cliente.value;
+    const unidad = inputs.unidad.value;
+
+    UI.showOverlay('Guardando...');
+    try {
+      const db = firebase.firestore();
+      const docRef = db.collection('TIPO_INCIDENCIAS').doc(cliente)
+        .collection('UNIDADES').doc(unidad)
+        .collection('TIPO').doc(currentCatId);
+
+      await docRef.update({
+        DETALLES: firebase.firestore.FieldValue.arrayUnion(val),
+        actualizadoEn: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      UI.toast('✅ Sub-tipo agregado');
+      inputs.newSub.value = '';
+
+      // Recargar sublista solamente
+      const updatedDoc = await docRef.get();
+      loadSubcategories(updatedDoc);
+
+    } catch (error) {
+      console.error(error);
+      UI.toast('❌ Error guardando sub-tipo');
+    } finally {
+      UI.hideOverlay();
+    }
+  });
+
+  // 8. Eliminar Subcategoría
+  async function deleteSubcategory(subName) {
+    if (!confirm(`¿Quitar "${subName}" de la lista?`)) return;
+
+    const cliente = inputs.cliente.value;
+    const unidad = inputs.unidad.value;
+
+    UI.showOverlay('Actualizando...');
+    try {
+      const db = firebase.firestore();
+      const docRef = db.collection('TIPO_INCIDENCIAS').doc(cliente)
+        .collection('UNIDADES').doc(unidad)
+        .collection('TIPO').doc(currentCatId);
+
+      await docRef.update({
+        DETALLES: firebase.firestore.FieldValue.arrayRemove(subName),
+        actualizadoEn: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      UI.toast('🗑️ Sub-tipo eliminado');
+
+      // Recargar sublista
+      const updatedDoc = await docRef.get();
+      loadSubcategories(updatedDoc);
+
+    } catch (error) {
+      console.error(error);
+      UI.toast('❌ Error eliminando sub-tipo');
+    } finally {
+      UI.hideOverlay();
+    }
+  }
+
+  // Inicializar
+  if (views.main) {
+    loadTIClients();
+  }
+});

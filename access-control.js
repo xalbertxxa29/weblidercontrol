@@ -40,7 +40,7 @@ class AccessControl {
   async fetchUserAccessType(username) {
     try {
       const docSnap = await this.db.collection('USUARIOS').doc(username).get();
-      
+
       if (!docSnap.exists) {
         return { tipoAcceso: null, cliente: null, unidad: null };
       }
@@ -49,7 +49,7 @@ class AccessControl {
       const tipoAcceso = data?.TIPOACCESO;
       const cliente = data?.CLIENTE;      // Campo para filtro de CLIENTE
       const unidad = data?.UNIDAD;        // Campo opcional para filtro de UNIDAD
-      
+
       return { tipoAcceso, cliente, unidad };
     } catch (error) {
       return { tipoAcceso: null, cliente: null, unidad: null };
@@ -66,13 +66,14 @@ class AccessControl {
       // CLIENTE no tiene acceso a:
       restricted.push('view-usuarios');        // Usuarios
       restricted.push('view-cliente-unidad');  // Cliente/Unidad
+      restricted.push('view-tipo-incidencias');// Tipo Incidencias
     }
-    
+
     if (accessType === 'SUPERVISOR') {
       // SUPERVISOR tiene acceso a todo igual que ADMIN
       // Las restricciones de no ver usuarios ADMIN se manejan en el filtrado de datos
     }
-    
+
     // ADMIN tiene acceso a todo
 
     return restricted;
@@ -93,24 +94,24 @@ class AccessControl {
 
     this.currentUser = user;
     const username = this.extractUsername(user.email);
-    
+
     if (!username) {
       return false;
     }
 
     // Obtener tipo de acceso Y datos del cliente
     const { tipoAcceso, cliente, unidad } = await this.fetchUserAccessType(username);
-    
+
     this.userType = tipoAcceso;
     this.clienteAsignado = cliente;  // Guardar CLIENTE para filtros
     this.unidadAsignada = unidad;    // Guardar UNIDAD para filtros
-    
+
     if (!this.userType) {
       this.userType = 'CLIENTE';
     }
 
     this.restrictedViews = this.getRestrictedViews(this.userType);
-    
+
     return true;
   }
 
@@ -152,7 +153,7 @@ class AccessControl {
     if (!this.currentUser) {
       return false;
     }
-    
+
     if (this.canAccessView(viewId)) {
       return true;
     }
@@ -169,7 +170,7 @@ class AccessControl {
     if (this.userType === 'SUPERVISOR') {
       return null;
     }
-    
+
     if (this.userType === 'CLIENTE' && this.clienteAsignado) {
       return this.clienteAsignado;
     }

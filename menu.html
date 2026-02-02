@@ -5,6 +5,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Sistema de Control</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#3b82f6">
 
   <!-- Estilos -->
   <link rel="stylesheet" href="menu.css" />
@@ -52,6 +54,12 @@
             <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
           </svg>
           <span>Cliente/Unidad</span>
+        </button>
+        <button class="nav-item" data-target="view-tipo-incidencias">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+          <span>Tipo Incidencias</span>
         </button>
         <button class="nav-item" data-target="view-cuaderno">
           <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -153,7 +161,7 @@
             <button class="kpi-subnav-btn" data-target="kpi-acceso-peatonal">Acceso Peatonal</button>
             <button class="kpi-subnav-btn" data-target="kpi-detalle-acceso">Detalle Acceso</button>
             <button class="kpi-subnav-btn" data-target="kpi-control-vehicular">🚗 Control Vehicular</button>
-            <button class="kpi-subnav-btn" data-target="kpi-incidencia-qr">🔲 Incidencia QR</button>
+            <button class="kpi-subnav-btn" data-target="kpi-incidencia-qr">🔲 Rondas Manuales</button>
             <button class="kpi-subnav-btn" data-target="kpi-incidencias-hm">Incidencias H&M</button>
           </nav>
 
@@ -1712,6 +1720,83 @@
           </div>
         </div>
 
+        <!-- ===== TIPO INCIDENCIAS (NUEVO) ===== -->
+        <div id="view-tipo-incidencias" class="view">
+          <div class="page-head">
+            <h2>Gestión de Tipos de Incidencias</h2>
+            <p class="muted">Administra las categorías y subcategorías de incidencias por unidad.</p>
+          </div>
+
+          <!-- Filtros de Selección -->
+          <div class="card" style="margin-bottom: 20px; padding: 20px;">
+            <div class="grid-2">
+              <label class="field">
+                <span>Cliente</span>
+                <select id="ti-cliente">
+                  <option value="">Seleccione Cliente</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Unidad</span>
+                <select id="ti-unidad" disabled>
+                  <option value="">Seleccione Unidad</option>
+                </select>
+              </label>
+            </div>
+            <div style="margin-top: 15px; display: flex; justify-content: flex-end;">
+              <button type="button" class="btn primary" id="ti-btn-cargar">
+                <span class="icon">🔍</span> Cargar Tipos
+              </button>
+            </div>
+          </div>
+
+          <!-- Contenido Principal (Grid 2 Columnas) -->
+          <div id="ti-content" style="display: none; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start;">
+
+            <!-- COl 1: LISTA DE CATEGORÍAS (TIPO) -->
+            <div class="card"
+              style="padding: 0; overflow: hidden; display: flex; flex-direction: column; max-height: 600px;">
+              <div
+                style="padding: 15px 20px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin: 0; font-size: 16px; font-weight: 600;">Categorías</h3>
+                <button type="button" class="btn small" id="ti-btn-add-cat">+ Nueva</button>
+              </div>
+              <div id="ti-cat-list" style="overflow-y: auto; flex: 1; padding: 10px;">
+                <!-- Lista de categorías inyectada por JS -->
+                <div class="empty-state">Seleccione una unidad para ver categorías</div>
+              </div>
+            </div>
+
+            <!-- COl 2: DETALLES DE LA CATEGORÍA (ARRAY DETALLES) -->
+            <div class="card" id="ti-details-card" style="display: none; padding: 20px;">
+              <div
+                style="border-bottom: 1px solid #e2e8f0; padding-bottom: 15px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: start;">
+                <div>
+                  <h3 id="ti-detail-title" style="margin: 0 0 5px 0;">Categoría</h3>
+                  <p class="muted" style="margin: 0; font-size: 13px;">Lista de sub-tipos habilitados</p>
+                </div>
+                <button type="button" class="btn icon-btn danger" id="ti-btn-del-cat"
+                  title="Eliminar Categoría Completa">
+                  🗑️
+                </button>
+              </div>
+
+              <!-- Lista de Subtipos -->
+              <ul id="ti-subcat-list" style="list-style: none; padding: 0; margin: 0 0 20px 0;">
+                <!-- Items inyectados por JS -->
+              </ul>
+
+              <!-- Agregar Nuevo Subtipo -->
+              <form id="ti-form-add-sub" style="display: flex; gap: 10px;">
+                <input type="text" id="ti-new-sub" placeholder="Nombre del sub-tipo..."
+                  style="flex: 1; padding: 8px; border: 1px solid #cbd5e0; border-radius: 6px;" autocomplete="off" />
+                <button type="submit" class="btn secondary">Agregar</button>
+              </form>
+            </div>
+
+          </div>
+        </div>
+
       </section>
     </main>
   </div>
@@ -1859,10 +1944,12 @@
   <div id="toast" class="toast" aria-live="polite" aria-atomic="true"></div>
 
   <!-- ===== Scripts (sin duplicados) ===== -->
-  <!-- Firebase compat (v10) - DEBE cargarse primero -->
-  <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore-compat.js"></script>
+  <!-- Firebase compat (v9.23.0) - DEBE cargarse primero -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
 
   <!-- Firebase config propio - DESPUÉS de los scripts de Firebase -->
   <script src="firebase-config.js"></script>
@@ -2101,6 +2188,30 @@
 
   <!-- Lógica principal -->
   <script src="menu.js"></script>
+  <!-- MODAL: Restablecer Contraseña (Admin) -->
+  <div class="modal" id="modal-password-reset" aria-hidden="true">
+    <div class="modal-box">
+      <h3 class="title" style="margin-bottom:16px;">Restablecer Contraseña</h3>
+      <p class="muted" style="margin-bottom:20px;">
+        Esta acción cambiará inmediatamente la contraseña del usuario.
+      </p>
+      <form id="form-password-reset" class="grid-2" style="grid-template-columns: 1fr;">
+        <label>
+          Nueva Contraseña
+          <input type="password" id="reset-new-password" placeholder="Mínimo 6 caracteres" required minlength="6" />
+        </label>
+        <label>
+          Confirmar Contraseña
+          <input type="password" id="reset-confirm-password" placeholder="Repita la contraseña" required />
+        </label>
+      </form>
+      <div class="modal-actions">
+        <button type="button" class="btn secondary" id="btn-cancel-reset">Cancelar</button>
+        <button type="button" class="btn" id="btn-save-reset">Guardar Cambios</button>
+      </div>
+    </div>
+  </div>
+
 </body>
 
 </html>

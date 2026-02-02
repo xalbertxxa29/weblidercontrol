@@ -20,6 +20,9 @@ exports.validarRondasManual = require('./validarManual').validarRondasManual;
 exports.crearRondaEn2Min = require('./crearRondaEn2Min').crearRondaEn2Min;
 exports.verDetallesRonda = require('./verDetallesRonda').verDetallesRonda;
 
+// Funciones Administrativas
+exports.adminResetPassword = require('./adminUsers').adminResetPassword;
+
 // Función de diagnóstico
 exports.diagnostico = functions
   .region('southamerica-east1')
