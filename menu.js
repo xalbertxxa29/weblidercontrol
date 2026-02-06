@@ -4338,19 +4338,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!cliente || cliente === 'Todos') return;
 
-        // Usar helper existente getUnidadesFromClienteUnidad o consultar directo
+        // Usar helper existente getUnidadesFromClienteUnidad que ya funciona en otros módulos
         let unidades = [];
         try {
-          const doc = await db.collection('CLIENTE_UNIDAD').doc(cliente).get();
-          if (doc.exists) {
-            const data = doc.data();
-            // Asumimos estructura: { unidades: [...] } o subcolección. 
-            // Revisando getUnidadesFromClienteUnidad parece que es data.unidades
-            if (data.unidades && Array.isArray(data.unidades)) {
-              unidades = data.unidades;
+          if (typeof getUnidadesFromClienteUnidad === 'function') {
+            unidades = await getUnidadesFromClienteUnidad(cliente);
+          } else {
+            // Fallback manual (soporta mayúsculas/minúsculas)
+            const doc = await db.collection('CLIENTE_UNIDAD').doc(cliente).get();
+            if (doc.exists) {
+              const data = doc.data();
+              unidades = data.unidades || data.UNIDADES || [];
             }
           }
-        } catch (e) { console.error(e); }
+        } catch (e) { console.error('Error fetching units:', e); }
 
         unidades.sort((a, b) => a.localeCompare(b, 'es'));
 
