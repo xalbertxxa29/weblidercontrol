@@ -37,22 +37,61 @@ class AccessControl {
    * Obtiene el tipo de acceso y datos adicionales del usuario desde Firestore
    * @returns {Promise<{tipoAcceso: string, cliente: string, unidad: string}>}
    */
-  async fetchUserAccessType(username) {
+  async fetchUserAccessType(username, email) {
     try {
-      const docSnap = await this.db.collection('USUARIOS').doc(username).get();
+      console.log(`[AccessControl] Fetching profile for: "${username}"`);
+      let docSnap = await this.db.collection('USUARIOS').doc(username).get();
+
+      // Fallback 1: Attempt with trimmed username (just in case)
+      if (!docSnap.exists) {
+        console.warn(`[AccessControl] Not found with "${username}", trying trimmed version...`);
+        docSnap = await this.db.collection('USUARIOS').doc(username.trim()).get();
+      }
+
+      // NUEVO: Fallback 1.5 - Intentar ID como EMAIL completo
+      if (!docSnap.exists && email) {
+        docSnap = await this.db.collection('USUARIOS').doc(email).get();
+      }
+
+      // Fallback 2: Attempt to find by EMAIL field (if ID is different from username)
+      if (!docSnap.exists && email) {
+        console.warn(`[AccessControl] Not found by ID. Searching by email: ${email}`);
+
+        // Try 'CORREO' field
+        let querySnap = await this.db.collection('USUARIOS').where('CORREO', '==', email).limit(1).get();
+
+        // Try 'email' field if 'CORREO' yielded nothing
+        if (querySnap.empty) {
+          querySnap = await this.db.collection('USUARIOS').where('email', '==', email).limit(1).get();
+        }
+
+        if (!querySnap.empty) {
+          console.log(`[AccessControl] Found profile via email search.`);
+          docSnap = querySnap.docs[0];
+        }
+      }
 
       if (!docSnap.exists) {
-        return { tipoAcceso: null, cliente: null, unidad: null };
+        console.error(`[AccessControl] User profile not found for: ${username}`);
+        if (window.UI) window.UI.toast(`⚠️ Usuario no encontrado: ${username}`, 5000);
+        return { tipoAcceso: null, cliente: null, unidad: null, unidades: null };
       }
+
+      console.log(`[AccessControl] Profile found. Data:`, docSnap.data());
 
       const data = docSnap.data();
       const tipoAcceso = data?.TIPOACCESO;
-      const cliente = data?.CLIENTE;      // Campo para filtro de CLIENTE
-      const unidad = data?.UNIDAD;        // Campo opcional para filtro de UNIDAD
+      // Trim values to prevent whitespace issues
+      const cliente = data?.CLIENTE && typeof data.CLIENTE === 'string' ? data.CLIENTE.trim() : data?.CLIENTE;
+      const unidad = data?.UNIDAD && typeof data.UNIDAD === 'string' ? data.UNIDAD.trim() : data?.UNIDAD;
 
-      return { tipoAcceso, cliente, unidad };
+      const unidades = data?.UNIDADES;    // Campo opcional: Lista de unidades permitidas
+
+      return { tipoAcceso, cliente, unidad, unidades };
     } catch (error) {
-      return { tipoAcceso: null, cliente: null, unidad: null };
+      console.error(`[AccessControl] Error fetching profile:`, error);
+      if (window.UI) window.UI.toast(`❌ Error Acceso: ${error.message}`, 5000);
+      return { tipoAcceso: null, cliente: null, unidad: null, unidades: null };
     }
   }
 
@@ -100,11 +139,31 @@ class AccessControl {
     }
 
     // Obtener tipo de acceso Y datos del cliente
-    const { tipoAcceso, cliente, unidad } = await this.fetchUserAccessType(username);
+    const { tipoAcceso, cliente, unidad, unidades } = await this.fetchUserAccessType(username, user.email);
 
     this.userType = tipoAcceso;
-    this.clienteAsignado = cliente;  // Guardar CLIENTE para filtros
-    this.unidadAsignada = unidad;    // Guardar UNIDAD para filtros
+    this.clienteAsignado = cliente; // Guardar cliente asignado
+    console.log(`[AccessControl] Initialized. UserType: ${this.userType}, Cliente: ${this.clienteAsignado}`);
+
+    // Soporte robusto para UNIDADES (Array o String separado por comas)
+    let listaUnidades = [];
+
+    if (unidades) {
+      if (Array.isArray(unidades)) {
+        listaUnidades = unidades;
+      } else if (typeof unidades === 'string') {
+        // Soporte para string: "HUÁNUCO" o "HUÁNUCO, AREQUIPA"
+        listaUnidades = unidades.split(',').map(u => u.trim()).filter(Boolean);
+      }
+    }
+
+    // Si no hay lista en UNIDADES, intentar con el campo legado UNIDAD
+    if (listaUnidades.length === 0 && unidad) {
+      listaUnidades = [unidad];
+    }
+
+    this.unidadesAsignadas = listaUnidades;
+    this.unidadAsignada = unidad;    // Mantener compatibilidad legado
 
     if (!this.userType) {
       this.userType = 'CLIENTE';
@@ -179,12 +238,24 @@ class AccessControl {
 
   /**
    * Obtiene el filtro de unidad para las consultas (opcional)
+   * DEPRECATED: Usar getUnidadesAsignadas() preferiblemente
    */
   getUnidadFilter() {
     if (this.userType === 'CLIENTE' && this.unidadAsignada) {
       return this.unidadAsignada;
     }
     return null; // ADMIN/SUPERVISOR: sin filtro
+  }
+
+  /**
+   * Retorna lista de unidades permitidas para el usuario
+   * Si está vacío, significa que puede ver TODAS las unidades del cliente
+   */
+  getUnidadesAsignadas() {
+    if (this.userType === 'CLIENTE') {
+      return this.unidadesAsignadas || [];
+    }
+    return [];
   }
 
   /**

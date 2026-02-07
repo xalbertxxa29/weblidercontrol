@@ -23,6 +23,33 @@
   } catch (e) { /* noop */ }
 })();
 
+// Helper global para obtener unidades (accesible en todo el script)
+async function getUnidadesFromClienteUnidad(cliente) {
+  if (!cliente) return [];
+  try {
+    const firestore = firebase.firestore();
+    const result = [];
+
+    // 1. Try Field (Legacy support)
+    const doc = await firestore.collection('CLIENTE_UNIDAD').doc(cliente).get();
+    if (doc.exists) {
+      const data = doc.data();
+      if (data.unidades && Array.isArray(data.unidades)) result.push(...data.unidades);
+      if (data.UNIDADES && Array.isArray(data.UNIDADES)) result.push(...data.UNIDADES);
+    }
+
+    // 2. Try Subcollection (Standard)
+    const snap = await firestore.collection('CLIENTE_UNIDAD').doc(cliente).collection('UNIDADES').get();
+    snap.forEach(d => result.push(d.id));
+
+    // Unique and Sort
+    return [...new Set(result)].sort();
+  } catch (e) {
+    console.error('Error fetching units (Global):', e);
+  }
+  return [];
+}
+
 document.addEventListener('DOMContentLoaded', () => {
 
   // Registrar Service Worker
@@ -58,7 +85,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const auth = firebase.auth();
     const db = window.db = firebase.firestore();
 
-    // Habilitar persistencia Offline
+    // Habilitar persistencia Offline (DESHABILITADO TEMPORALMENTE POR CONFLICTO DE VERSIONES SDK)
+    /*
     db.enablePersistence({ synchronizeTabs: true })
       .catch((err) => {
         if (err.code == 'failed-precondition') {
@@ -67,6 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
           console.warn('Persistencia no soportada por el navegador.');
         }
       });
+    */
 
     // ============================================================================
     // 2) SELECTORES DE ELEMENTOS DEL DOM Y ESTADO GLOBAL
@@ -141,13 +170,49 @@ document.addEventListener('DOMContentLoaded', () => {
         const clientes = uniq(rows.map(r => r.cliente));
         const unidades = uniq(rows.map(r => r.unidad));
 
+        // Obtener filtros del usuario
+        const clienteDelUsuario = window.accessControl?.getClienteFilter();
+        const esCliente = !!clienteDelUsuario;
+
         if (cuadernoClienteSelect) {
-          cuadernoClienteSelect.innerHTML = '<option value="">Todas</option>' +
-            clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+          // ✅ CORRECCIÓN: Bloquear cliente para usuarios CLIENTE
+          const fillClienteSelect = (el, values, preselected = null, disabled = false) => {
+            if (!el) return;
+            el.disabled = disabled;
+            let html = '';
+            if (disabled && preselected) {
+              html = `<option value="${preselected}" selected disabled>${preselected}</option>`;
+            } else {
+              html = '<option value="">Todas</option>';
+              html += values.map(c => {
+                const selected = preselected && c === preselected ? ' selected' : '';
+                return `<option value="${c}"${selected}>${c}</option>`;
+              }).join('');
+            }
+            el.innerHTML = html;
+          };
+          fillClienteSelect(cuadernoClienteSelect, clientes, clienteDelUsuario, esCliente);
         }
         if (cuadernoUnidadSelect) {
-          cuadernoUnidadSelect.innerHTML = '<option value="">Todas</option>' +
-            unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+          const ac = window.accessControl;
+          // ✅ CORRECCIÓN: Filtrar unidades por las permitidas al usuario CLIENTE
+          let unidadesPermitidas = unidades;
+          if (ac && ac.userType === 'CLIENTE') {
+            const userAssignedUnits = ac.getUnidadesAsignadas();
+            if (userAssignedUnits && userAssignedUnits.length > 0) {
+              unidadesPermitidas = unidades.filter(u => userAssignedUnits.includes(u));
+            }
+          }
+
+          if (ac && ac.userType === 'CLIENTE' && unidadesPermitidas.length === 1) {
+            cuadernoUnidadSelect.innerHTML = `<option value="${unidadesPermitidas[0]}">${unidadesPermitidas[0]}</option>`;
+            cuadernoUnidadSelect.disabled = true;
+            cuadernoUnidadSelect.style.backgroundColor = '#e2e8f0';
+          } else {
+            cuadernoUnidadSelect.innerHTML = '<option value="">Todas</option>' +
+              unidadesPermitidas.map(u => `<option value="${u}">${u}</option>`).join('');
+            cuadernoUnidadSelect.disabled = false;
+          }
         }
       } catch (e) { }
     }
@@ -191,7 +256,22 @@ document.addEventListener('DOMContentLoaded', () => {
         // Si es CLIENTE: Cliente bloqueado, Unidad libre (mostrando sus unidades), Estados libre
         // Si es ADMIN: Todo libre
         fillSelect(incCliente, clientes, clienteDelUsuario, esCliente);
-        fillSelect(incUnidad, unidades, unidadDelUsuario, false);
+
+        // ✅ CORRECCIÓN: Filtrar unidades por las permitidas al usuario CLIENTE
+        let unidadesPermitidas = unidades;
+        if (accessControl && accessControl.userType === 'CLIENTE') {
+          const userAssignedUnits = accessControl.getUnidadesAsignadas();
+          if (userAssignedUnits && userAssignedUnits.length > 0) {
+            unidadesPermitidas = unidades.filter(u => userAssignedUnits.includes(u));
+          }
+        }
+
+        if (accessControl && accessControl.userType === 'CLIENTE' && unidadesPermitidas.length === 1) {
+          fillSelect(incUnidad, unidadesPermitidas, unidadesPermitidas[0], true);
+          if (incUnidad) incUnidad.style.backgroundColor = '#e2e8f0';
+        } else {
+          fillSelect(incUnidad, unidadesPermitidas, unidadDelUsuario, false);
+        }
         fillSelect(incEstado, estados, null, false);
 
       } catch (e) {
@@ -201,7 +281,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Cargar filtros para Tiempo de Conexión
     async function loadTiempoConexionFilters() {
       try {
-        // Cargar caché de usuarios PRIMERO
+        // Cargar caché de usuarios PRIMERO (Lógica existente preservada)
         const usuariosCache = {};
         let usuariosSnap = await db.collection(COLLECTIONS.USERS).get();
 
@@ -221,58 +301,91 @@ document.addEventListener('DOMContentLoaded', () => {
           };
         });
 
-        // Usar getQueryWithClienteFilter que filtra por cliente en Firestore
-        const snap = await getQueryWithClienteFilter('CONTROL_TIEMPOS_USUARIOS').orderBy('__name__', 'desc').limit(1000).get();
-        const rows = snap.docs.map(d => d.data());
-        const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+        // Cargar listado de usuarios basado en registros recientes ? 
+        // El código original usaba los registros de CONTROL_TIEMPOS_USUARIOS para filtrar qué usuarios mostrar.
+        // Mantenemos esa lógica para el filtro de "Usuario".
+        let rows = [];
+        try {
+          const snap = await getQueryWithClienteFilter('CONTROL_TIEMPOS_USUARIOS').orderBy('__name__', 'desc').limit(1000).get();
+          rows = snap.docs.map(d => d.data());
+        } catch (e) { console.warn("Error cargando usuarios recientes TC", e); }
 
-        // ========================
-        // RESTRICCIÓN POR CLIENTE
-        // ========================
-        if (accessControl.userType === 'CLIENTE') {
-          // Bloquear CLIENTE
-          const tcCliente = accessControl.clienteAsignado;
-          tiempoConexionCliente.innerHTML = `<option value="${tcCliente}">${tcCliente}</option>`;
-          tiempoConexionCliente.value = accessControl.clienteAsignado;
-          tiempoConexionCliente.disabled = true;
 
-          // Bloquear UNIDADES SOLO DEL CLIENTE
-          const unidades = await getUnidadesByCliente(accessControl.clienteAsignado);
-          tiempoConexionUnidad.innerHTML = '<option value="">Todas</option>';
-          unidades.forEach(u => {
-            tiempoConexionUnidad.innerHTML += `<option value="${u}">${u}</option>`;
-          });
+        // ============================================
+        // NUEVA LÓGICA DE FILTROS (MASTER DATA)
+        // ============================================
+        const ac = window.accessControl;
+
+        // Referencia a elementos (variables globales en menu.js)
+        if (tiempoConexionCliente && tiempoConexionUnidad) {
+
+          if (ac?.userType === 'CLIENTE') {
+            const c = ac.clienteAsignado;
+
+            // 1. Bloquear Cliente
+            tiempoConexionCliente.innerHTML = `<option value="${c}">${c}</option>`;
+            tiempoConexionCliente.disabled = true;
+
+            // 2. Obtener Unidades (Master Data)
+            let units = [];
+            if (typeof getUnidadesFromClienteUnidad === 'function') {
+              units = await getUnidadesFromClienteUnidad(c);
+            }
+            if (!units || !units.length) {
+              const doc = await db.collection('CLIENTE_UNIDAD').doc(c).get();
+              if (doc.exists) {
+                const d = doc.data();
+                units = d.unidades || d.UNIDADES || [];
+              }
+            }
+
+            // 3. Filtrar permitidas
+            const allowed = ac.getUnidadesAsignadas();
+            if (allowed && allowed.length > 0) units = units.filter(u => allowed.includes(u));
+            units.sort();
+
+            // 4. Configurar Unidad
+            if (units.length === 1) {
+              tiempoConexionUnidad.innerHTML = `<option value="${units[0]}">${units[0]}</option>`;
+              tiempoConexionUnidad.disabled = true;
+              tiempoConexionUnidad.style.backgroundColor = '#e2e8f0';
+            } else {
+              tiempoConexionUnidad.innerHTML = '<option value="">Todas</option>' +
+                units.map(u => `<option value="${u}">${u}</option>`).join('');
+              tiempoConexionUnidad.disabled = false;
+              tiempoConexionUnidad.style.backgroundColor = '';
+            }
+
+          } else {
+            // ADMIN: Cargar Todo
+            const snapC = await db.collection('CLIENTE_UNIDAD').get();
+            const clients = snapC.docs.map(d => d.id).sort();
+
+            tiempoConexionCliente.innerHTML = '<option value="">Todos</option>' +
+              clients.map(c => `<option value="${c}">${c}</option>`).join('');
+            tiempoConexionCliente.disabled = false;
+
+            tiempoConexionUnidad.innerHTML = '<option value="">Todas</option>';
+            tiempoConexionUnidad.disabled = false;
+          }
         }
-        // Si es ADMIN, mostrar todos
-        else {
-          const clientes = uniq(rows.map(r => {
-            const usuarioID = r.usuarioID || r.usuario;
-            return usuariosCache[usuarioID]?.cliente || r.cliente || '';
-          }).filter(Boolean));
 
-          const unidades = uniq(rows.map(r => {
-            const usuarioID = r.usuarioID || r.usuario;
-            return usuariosCache[usuarioID]?.unidad || r.unidad || '';
-          }).filter(Boolean));
+        // Usuarios - siempre mostrar todos los disponibles (de la query reciente)
+        if (tiempoConexionUsuario) {
+          const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+          const usuariosIds = uniq(rows.map(r => r.usuarioID || r.usuario).filter(Boolean));
 
-          tiempoConexionCliente.innerHTML = '<option value="">Todas</option>' +
-            clientes.map(c => `<option value="${c}">${c}</option>`).join('');
-
-          tiempoConexionUnidad.innerHTML = '<option value="">Todas</option>' +
-            unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+          tiempoConexionUsuario.innerHTML = '<option value="">Todos</option>' +
+            usuariosIds.map(uid => {
+              const userData = usuariosCache[uid];
+              const label = userData ? `${userData.NOMBRES} ${userData.APELLIDOS}` : uid;
+              return `<option value="${uid}">${label}</option>`;
+            }).join('');
         }
-
-        // Usuarios - siempre mostrar todos los disponibles
-        const usuariosIds = uniq(rows.map(r => r.usuarioID || r.usuario).filter(Boolean));
-        tiempoConexionUsuario.innerHTML = '<option value="">Todos</option>' +
-          usuariosIds.map(uid => {
-            const userData = usuariosCache[uid];
-            const label = userData ? `${userData.NOMBRES} ${userData.APELLIDOS}` : uid;
-            return `<option value="${uid}">${label}</option>`;
-          }).join('');
 
         tiempoConexionFiltersLoaded = true;
       } catch (e) {
+        console.error("Error loadTiempoConexionFilters:", e);
       }
     }
 
@@ -730,7 +843,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (target === 'view-tiempo-conexion' && !tiempoConexionFiltersLoaded) {
           tiempoConexionFiltersLoaded = true;
-          loadTiempoConexionFilters();
+          if (UI && UI.showOverlay) UI.showOverlay('Cargando filtros...', 'Obteniendo clientes y unidades');
+          loadTiempoConexionFilters().then(() => {
+            if (UI && UI.hideOverlay) UI.hideOverlay();
+          }).catch(() => {
+            if (UI && UI.hideOverlay) UI.hideOverlay();
+          });
         }
       });
     });
@@ -867,16 +985,9 @@ document.addEventListener('DOMContentLoaded', () => {
           let unidades = [];
 
           if (clienteElegido && clienteElegido !== 'Todos') {
-            // Obtener unidades desde la SUBCOLECCIÓN del cliente
-            const unidadesSnapshot = await db
-              .collection('CLIENTE_UNIDAD')
-              .doc(clienteElegido)
-              .collection('UNIDADES')
-              .get();
-
-            unidadesSnapshot.forEach(doc => {
-              unidades.push(doc.id);
-            });
+            // USAR HELPER SEGURO para obtener unidades (aplica filtros de seguridad automáticamente)
+            // Esto asegura que si el usuario tiene unidades asignadas en accessControl, solo vea esas.
+            unidades = await getUnidadesFromClienteUnidad(clienteElegido);
           } else {
             // Obtener todas las unidades de todos los clientes (OPTIMIZADO: Paralelo)
             const promises = clientes.map(cliente =>
@@ -964,6 +1075,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ============= FUNCIÓN GLOBALES ÚTILES =============
     async function getUnidadesFromClienteUnidad(cliente) {
+      if (!cliente) return []; // Protección contra cliente nulo/vacío
+
       try {
         const snap = await db
           .collection('CLIENTE_UNIDAD')
@@ -971,10 +1084,21 @@ document.addEventListener('DOMContentLoaded', () => {
           .collection('UNIDADES')
           .get();
 
-        return snap.docs
+        let unidadesDisponibles = snap.docs
           .map(d => d.id)
           .filter(Boolean)
           .sort((a, b) => a.localeCompare(b, 'es'));
+
+        // FILTRO DE SEGURIDAD: Si el usuario tiene unidades restringidas (array UNIDADES)
+        if (window.accessControl) {
+          const unidadesPermitidas = window.accessControl.getUnidadesAsignadas();
+          if (unidadesPermitidas && unidadesPermitidas.length > 0) {
+            // Intersección: Solo mostrar unidades que existen Y están permitidas
+            unidadesDisponibles = unidadesDisponibles.filter(u => unidadesPermitidas.includes(u));
+          }
+        }
+
+        return unidadesDisponibles;
       } catch (e) {
         console.error(`[KPI] Error obteniendo unidades de CLIENTE_UNIDAD:`, e);
         return [];
@@ -998,25 +1122,41 @@ document.addEventListener('DOMContentLoaded', () => {
         resumenChoices.unidad.destroy();
       }
 
-      if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
-        // Usuario CLIENTE con UNIDAD específica - bloquear
-        const unidadNombre = accessControl.unidadAsignada;
+      // LÓGICA MEJORADA: Bloquear si es usuario CLIENTE y solo tiene 1 unidad disponible
+      const ac = window.accessControl;
+      const esClienteRestringido = ac && ac.userType === 'CLIENTE';
 
-        unidadSelect.innerHTML = `<option value="${unidadNombre}" selected>${unidadNombre}</option>`;
+      // Si es cliente restringido y solo hay 1 unidad en la lista permitida
+      if (esClienteRestringido && unidades.length === 1) {
+        const unidadUnica = unidades[0];
+        console.log(`[loadResumenUnidadesByCliente] Bloqueando unidad única: ${unidadUnica}`);
+
+        unidadSelect.innerHTML = `<option value="${unidadUnica}" selected>${unidadUnica}</option>`;
 
         const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
         resumenChoices.unidad = new Choices('#resumen-filtro-unidad', cfg);
 
+        // Bloquear visualmente
         unidadSelect.disabled = true;
-        unidadSelect.style.opacity = '0.6';
-        unidadSelect.title = `Acceso restringido a: ${unidadNombre}`;
+        resumenChoices.unidad.disable(); // Deshabilitar el plugin Choices también
+
+        // Estilo visual "plomo"
+        const container = document.querySelector('#resumen-filtro-unidad').closest('.choices');
+        if (container) {
+          container.style.opacity = '0.6';
+          container.style.pointerEvents = 'none';
+          container.style.backgroundColor = '#e2e8f0'; // Plomo claro
+        }
       } else {
-        // Usuario ADMIN/SUPERVISOR o CLIENTE sin unidad específica - mostrar todas las disponibles
+        // Caso normal: Mostrar "Todas" + lista
         unidadSelect.innerHTML = '<option value="Todas" selected>Todas</option>' +
           unidades.map(u => `<option value="${u}">${u}</option>`).join('');
 
         const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
         resumenChoices.unidad = new Choices('#resumen-filtro-unidad', cfg);
+
+        // Asegurar que esté habilitado
+        unidadSelect.disabled = false;
       }
     }
 
@@ -1202,8 +1342,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // PASO 3: Para CLIENTE, mostrar SOLO su cliente y bloquearlo
       if (resumenChoices.cliente) {
-        if (accessControl && accessControl.userType === 'CLIENTE') {
-          const clienteNombre = accessControl.clienteAsignado || 'Sin asignar';
+        const ac = window.accessControl;
+        if (ac && ac.userType === 'CLIENTE') {
+          const clienteNombre = ac.clienteAsignado || 'Sin asignar';
+          console.log(`[populateResumenFilters] Asignando Cliente: "${clienteNombre}"`);
           resumenChoices.cliente.setChoices(
             [{ value: clienteNombre, label: clienteNombre, selected: true }],
             'value', 'label', true // clearStore = true para reemplazar todo
@@ -2459,20 +2601,26 @@ document.addEventListener('DOMContentLoaded', () => {
         detalleChoices.unidad.destroy();
       }
 
-      if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
-        // Usuario CLIENTE con UNIDAD específica - bloquear
-        const unidadNombre = accessControl.unidadAsignada;
+      const ac = window.accessControl;
+      const esClienteRestringido = ac && ac.userType === 'CLIENTE';
 
-        unidadSelect.innerHTML = `<option value="${unidadNombre}" selected>${unidadNombre}</option>`;
+      if (esClienteRestringido && unidades.length === 1) {
+        const unidadUnica = unidades[0];
+        unidadSelect.innerHTML = `<option value="${unidadUnica}" selected>${unidadUnica}</option>`;
 
         const cfg = { searchEnabled: true, itemSelectText: 'Seleccionar', placeholder: true, allowHTML: false };
         detalleChoices.unidad = new Choices('#detalle-filtro-unidad', cfg);
 
         unidadSelect.disabled = true;
-        unidadSelect.style.opacity = '0.6';
-        unidadSelect.title = `Acceso restringido a: ${unidadNombre}`;
+        detalleChoices.unidad.disable();
+        const container = unidadSelect.closest('.choices');
+        if (container) {
+          container.style.opacity = '0.6';
+          container.style.pointerEvents = 'none';
+          container.style.backgroundColor = '#e2e8f0';
+        }
       } else {
-        // Usuario ADMIN/SUPERVISOR o CLIENTE sin unidad específica - mostrar todas las disponibles
+        // Usuario ADMIN/SUPERVISOR o CLIENTE con múltiples unidades
         unidadSelect.innerHTML = '<option value="Todas" selected>Todas</option>' +
           unidades.map(u => `<option value="${u}">${u}</option>`).join('');
 
@@ -3074,11 +3222,11 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
 
+      // Cargar filtros iniciales Master Data
+      initAccesoPeatonalFilters();
+
       queryAccesoPeatonal()
         .then(() => {
-          if (apCache.length === 0) {
-          }
-          populateAccesoPeatonalFilters(apCache);
           renderAccesoPeatonal();
         })
         .catch(e => {
@@ -3124,72 +3272,83 @@ document.addEventListener('DOMContentLoaded', () => {
             _ts: ts
           };
         });
+
+        // Fetch assigned units logic
+        let assignedUnits = [];
+        if (window.accessControl?.userType === 'CLIENTE') {
+          const userUnits = window.accessControl.getUnidadesAsignadas();
+          if (userUnits.length > 0) {
+            assignedUnits = userUnits;
+          } else if (window.accessControl?.clienteAsignado) {
+            assignedUnits = await getUnidadesFromClienteUnidad(window.accessControl.clienteAsignado);
+          }
+        }
+        return assignedUnits;
+
       } finally {
         UI.hideOverlay();
       }
     }
 
-    function populateAccesoPeatonalFilters(rows) {
-      // Obtener filtros del usuario PRIMERO
-      const clienteDelUsuario = accessControl?.getClienteFilter();
-      const unidadDelUsuario = accessControl?.getUnidadFilter?.();
-      const esCliente = !!clienteDelUsuario; // Si hay clienteFiltro, es CLIENTE; si no, es ADMIN
+    async function initAccesoPeatonalFilters() {
+      const ac = window.accessControl;
+      if (!apCliente || !apSedes) return;
 
-      // Los datos ya vienen filtrados por cliente desde getQueryWithClienteFilter()
-      // Extraemos valores únicos para los dropdowns
-      let clientes = [...new Set(rows.map(r => r.CLIENTE).filter(Boolean))].sort();
+      // CLIENTE Logic
+      if (ac?.userType === 'CLIENTE') {
+        const c = ac.clienteAsignado;
 
-      // CORRECCIÓN: Si es CLIENTE, filtrar SEDES solo por sus datos
-      let sedes = [...new Set(rows.map(r => r.UNIDAD).filter(Boolean))].sort();
-      if (esCliente) {
-        // Si es CLIENTE, mostrar solo las sedes que aparecen en sus registros
-        sedes = [...new Set(rows.filter(r => r.CLIENTE === clienteDelUsuario).map(r => r.UNIDAD).filter(Boolean))].sort();
-      }
-
-      const tipos = [...new Set(rows.map(r => r.TIPO_ACCESO).filter(Boolean))].sort(); const setChoices = (inst, values, selectedValue = null, disabled = false) => {
-        if (!inst) return;
-        inst.clearChoices();
-        let choices;
-        if (disabled) {
-          // Si está deshabilitado, mostrar solo el valor seleccionado
-          choices = selectedValue ? [{ value: selectedValue, label: selectedValue, selected: true, disabled: true }] : [];
-        } else if (selectedValue && values.includes(selectedValue)) {
-          // Pre-seleccionar el valor del usuario
-          choices = values.map(v => ({ value: v, label: v, selected: v === selectedValue }));
-        } else {
-          // Mostrar opción "Todos" como predeterminado
-          choices = [{ value: '__ALL__', label: 'Todos', selected: true }, ...values.map(v => ({ value: v, label: v }))];
+        // Lock Client
+        if (apChoices.cliente) {
+          apChoices.cliente.setChoices([{ value: c, label: c, selected: true, disabled: true }], 'value', 'label', true);
+          apChoices.cliente.disable();
         }
-        inst.setChoices(choices, 'value', 'label', false);
-      };
 
-      // Si es CLIENTE: Cliente bloqueado, Sedes libre (mostrando SOLO sus sedes), Tipo libre
-      // Si es ADMIN: Todo libre
-      if (apChoices.cliente) setChoices(apChoices.cliente, clientes, clienteDelUsuario, esCliente);
-      if (apChoices.sedes) setChoices(apChoices.sedes, sedes, unidadDelUsuario, false);
-      if (apChoices.tipo) setChoices(apChoices.tipo, tipos, null, false);
+        // Fetch Units
+        let units = [];
+        if (typeof getUnidadesFromClienteUnidad === 'function') units = await getUnidadesFromClienteUnidad(c);
+        if (!units.length) {
+          const doc = await db.collection('CLIENTE_UNIDAD').doc(c).get();
+          if (doc.exists) units = doc.data().unidades || doc.data().UNIDADES || [];
+        }
 
-      if (!window.Choices) {
-        const fillAPSelect = (el, values, preselectedValue = null, disabled = false) => {
-          if (!el) return;
-          el.disabled = disabled;
-          let html = '';
-          if (disabled && preselectedValue) {
-            html = `<option value="${preselectedValue}" selected disabled>${preselectedValue}</option>`;
-          } else {
-            if (!preselectedValue || !values.includes(preselectedValue)) {
-              html = '<option value="__ALL__" selected>Todos</option>';
+        // Filter Allowed
+        const allowed = ac.getUnidadesAsignadas();
+        if (allowed.length) units = units.filter(u => allowed.includes(u));
+        units.sort();
+
+        // Set Units
+        if (apChoices.sedes) {
+          if (units.length === 1) {
+            const u = units[0];
+            apChoices.sedes.setChoices([{ value: u, label: u, selected: true }], 'value', 'label', true);
+            apChoices.sedes.disable();
+            // Style
+            const container = apSedes.closest('.choices');
+            if (container) {
+              container.style.opacity = '0.6';
+              container.style.backgroundColor = '#e2e8f0';
             }
-            html += values.map(v => {
-              const selected = preselectedValue && v === preselectedValue ? ' selected' : '';
-              return `<option value="${v}"${selected}>${v}</option>`;
-            }).join('');
+          } else {
+            const choices = [{ value: '__ALL__', label: 'Todos', selected: true }];
+            units.forEach(u => choices.push({ value: u, label: u }));
+            apChoices.sedes.setChoices(choices, 'value', 'label', true);
+            apChoices.sedes.enable();
           }
-          el.innerHTML = html;
-        };
-        fillAPSelect(apCliente, clientes, clienteDelUsuario, esCliente);
-        fillAPSelect(apSedes, sedes, unidadDelUsuario, false);
-        fillAPSelect(apTipo, tipos, null, false);
+        }
+      } else {
+        // ADMIN: Load All Clients
+        const snap = await db.collection('CLIENTE_UNIDAD').get();
+        const clients = snap.docs.map(d => d.id).sort();
+
+        if (apChoices.cliente) {
+          const choices = [{ value: '__ALL__', label: 'Todos', selected: true }];
+          clients.forEach(c => choices.push({ value: c, label: c }));
+          apChoices.cliente.setChoices(choices, 'value', 'label', true);
+        }
+        // Leave Units empty or load all? Default all if 'Todos' selected
+        // Logic for updating units on client change should be added if needed, 
+        // but specifically requested for CLIENTE user locking.
       }
     }
 
@@ -3666,33 +3825,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function loadRondaGeneralUnidadesByCliente(cliente) {
       try {
+        const ac = window.accessControl;
         const unidadSelect = document.getElementById('kpi-ronda-unidad');
         if (!unidadSelect) return;
 
         console.log(`[RONDA GENERAL] Cargando unidades para cliente: ${cliente}`);
 
         // Obtener unidades DIRECTAMENTE DE CLIENTE_UNIDAD
-        const unidades = await getUnidadesFromClienteUnidad(cliente);
-        console.log(`[RONDA GENERAL] Unidades encontradas:`, unidades);
+        let unidades = await getUnidadesFromClienteUnidad(cliente);
 
-        // Limpiar select
-        unidadSelect.innerHTML = '<option value="">Todas</option>';
+        // ✅ CORRECCIÓN: Filtrar unidades permitidas si es usuario CLIENTE
+        if (ac && ac.userType === 'CLIENTE') {
+          const userAssignedUnits = ac.getUnidadesAsignadas();
+          if (userAssignedUnits && userAssignedUnits.length > 0) {
+            console.log('[RONDA GENERAL] Filtrando unidades por permisos:', userAssignedUnits);
+            unidades = unidades.filter(u => userAssignedUnits.includes(u));
+          }
+        }
+        console.log(`[RONDA GENERAL] Unidades finales:`, unidades);
 
-        // Si usuario es CLIENTE con UNIDAD asignada, mostrar SOLO esa
-        if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
-          const unidadNombre = accessControl.unidadAsignada;
-          unidadSelect.innerHTML = `<option value="${unidadNombre}">${unidadNombre}</option>`;
+        const esClienteRestringido = ac && ac.userType === 'CLIENTE';
+
+        if (esClienteRestringido && unidades.length === 1) {
+          const unidadUnica = unidades[0];
+          unidadSelect.innerHTML = `<option value="${unidadUnica}" selected>${unidadUnica}</option>`;
           unidadSelect.disabled = true;
+          unidadSelect.style.backgroundColor = '#e2e8f0';
           unidadSelect.style.opacity = '0.6';
-          unidadSelect.title = `Acceso restringido a: ${unidadNombre}`;
+          unidadSelect.title = `Acceso restringido a: ${unidadUnica}`;
         } else {
-          // Agregar todas las unidades disponibles
+          unidadSelect.innerHTML = '<option value="">Todas</option>';
           unidades.forEach(unidad => {
             const option = document.createElement('option');
             option.value = unidad;
             option.textContent = unidad;
             unidadSelect.appendChild(option);
           });
+          unidadSelect.disabled = false;
+          unidadSelect.style.backgroundColor = '';
+          unidadSelect.style.opacity = '1';
         }
       } catch (error) {
         console.error('[RONDA GENERAL] Error al cargar unidades:', error);
@@ -3724,77 +3895,72 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // 3. Filtro por Fechas
-        // Nota: Firestore requiere índice compuesto para rango de fechas + ordenamiento
-        let startDate = null;
-        let endDate = null;
+        // NOTA IMPORTANTE: Se ha movido el filtrado de fechas al CLIENTE (Javascript)
+        // porque en Firestore el campo 'horarioInicio' puede estar guardado como String o Timestamp.
+        // Las consultas de servidor fallan si comparamos tipos distintos (Date vs String).
 
-        if (kpiRondaFilters.fechaInicio) {
-          // Parsear "YYYY-MM-DD" a Date inicio del día (local)
-          const parts = kpiRondaFilters.fechaInicio.split('-');
-          if (parts.length === 3) {
-            startDate = new Date(parts[0], parts[1] - 1, parts[2], 0, 0, 0);
-            if (!isNaN(startDate.getTime())) {
-              query = query.where('horarioInicio', '>=', startDate);
-            }
-          }
-        }
+        /* BLOQUE FILTRO SERVIDOR COMENTADO POR COMPATIBILIDAD
+        if (kpiRondaFilters.fechaInicio) { ... }
+        if (kpiRondaFilters.fechaFin) { ... }
+        */
 
-        if (kpiRondaFilters.fechaFin) {
-          // Parsear "YYYY-MM-DD" a Date fin del día (local)
-          const parts = kpiRondaFilters.fechaFin.split('-');
-          if (parts.length === 3) {
-            endDate = new Date(parts[0], parts[1] - 1, parts[2], 23, 59, 59, 999);
-            if (!isNaN(endDate.getTime())) {
-              query = query.where('horarioInicio', '<=', endDate);
-            }
-          }
-        }
+        // 4. Límite aumentado para traer suficientes datos y filtrar localmente
+        query = query.limit(2000);
 
-        // 4. Ordenamiento (SERVER-SIDE REMOVIDO TEMPORALMENTE PARA EVITAR ERROR DE INDICE/QUOTA)
-        // query = query.orderBy('horarioInicio', 'desc');
-
-        // 5. Límite (paginación implícita de 500)
-        query = query.limit(500);
-
-        console.log('[KPI RONDA] Ejecutando consulta SIMPLIFICADA...', {
+        console.log('[KPI RONDA] Ejecutando consulta (Filtro Cliente/Unidad en Servidor, Fechas en Local)...', {
           cliente: kpiRondaFilters.cliente,
-          unidad: kpiRondaFilters.unidad,
-          inicio: startDate,
-          fin: endDate
+          unidad: kpiRondaFilters.unidad
         });
 
         const snapshot = await query.get();
-        console.log(`[KPI RONDA] Registros obtenidos: ${snapshot.size}`);
+        console.log(`[KPI RONDA] Registros obtenidos (raw): ${snapshot.size}`);
+
+        // Helper robusto para fechas
+        const parseDateSafe = (val) => {
+          if (!val) return null;
+          if (val.toDate && typeof val.toDate === 'function') return val.toDate(); // Timestamp
+          if (val instanceof Date) return val;
+          // Intentar parsear string ISO o simple
+          const d = new Date(val);
+          return isNaN(d.getTime()) ? null : d;
+        };
 
         let registros = snapshot.docs.map(doc => {
           const data = doc.data();
           return {
             id: doc.id,
-            ...data
+            ...data,
+            _dateObj: parseDateSafe(data.horarioInicio) // Pre-calcular fecha para ordenar/filtrar
           };
         });
 
-        // ORDENAMIENTO CLIENT-SIDE (Emergency Fix)
+        // FILTRADO LOCAL DE FECHAS
+        if (kpiRondaFilters.fechaInicio || kpiRondaFilters.fechaFin) {
+          const inicio = kpiRondaFilters.fechaInicio ? new Date(kpiRondaFilters.fechaInicio + 'T00:00:00') : null;
+          const fin = kpiRondaFilters.fechaFin ? new Date(kpiRondaFilters.fechaFin + 'T23:59:59') : null;
+
+          registros = registros.filter(r => {
+            if (!r._dateObj) return false;
+            if (inicio && r._dateObj < inicio) return false;
+            if (fin && r._dateObj > fin) return false;
+            return true;
+          });
+          console.log(`[KPI RONDA] Registros tras filtrado de fecha: ${registros.length}`);
+        }
+
+        // ORDENAMIENTO (Más reciente primero)
         registros.sort((a, b) => {
-          const parseDate = (val) => {
-            if (!val) return 0;
-            if (val.toDate) return val.toDate().getTime();
-            if (val instanceof Date) return val.getTime();
-            const d = new Date(val);
-            return isNaN(d.getTime()) ? 0 : d.getTime();
-          };
-          return parseDate(b.horarioInicio) - parseDate(a.horarioInicio);
+          const tA = a._dateObj ? a._dateObj.getTime() : 0;
+          const tB = b._dateObj ? b._dateObj.getTime() : 0;
+          return tB - tA; // Decendente
         });
 
-        // Ya no es necesario ordenar manualmente ni filtrar por cliente/unidad/fecha
-        // porque ya lo hizo la BD (mucho más rápido).
+        // Limitar a visualización (ej. 100 o más si se desea ver todo lo filtrado)
+        // Guardamos todo en 'registros' para las gráficas, pero la tabla la limitamos si es necesario.
+        // Para KPI es mejor pasar todos los filtrados a las gráficas.
 
-
-        // Limitar a 100 últimos registros
-        const ultimos30 = registros.slice(0, 100);
-
-        // Actualizar card de información
-        updateKpiRondaInfoCard(ultimos30);
+        // Actualizar card de información (pasamos TODOS los registros filtrados)
+        updateKpiRondaInfoCard(registros);
 
         UI.hideOverlay();
       } catch (error) {
@@ -4355,11 +4521,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         unidades.sort((a, b) => a.localeCompare(b, 'es'));
 
-        // Si usuario es CLIENTE con unidad asignada
-        if (accessControl && accessControl.userType === 'CLIENTE' && accessControl.unidadAsignada) {
-          const miUnidad = accessControl.unidadAsignada;
-          unidadSelect.innerHTML = `<option value="${miUnidad}">${miUnidad}</option>`;
+        const ac = window.accessControl;
+        const esClienteRestringido = ac && ac.userType === 'CLIENTE';
+
+        // Si usuario es CLIENTE y solo tiene 1 unidad disponible
+        if (esClienteRestringido && unidades.length === 1) {
+          const miUnidad = unidades[0];
+          unidadSelect.innerHTML = `<option value="${miUnidad}" selected>${miUnidad}</option>`;
           unidadSelect.disabled = true;
+          unidadSelect.style.backgroundColor = '#e2e8f0';
+          unidadSelect.style.opacity = '0.6';
         } else {
           unidades.forEach(unidad => {
             const option = document.createElement('option');
@@ -4367,6 +4538,9 @@ document.addEventListener('DOMContentLoaded', () => {
             option.textContent = unidad;
             unidadSelect.appendChild(option);
           });
+          unidadSelect.disabled = false;
+          unidadSelect.style.backgroundColor = '';
+          unidadSelect.style.opacity = '1';
         }
 
       } catch (error) {
@@ -7119,19 +7293,40 @@ document.addEventListener('DOMContentLoaded', () => {
         const fi = cuadernoFechaInicio?.value ? parseLocalDate(cuadernoFechaInicio.value) : null;
         const ff = cuadernoFechaFin?.value ? parseLocalDate(cuadernoFechaFin.value) : null;
 
-        // Aplicar filtro de fecha al Query (Servidor)
-        if (fi) q = q.where('timestamp', '>=', fi);
-        if (ff) {
-          const nextDay = new Date(ff);
-          nextDay.setDate(nextDay.getDate() + 1);
-          q = q.where('timestamp', '<', nextDay);
+        const ac = window.accessControl;
+        const isClientUser = ac && ac.userType === 'CLIENTE';
+
+        // ESTRATEGIA: 
+        // Admin -> Filtro Fecha en Server (Index Simple Timestamp)
+        // Cliente -> Filtro Fecha en Memoria (Evita Index Compuesto Cliente+Timestamp que falta)
+        if (!isClientUser) {
+          if (fi) q = q.where('timestamp', '>=', fi);
+          if (ff) {
+            const nextDay = new Date(ff);
+            nextDay.setDate(nextDay.getDate() + 1);
+            q = q.where('timestamp', '<', nextDay);
+          }
         }
 
-        // Obtener datos (hasta 1000)
-        const snap = await q.orderBy('timestamp', 'asc').limit(1000).get();
+        // Obtener datos (aumentado limit)
+        const snap = await q.limit(2000).get();
 
-        // Aplicar filtros de Cliente / Unidad en Memoria (Cliente)
+        // Aplicar filtros en Memoria
         let rawRows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        // Filtro Fecha Local (Para Cliente, y redundante para Admin)
+        if (fi || ff) {
+          rawRows = rawRows.filter(r => {
+            const docDate = r.timestamp?.toDate ? r.timestamp.toDate() : new Date(r.timestamp);
+            if (fi && docDate < fi) return false;
+            if (ff) {
+              const nextDay = new Date(ff);
+              nextDay.setDate(nextDay.getDate() + 1);
+              if (docDate >= nextDay) return false;
+            }
+            return true;
+          });
+        }
 
         const cli = cuadernoClienteSelect?.value || '';
         const uni = cuadernoUnidadSelect?.value || '';
@@ -7603,6 +7798,8 @@ document.addEventListener('DOMContentLoaded', () => {
       return query;
     }
 
+
+
     // Monitor de seguridad: Impide que se muestren vistas sin permisos
     const securityMonitor = setInterval(() => {
       if (!window.accessControl) return;
@@ -7685,6 +7882,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
 
+      initDetalleAccesoFilters(); // Cargar Filtros Master Data
       queryDetalleAcceso();
       daApply?.addEventListener('click', renderDetalleAcceso);
       daExport?.addEventListener('click', exportarDetalleAccesoExcel);
@@ -7729,57 +7927,94 @@ document.addEventListener('DOMContentLoaded', () => {
           };
         });
 
-        populateDetalleAccesoFilters(daCache);
+        let assignedUnits = [];
+        if (window.accessControl?.userType === 'CLIENTE') {
+          const userUnits = window.accessControl.getUnidadesAsignadas();
+          if (userUnits.length > 0) {
+            assignedUnits = userUnits;
+          } else if (window.accessControl?.clienteAsignado) {
+            assignedUnits = await getUnidadesFromClienteUnidad(window.accessControl.clienteAsignado);
+          }
+        }
+
+        // populateDetalleAccesoFilters(daCache, assignedUnits);
         renderDetalleAcceso();
       } finally {
         UI.hideOverlay();
       }
     }
 
-    function populateDetalleAccesoFilters(rows) {
-      // Obtener filtros del usuario PRIMERO
-      const clienteDelUsuario = accessControl?.getClienteFilter();
-      const unidadDelUsuario = accessControl?.getUnidadFilter?.();
-      const esCliente = !!clienteDelUsuario; // Si hay clienteFiltro, es CLIENTE; si no, es ADMIN
+    async function initDetalleAccesoFilters() {
+      // IDs confirmados en Step 153/160 (da-cliente, da-unidad)
+      const daCliente = document.getElementById('da-cliente');
+      const daSedes = document.getElementById('da-unidad');
 
-      const clientes = [...new Set(rows.map(r => r.CLIENTE).filter(Boolean))].sort();
+      if (!daCliente || !daSedes) return;
 
-      // CORRECCIÓN: Si es CLIENTE, filtrar UNIDADES solo por sus datos
-      let unidades = [...new Set(rows.map(r => r.UNIDAD).filter(Boolean))].sort();
-      if (esCliente) {
-        // Si es CLIENTE, mostrar solo las unidades que aparecen en sus registros
-        unidades = [...new Set(rows.filter(r => r.CLIENTE === clienteDelUsuario).map(r => r.UNIDAD).filter(Boolean))].sort();
-      }
+      const ac = window.accessControl;
 
-      const tipos = [...new Set(rows.map(r => r.TIPO_ACCESO).filter(Boolean))].sort();
-      const estados = [...new Set(rows.map(r => r.ESTADO).filter(Boolean))].sort();
+      // --- LÓGICA USUARIO CLIENTE ---
+      if (ac?.userType === 'CLIENTE') {
+        const c = ac.clienteAsignado;
 
-      const fillSelect = (el, values, preselectedValue = null, disabled = false) => {
-        if (!el) return;
-        el.disabled = disabled;
-        let html = '';
-        if (disabled && preselectedValue) {
-          // Si está deshabilitado, mostrar solo el valor seleccionado
-          html = `<option value="${preselectedValue}" selected disabled>${preselectedValue}</option>`;
-        } else {
-          if (!preselectedValue || !values.includes(preselectedValue)) {
-            html = '<option value="__ALL__">Todos</option>';
-          }
-          html += values.map(v => {
-            const selected = preselectedValue && v === preselectedValue ? ' selected' : '';
-            return `<option value="${v}"${selected}>${v}</option>`;
-          }).join('');
+        // 1. Bloquear Cliente
+        daCliente.innerHTML = `<option value="${c}">${c}</option>`;
+        daCliente.disabled = true;
+        daCliente.style.backgroundColor = '#e2e8f0';
+
+        // 2. Obtener Unidades (Master Data + Fallback)
+        let units = [];
+        if (typeof getUnidadesFromClienteUnidad === 'function') {
+          units = await getUnidadesFromClienteUnidad(c);
         }
-        el.innerHTML = html;
-      };
+        // Fallback manual si falla el helper
+        if (!units || units.length === 0) {
+          const doc = await db.collection('CLIENTE_UNIDAD').doc(c).get();
+          if (doc.exists) {
+            const d = doc.data();
+            units = d.unidades || d.UNIDADES || [];
+          }
+        }
 
-      // Si es CLIENTE: Cliente bloqueado, Unidad libre (mostrando SOLO sus unidades), Tipo libre, Estado libre
-      // Si es ADMIN: Todo libre
-      fillSelect(document.getElementById('da-cliente'), clientes, clienteDelUsuario, esCliente);
-      fillSelect(document.getElementById('da-unidad'), unidades, unidadDelUsuario, false);
-      fillSelect(document.getElementById('da-tipo'), tipos, null, false);
-      fillSelect(document.getElementById('da-estado'), estados, null, false);
+        // 3. Filtrar por asignación del usuario
+        const allowed = ac.getUnidadesAsignadas();
+        if (allowed && allowed.length > 0) {
+          units = units.filter(u => allowed.includes(u));
+        }
+        units.sort();
+
+        // 4. Configurar Select de Unidad
+        if (units.length === 1) {
+          daSedes.innerHTML = `<option value="${units[0]}">${units[0]}</option>`;
+          daSedes.disabled = true;
+          daSedes.style.backgroundColor = '#e2e8f0';
+        } else {
+          // NOTA: Detalle Acceso usa '__ALL__' para "Todos" según código previo
+          daSedes.innerHTML = '<option value="__ALL__">Todos</option>' +
+            units.map(u => `<option value="${u}">${u}</option>`).join('');
+          daSedes.disabled = false;
+          daSedes.style.backgroundColor = '';
+        }
+
+      } else {
+        // --- LÓGICA ADMIN / SUPERVISOR ---
+        try {
+          const snap = await db.collection('CLIENTE_UNIDAD').get();
+          const clients = snap.docs.map(d => d.id).sort();
+
+          daCliente.innerHTML = '<option value="__ALL__">Todos</option>' +
+            clients.map(c => `<option value="${c}">${c}</option>`).join('');
+          daCliente.disabled = false;
+
+          // Unidad por defecto
+          daSedes.innerHTML = '<option value="__ALL__">Todos</option>';
+          daSedes.disabled = false; // Se habilitará/llenará mejor con un listener de cambio de cliente, pero por ahora Init básico
+        } catch (e) {
+          console.error("Error cargando clientes ADMIN:", e);
+        }
+      }
     }
+
 
     function getDetalleAccesoFilters() {
       let start = moment().subtract(29, 'days').startOf('day');
@@ -8439,33 +8674,82 @@ document.addEventListener('DOMContentLoaded', () => {
       unidad: ''
     };
 
-    // Cargar clientes para rondas
+    // Cargar clientes para rondas (Master Data)
     async function loadRondaClientes() {
       try {
-        let snap;
+        if (!rondaCliente) return;
 
-        // Aplicar filtro de acceso según tipo de usuario
-        if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
-          // Si es cliente, solo mostrar su cliente asignado
-          const doc = await db.collection('CLIENTE_UNIDAD').doc(window.accessControl.clienteAsignado).get();
-          snap = { empty: !doc.exists, docs: doc.exists ? [doc] : [] };
+        const ac = window.accessControl;
+        const firestore = firebase.firestore();
+
+        // LÓGICA CLIENTE
+        if (ac?.userType === 'CLIENTE') {
+          const c = ac.clienteAsignado;
+
+          // 1. Bloquear Cliente
+          rondaCliente.innerHTML = `<option value="${c}">${c}</option>`;
+          rondaCliente.disabled = true;
+          rondaCliente.style.backgroundColor = '#e2e8f0';
+
+          // 2. Obtener Unidades (Master Data + Fallback)
+          let units = [];
+          // Helper global
+          if (typeof getUnidadesFromClienteUnidad === 'function') {
+            units = await getUnidadesFromClienteUnidad(c);
+          }
+          // Fallback manual
+          if (!units || units.length === 0) {
+            const doc = await firestore.collection('CLIENTE_UNIDAD').doc(c).get();
+            if (doc.exists) {
+              const d = doc.data();
+              if (d.unidades || d.UNIDADES) units = d.unidades || d.UNIDADES;
+              else {
+                const subSnap = await firestore.collection('CLIENTE_UNIDAD').doc(c).collection('UNIDADES').get();
+                units = subSnap.docs.map(sd => sd.id);
+              }
+            }
+          }
+
+          // 3. Filtrar permitidas
+          const allowed = ac.getUnidadesAsignadas();
+          if (allowed && allowed.length > 0) {
+            units = units.filter(u => allowed.includes(u));
+          }
+
+          // Deduplicar
+          units = [...new Set(units)];
+          units.sort();
+
+          // 4. Configurar Unidad
+          if (rondaUnidad) {
+            if (units.length === 1) {
+              rondaUnidad.innerHTML = `<option value="${units[0]}">${units[0]}</option>`;
+              rondaUnidad.disabled = true;
+              rondaUnidad.style.backgroundColor = '#e2e8f0';
+            } else {
+              rondaUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>' +
+                units.map(u => `<option value="${u}">${u}</option>`).join('');
+              rondaUnidad.disabled = false;
+              rondaUnidad.style.backgroundColor = '';
+            }
+          }
+
         } else {
-          // Si es admin, mostrar todos los clientes
-          snap = await db.collection('CLIENTE_UNIDAD').get();
+          // LÓGICA ADMIN
+          const snap = await firestore.collection('CLIENTE_UNIDAD').get();
+          const clientes = snap.docs.map(d => d.id).sort((a, b) => a.localeCompare(b, 'es'));
+
+          rondaCliente.innerHTML = '<option value="">Seleccionar Cliente</option>' +
+            clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+          rondaCliente.disabled = false;
         }
 
-        if (snap.empty) {
-          rondaCliente.innerHTML = '<option value="">No hay clientes</option>';
-          return;
-        }
-        const clientes = snap.docs.map(d => d.id).sort((a, b) => a.localeCompare(b, 'es'));
-        rondaCliente.innerHTML = '<option value="">Seleccionar Cliente</option>' +
-          clientes.map(c => `<option value="${c}">${c}</option>`).join('');
       } catch (e) {
+        console.error("Error loadRondaClientes:", e);
       }
     }
 
-    // Cargar unidades cuando cambia cliente en rondas
+    // Cargar unidades cuando cambia cliente en rondas (Listener Admin)
     if (rondaCliente) {
       rondaCliente.addEventListener('change', async () => {
         const selectedCliente = rondaCliente.value;
@@ -8476,26 +8760,26 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         try {
-          // Obtener unidades desde la SUBCOLECCIÓN UNIDADES del cliente
-          const unidadesSnapshot = await db
-            .collection('CLIENTE_UNIDAD')
-            .doc(selectedCliente)
-            .collection('UNIDADES')
-            .get();
+          const firestore = firebase.firestore();
+          let units = [];
 
-          let unidades = [];
+          // Estrategia híbrida
+          const subSnap = await firestore.collection('CLIENTE_UNIDAD').doc(selectedCliente).collection('UNIDADES').get();
+          if (!subSnap.empty) {
+            units = subSnap.docs.map(d => d.id);
+          } else {
+            const doc = await firestore.collection('CLIENTE_UNIDAD').doc(selectedCliente).get();
+            if (doc.exists) {
+              const d = doc.data();
+              units = d.unidades || d.UNIDADES || [];
+            }
+          }
 
-          // Extraer los IDs de los documentos (que son los nombres de las unidades)
-          unidadesSnapshot.forEach(doc => {
-            unidades.push(doc.id);
-          });
-
-          // Ordenar alfabéticamente
-          unidades.sort((a, b) => a.localeCompare(b, 'es'));
+          units.sort((a, b) => a.localeCompare(b, 'es'));
 
           if (rondaUnidad) {
             rondaUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>' +
-              unidades.map(u => `<option value="${u}">${u}</option>`).join('');
+              units.map(u => `<option value="${u}">${u}</option>`).join('');
           }
         } catch (e) {
           if (rondaUnidad) rondaUnidad.innerHTML = '<option value="">Error al cargar unidades</option>';
@@ -8954,37 +9238,83 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Actualizar opciones de filtros en Rondas Creadas
-    function updateRondasFilterOptions() {
-      // Obtener clientes únicos de rondaList respetando restricciones de usuario
-      let clientesUnicos = new Set();
-      let unidadesUnicos = new Set();
+    // Actualizar opciones de filtros en Rondas Creadas (Master Data)
+    async function updateRondasFilterOptions() {
+      try {
+        const ac = window.accessControl;
+        const firestore = firebase.firestore();
 
-      let rondasAccesibles = rondaList;
-      if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
-        rondasAccesibles = rondaList.filter(r => r.cliente === window.accessControl.clienteAsignado);
-      }
+        if (!rondasFilterCliente) return;
 
-      rondasAccesibles.forEach(ronda => {
-        if (ronda.cliente) clientesUnicos.add(ronda.cliente);
-        if (ronda.unidad) unidadesUnicos.add(ronda.unidad);
-      });
+        // LÓGICA CLIENTE
+        if (ac?.userType === 'CLIENTE') {
+          const c = ac.clienteAsignado;
 
-      // Actualizar select de cliente
-      if (rondasFilterCliente) {
-        const clienteActual = rondasFilterCliente.value;
-        rondasFilterCliente.innerHTML = '<option value="">Todos los Clientes</option>' +
-          Array.from(clientesUnicos).sort().map(c => `<option value="${c}">${c}</option>`).join('');
-        rondasFilterCliente.value = clienteActual;
-      }
+          // 1. Cliente
+          rondasFilterCliente.innerHTML = `<option value="${c}">${c}</option>`;
+          rondasFilterCliente.value = c;
+          // No deshabilitamos para permitir 'ver', pero solo tiene una opción. O deshabilitar si prefieren UX lock.
+          // Para filtros listado, a veces es mejor dejarlo enabled pero con 1 opción.
+          // Pero consistency:
+          rondasFilterCliente.disabled = true;
 
-      // Actualizar select de unidad
-      if (rondasFilterUnidad) {
-        const unidadActual = rondasFilterUnidad.value;
-        rondasFilterUnidad.innerHTML = '<option value="">Todas las Unidades</option>' +
-          Array.from(unidadesUnicos).sort().map(u => `<option value="${u}">${u}</option>`).join('');
-        rondasFilterUnidad.value = unidadActual;
-      }
+          // 2. Unidades
+          let units = [];
+          if (typeof getUnidadesFromClienteUnidad === 'function') {
+            units = await getUnidadesFromClienteUnidad(c);
+          }
+          if (!units || !units.length) {
+            const doc = await firestore.collection('CLIENTE_UNIDAD').doc(c).get();
+            if (doc.exists) {
+              const d = doc.data();
+              if (d.unidades || d.UNIDADES) units = d.unidades || d.UNIDADES;
+            }
+          }
+
+          const allowed = ac.getUnidadesAsignadas();
+          if (allowed && allowed.length > 0) units = units.filter(u => allowed.includes(u));
+
+          // Deduplicar
+          units = [...new Set(units)];
+          units.sort();
+
+          if (rondasFilterUnidad) {
+            if (units.length === 1) {
+              rondasFilterUnidad.innerHTML = `<option value="${units[0]}" selected>${units[0]}</option>`;
+              rondasFilterUnidad.value = units[0];
+              rondasFilterUnidad.disabled = true;
+              rondasFilterUnidad.style.backgroundColor = '#e2e8f0';
+            } else {
+              rondasFilterUnidad.innerHTML = '<option value="">Todas las Unidades</option>' +
+                units.map(u => `<option value="${u}">${u}</option>`).join('');
+              rondasFilterUnidad.disabled = false;
+              rondasFilterUnidad.style.backgroundColor = '';
+            }
+          }
+
+        } else {
+          // LÓGICA ADMIN
+          // Solo cargamos si está vacío o si queremos refrescar? Mejor cargar siempre para asegurar.
+          // O optimizar:
+          const snap = await firestore.collection('CLIENTE_UNIDAD').get();
+          const clientes = snap.docs.map(d => d.id).sort();
+
+          const current = rondasFilterCliente.value;
+          rondasFilterCliente.innerHTML = '<option value="">Todos los Clientes</option>' +
+            clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+          rondasFilterCliente.value = current;
+          rondasFilterCliente.disabled = false;
+
+          // Unidades dependen del cliente seleccionado?
+          // En filtros de listado, normalmente "Todas las Unidades" muestra TODAS las unidades de TODOS los clientes (si no hay cliente seleccionado)
+          // O solo las del cliente seleccionado.
+          // La implementación anterior mostraba 'unidadesUnicos' de las rondas cargadas.
+          // Mantendremos simple: Si hay cliente seleccionado, cargar sus unidades. Si no, vaciar o todas?
+          // Mejor: Si es Admin y no hay cliente, "Todas las Unidades" (vacío/genérico).
+          // Cuando seleccione cliente, cargaremos unidades (listener change).
+        }
+
+      } catch (e) { console.error("Error updateRondasFilterOptions", e); }
     }
 
     // Aplicar filtros en Rondas Creadas
@@ -8994,18 +9324,78 @@ document.addEventListener('DOMContentLoaded', () => {
       renderRondasList();
     }
 
+    // Buscador Manual Rondas
+    const rondasFilterSearch = document.getElementById('rondas-filter-search');
+
+    async function performRondaSearch() {
+      if (UI && UI.showOverlay) UI.showOverlay('Buscando Rondas...');
+      try {
+        const cliente = rondasFilterCliente?.value;
+        const unidad = rondasFilterUnidad?.value;
+
+        let query = firebase.firestore().collection('Rondas_QR');
+
+        // Seguridad
+        if (window.accessControl?.userType === 'CLIENTE') {
+          query = query.where('cliente', '==', window.accessControl.clienteAsignado);
+          if (unidad) query = query.where('unidad', '==', unidad);
+        } else {
+          if (cliente) query = query.where('cliente', '==', cliente);
+          if (unidad) query = query.where('unidad', '==', unidad);
+        }
+
+        const snap = await query.get();
+        rondaList = snap.docs.map(doc => {
+          const data = doc.data();
+          // Normalizar puntos
+          const puntosRondaNormalizado = Array.isArray(data.puntosRonda)
+            ? data.puntosRonda
+            : (data.puntosRonda && typeof data.puntosRonda === 'object'
+              ? Object.values(data.puntosRonda)
+              : []);
+          return { id: doc.id, ...data, puntosRonda: puntosRondaNormalizado };
+        });
+
+        // Actualizar filtros internos
+        rondasFilters.cliente = cliente || '';
+        rondasFilters.unidad = unidad || '';
+
+        renderRondasList();
+
+        if (snap.empty) {
+          if (rondasListContainer) rondasListContainer.innerHTML = '<div class="empty-state" style="padding:40px; text-align:center;">📋<p>No se encontraron resultados</p></div>';
+          if (UI && UI.toast) UI.toast('⚠️ No se encontraron rondas');
+        }
+
+      } catch (e) {
+        console.error("Error searching Rondas", e);
+        if (UI && UI.toast) UI.toast('❌ Error buscando rondas');
+      } finally {
+        if (UI && UI.hideOverlay) UI.hideOverlay();
+      }
+    }
+
+    if (rondasFilterSearch) {
+      rondasFilterSearch.addEventListener('click', performRondaSearch);
+    }
+
     // Event listeners para filtros de Rondas Creadas
     if (rondasFilterCliente) {
-      rondasFilterCliente.addEventListener('change', applyRondasFilters);
+      rondasFilterCliente.addEventListener('change', () => {
+        // Solo actualizar unidades, NO filtrar
+        updateRondasFilterOptions();
+      });
     }
     if (rondasFilterUnidad) {
-      rondasFilterUnidad.addEventListener('change', applyRondasFilters);
+      // rondasFilterUnidad.addEventListener('change', applyRondasFilters); // Deshabilitado
     }
     if (rondasFilterClear) {
       rondasFilterClear.addEventListener('click', () => {
         rondasFilters = { cliente: '', unidad: '' };
-        if (rondasFilterCliente) rondasFilterCliente.value = '';
-        if (rondasFilterUnidad) rondasFilterUnidad.value = '';
+        if (rondasFilterCliente && !rondasFilterCliente.disabled) rondasFilterCliente.value = '';
+        if (rondasFilterUnidad && !rondasFilterUnidad.disabled) rondasFilterUnidad.value = '';
+        // Limpiar lista
+        rondaList = [];
         renderRondasList();
       });
     }
@@ -9126,35 +9516,19 @@ document.addEventListener('DOMContentLoaded', () => {
       if (UI && UI.toast) UI.toast('📝 Ronda cargada en el formulario');
     };
 
-    // Cargar rondas existentes
+    // Cargar rondas existentes (MODO MANUAL)
     async function loadRondas() {
       try {
-        const snap = await getQueryWithClienteFilter('Rondas_QR').get();
-        rondaList = snap.docs.map(doc => {
-          const data = doc.data();
-          console.log('DEBUG - Ronda desde Firestore:', data.id || data.nombre);
-          console.log('DEBUG - puntosRonda desde Firestore:', data.puntosRonda);
-          console.log('DEBUG - puntosRonda es array?', Array.isArray(data.puntosRonda));
-          console.log('DEBUG - Tipo de puntosRonda:', typeof data.puntosRonda);
-
-          // GARANTIZAR que puntosRonda es siempre un array
-          const puntosRondaNormalizado = Array.isArray(data.puntosRonda)
-            ? data.puntosRonda
-            : (data.puntosRonda && typeof data.puntosRonda === 'object'
-              ? Object.values(data.puntosRonda)
-              : []);
-
-          return {
-            id: doc.id,
-            ...data,
-            puntosRonda: puntosRondaNormalizado
-          };
-        });
-        console.log('DEBUG - Total rondas cargadas:', rondaList.length);
-        updateRondasFilterOptions();
+        rondaList = [];
         renderRondasList();
+        // Inicializar filtros pero NO cargar datos
+        await updateRondasFilterOptions();
+
+        if (rondasListContainer) {
+          rondasListContainer.innerHTML = '<div class="empty-state" style="padding:40px; text-align:center;">📋<p>Selecciona filtros y haz clic en "Buscar"</p></div>';
+        }
       } catch (e) {
-        console.error('ERROR - Error al cargar rondas:', e);
+        console.error('ERROR - Error al inicializar rondas:', e);
       }
     }
 
@@ -9349,93 +9723,128 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
   // Cargar clientes desde CLIENTE_UNIDAD
+  // Cargar clientes desde CLIENTE_UNIDAD (QR Generator)
   async function loadQRClientes() {
     try {
-      if (!qrCliente) {
-        return;
-      }
+      if (!qrCliente) return;
 
-      // Esperar a que Firebase esté inicializado
-      let attempts = 0;
-      while (!firebase.apps.length && attempts < 10) {
-        await new Promise(r => setTimeout(r, 100));
-        attempts++;
-      }
+      // Esperar Firebase
+      if (!firebase.apps.length) await new Promise(r => setTimeout(r, 500));
+      if (!firebase.apps.length) return;
 
-      if (!firebase.apps.length) {
-        if (UI && UI.toast) UI.toast('❌ Firebase no inicializado');
-        return;
-      }
-
+      const ac = window.accessControl;
       const firestore = firebase.firestore();
-      let snap;
 
-      // Aplicar filtro de acceso según tipo de usuario
-      if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
-        // Si es cliente, solo mostrar su cliente asignado
-        const doc = await firestore.collection('CLIENTE_UNIDAD').doc(window.accessControl.clienteAsignado).get();
-        snap = { empty: !doc.exists, docs: doc.exists ? [doc] : [] };
+      // --- LÓGICA CLIENTE ---
+      if (ac?.userType === 'CLIENTE') {
+        const c = ac.clienteAsignado;
+
+        // 1. Bloquear Cliente
+        qrCliente.innerHTML = `<option value="${c}">${c}</option>`;
+        qrCliente.disabled = true;
+        qrCliente.style.backgroundColor = '#e2e8f0';
+
+        // 2. Obtener Unidades (Master Data + Fallback)
+        let units = [];
+        // Intentar helper global
+        if (typeof getUnidadesFromClienteUnidad === 'function') {
+          units = await getUnidadesFromClienteUnidad(c);
+        }
+        // Fallback manual: campo 'unidades' o subcolección 'UNIDADES'
+        if (!units || units.length === 0) {
+          const doc = await firestore.collection('CLIENTE_UNIDAD').doc(c).get();
+          if (doc.exists) {
+            const d = doc.data();
+            if (d.unidades || d.UNIDADES) {
+              units = d.unidades || d.UNIDADES; // Array
+            } else {
+              // Fallback a subcolección si el campo no existe
+              const subSnap = await firestore.collection('CLIENTE_UNIDAD').doc(c).collection('UNIDADES').get();
+              units = subSnap.docs.map(sd => sd.id);
+            }
+          }
+        }
+
+        // 3. Filtrar permitidas
+        const allowed = ac.getUnidadesAsignadas();
+        if (allowed && allowed.length > 0) {
+          units = units.filter(u => allowed.includes(u));
+        }
+        units.sort();
+
+        // 4. Configurar Select Unidad
+        if (qrUnidad) {
+          if (units.length === 1) {
+            qrUnidad.innerHTML = `<option value="${units[0]}">${units[0]}</option>`;
+            qrUnidad.disabled = true;
+            qrUnidad.style.backgroundColor = '#e2e8f0';
+          } else {
+            qrUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>' +
+              units.map(u => `<option value="${u}">${u}</option>`).join('');
+            qrUnidad.disabled = false;
+            qrUnidad.style.backgroundColor = '';
+          }
+        }
+
       } else {
-        // Si es admin, mostrar todos los clientes
-        snap = await firestore.collection('CLIENTE_UNIDAD').get();
+        // --- LÓGICA ADMIN ---
+        const snap = await firestore.collection('CLIENTE_UNIDAD').get();
+        const clientes = snap.docs.map(d => d.id).sort();
+
+        qrCliente.innerHTML = '<option value="">Seleccionar Cliente</option>' +
+          clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+        qrCliente.disabled = false;
+
+        // Reset Unidad
+        if (qrUnidad) qrUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>';
       }
 
-      if (snap.empty) {
-        qrCliente.innerHTML = '<option value="">No hay clientes</option>';
-        return;
-      }
-
-      const clientes = snap.docs.map(d => d.id).sort((a, b) => a.localeCompare(b, 'es'));
-
-      qrCliente.innerHTML = '<option value="">Seleccionar Cliente</option>' +
-        clientes.map(c => `<option value="${c}">${c}</option>`).join('');
     } catch (e) {
-      if (UI && UI.toast) UI.toast('❌ Error al cargar clientes: ' + e.message);
+      console.error("Error loadQRClientes:", e);
+      if (UI && UI.toast) UI.toast('❌ Error al cargar clientes QR');
     }
   }
 
-  // Cargar unidades cuando cambia cliente
+  // Listener para cambio de cliente (SOLO ADMINS o cambios manuales)
   if (qrCliente) {
     qrCliente.addEventListener('change', async () => {
       const selectedCliente = qrCliente.value;
+      if (!qrUnidad) return;
+
       if (!selectedCliente) {
-        if (qrUnidad) qrUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>';
+        qrUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>';
         return;
       }
 
+      // Si el usuario es CLIENTE, ya se cargó en loadQRClientes, ignora esto o re-ejecuta filtro?
+      // Mejor re-ejecutar lógica genérica de carga segura
+
       try {
-        // Usar firebase.firestore() directamente para evitar problemas de scope
         const firestore = firebase.firestore();
+        let units = [];
 
-        // Obtener unidades desde la SUBCOLECCIÓN UNIDADES del cliente
-        const unidadesSnapshot = await firestore
-          .collection('CLIENTE_UNIDAD')
-          .doc(selectedCliente)
-          .collection('UNIDADES')
-          .get();
-
-        let unidades = [];
-
-        // Extraer los IDs de los documentos (que son los nombres de las unidades)
-        unidadesSnapshot.forEach(doc => {
-          unidades.push(doc.id);
-        });
-
-        // Ordenar alfabéticamente
-        unidades.sort((a, b) => a.localeCompare(b, 'es'));
-
-        if (qrUnidad) {
-          const html = '<option value="">Seleccionar Unidad</option>' +
-            unidades.map(u => `<option value="${u}">${u}</option>`).join('');
-          qrUnidad.innerHTML = html;
+        // Estrategia híbrida: Subcolección 'UNIDADES' (legado Rondas?) o Campo 'unidades'
+        // Primero probamos subcolección para consistencia con lógica previa de Rondas
+        const subSnap = await firestore.collection('CLIENTE_UNIDAD').doc(selectedCliente).collection('UNIDADES').get();
+        if (!subSnap.empty) {
+          units = subSnap.docs.map(d => d.id);
+        } else {
+          // Fallback a documento principal
+          const doc = await firestore.collection('CLIENTE_UNIDAD').doc(selectedCliente).get();
+          if (doc.exists) {
+            const d = doc.data();
+            units = d.unidades || d.UNIDADES || [];
+          }
         }
 
-        if (unidades.length === 0) {
-          if (UI && UI.toast) UI.toast('⚠️ No hay unidades disponibles para este cliente');
-        }
+        units.sort();
+
+        qrUnidad.innerHTML = '<option value="">Seleccionar Unidad</option>' +
+          units.map(u => `<option value="${u}">${u}</option>`).join('');
+
       } catch (e) {
-        if (UI && UI.toast) UI.toast('❌ Error al cargar unidades: ' + e.message);
-        console.error('Error detallado:', e);
+        console.error("Error cambiando cliente QR:", e);
+        qrUnidad.innerHTML = '<option value="">Error carga</option>';
       }
     });
   }
@@ -9703,39 +10112,96 @@ document.addEventListener('DOMContentLoaded', () => {
     // ===== FILTROS Y DESCARGA DE QRs =====
     const filterCliente = document.getElementById('qr-filter-cliente');
     const filterUnidad = document.getElementById('qr-filter-unidad');
+    const filterSearchBtn = document.getElementById('qr-filter-search'); // Nuevo botón Buscar
     const filterClearBtn = document.getElementById('qr-filter-clear');
     const downloadAllBtn = document.getElementById('qr-download-all');
 
-    // Cargar filtros directamente de Firestore (Mirroring loadQRClientes)
+    // Cargar filtros directamente de Firestore (Master Data Logic)
     async function loadQRFiltersFromCache() {
+      // Indicador visual de carga
+      if (filterCliente && !filterCliente.dataset.loading) {
+        filterCliente.innerHTML = '<option>Validando permisos...</option>';
+        filterCliente.dataset.loading = 'true';
+      }
+
+      // Esperar inicialización COMPLETA (incluyendo userType)
+      if (!window.accessControl || !window.accessControl?.userType || !firebase || !firebase.apps.length) {
+        setTimeout(loadQRFiltersFromCache, 500);
+        return;
+      }
+
+      // Limpiar flag de carga
+      if (filterCliente) delete filterCliente.dataset.loading;
+
       try {
         const firestore = firebase.firestore();
-        let snap;
-        if (window.accessControl?.userType === 'CLIENTE' && window.accessControl?.clienteAsignado) {
-          const doc = await firestore.collection('CLIENTE_UNIDAD').doc(window.accessControl.clienteAsignado).get();
-          snap = { empty: !doc.exists, docs: doc.exists ? [doc] : [] };
-        } else {
-          snap = await firestore.collection('CLIENTE_UNIDAD').get();
-        }
+        const ac = window.accessControl;
 
-        if (snap.empty) {
-          if (filterCliente) filterCliente.innerHTML = '<option value="">No hay clientes</option>';
-          return;
-        }
+        // LÓGICA CLIENTE
+        if (ac?.userType === 'CLIENTE') {
+          const c = ac.clienteAsignado;
 
-        const clientes = snap.docs.map(d => d.id).sort((a, b) => a.localeCompare(b, 'es'));
-        const currentVal = filterCliente?.value || '';
-
-        if (filterCliente) {
-          filterCliente.innerHTML = '<option value="">Todos los Clientes</option>' +
-            clientes.map(c => `<option value="${c}">${c}</option>`).join('');
-          if (currentVal && clientes.includes(currentVal)) {
-            filterCliente.value = currentVal;
+          // 1. Cliente
+          if (filterCliente) {
+            filterCliente.innerHTML = `<option value="${c}">${c}</option>`;
+            filterCliente.value = c;
+            filterCliente.disabled = true;
           }
+
+          // 2. Unidades
+          let units = [];
+          if (typeof getUnidadesFromClienteUnidad === 'function') {
+            units = await getUnidadesFromClienteUnidad(c);
+          }
+          if (!units || !units.length) {
+            const doc = await firestore.collection('CLIENTE_UNIDAD').doc(c).get();
+            if (doc.exists) {
+              const d = doc.data();
+              if (d.unidades || d.UNIDADES) units = d.unidades || d.UNIDADES;
+              else {
+                const subSnap = await firestore.collection('CLIENTE_UNIDAD').doc(c).collection('UNIDADES').get();
+                units = subSnap.docs.map(sd => sd.id);
+              }
+            }
+          }
+
+          const allowed = ac.getUnidadesAsignadas();
+          if (allowed && allowed.length > 0) units = units.filter(u => allowed.includes(u));
+
+          // Deduplicar
+          units = [...new Set(units)];
+          units.sort();
+
+          if (filterUnidad) {
+            if (units.length === 1) {
+              filterUnidad.innerHTML = `<option value="${units[0]}" selected>${units[0]}</option>`;
+              filterUnidad.value = units[0];
+              filterUnidad.disabled = true;
+              filterUnidad.style.backgroundColor = '#e2e8f0';
+            } else {
+              filterUnidad.innerHTML = '<option value="">Todas las Unidades</option>' +
+                units.map(u => `<option value="${u}">${u}</option>`).join('');
+              filterUnidad.disabled = false;
+              filterUnidad.style.backgroundColor = '';
+            }
+          }
+
+        } else {
+          // LÓGICA ADMIN
+          const snap = await firestore.collection('CLIENTE_UNIDAD').get();
+          const clientes = snap.docs.map(d => d.id).sort((a, b) => a.localeCompare(b, 'es'));
+
+          if (filterCliente) {
+            filterCliente.innerHTML = '<option value="">Todos los Clientes</option>' +
+              clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+            filterCliente.disabled = false;
+          }
+          // Unidad se carga al cambiar cliente (listener existente updateQRUnitFilter)
         }
       } catch (e) { console.error('Error loading QR filters:', e); }
 
-      updateQRUnitFilter();
+      // Ya no llamamos a updateQRUnitFilter() aquí porque ya lo manejamos arriba para CLIENTE
+      // Y para ADMIN empieza vacío hasta que seleccione.
     }
 
     async function updateQRUnitFilter() {
@@ -9782,24 +10248,66 @@ document.addEventListener('DOMContentLoaded', () => {
       renderQRList(filtered);
     }
 
+    // Buscador manual de QRs
+    async function performQRSearch() {
+      if (UI && UI.showOverlay) UI.showOverlay('Buscando QRs...');
+      try {
+        const cliente = filterCliente?.value;
+        const unidad = filterUnidad?.value;
+
+        let query = firebase.firestore().collection('QR_CODES');
+
+        // Aplicar seguridad y filtros
+        if (window.accessControl?.userType === 'CLIENTE') {
+          query = query.where('cliente', '==', window.accessControl.clienteAsignado);
+          if (unidad) query = query.where('unidad', '==', unidad);
+        } else {
+          if (cliente) query = query.where('cliente', '==', cliente);
+          if (unidad) query = query.where('unidad', '==', unidad);
+        }
+
+        const snap = await query.get();
+        qrList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        renderQRList(qrList);
+
+        if (snap.empty) {
+          if (qrListContainer) qrListContainer.innerHTML = '<div class="qr-empty-state" style="grid-column:1/-1; text-align:center; padding:40px; color:#a0aec0;"><strong>No se encontraron resultados</strong><p>Intenta con otros filtros</p></div>';
+          if (UI && UI.toast) UI.toast('⚠️ No se encontraron resultados');
+        }
+      } catch (e) {
+        console.error('Error searching QR:', e);
+        if (UI && UI.toast) UI.toast('❌ Error en la búsqueda');
+      } finally {
+        if (UI && UI.hideOverlay) UI.hideOverlay();
+      }
+    }
+
+    if (filterSearchBtn) {
+      filterSearchBtn.addEventListener('click', performQRSearch);
+    }
+
     // Event listeners de filtros
     if (filterCliente) {
       filterCliente.addEventListener('change', async () => {
         if (filterUnidad) filterUnidad.value = ''; // Reset unit on client change
-        applyFilters();
+        // NO aplicar filtros automáticamente, solo actualizar dropdowns
         await updateQRUnitFilter();
       });
     }
 
     if (filterUnidad) {
-      filterUnidad.addEventListener('change', applyFilters);
+      // filterUnidad.addEventListener('change', applyFilters); // Deshabilitado
     }
 
     if (filterClearBtn) {
       filterClearBtn.addEventListener('click', () => {
-        if (filterCliente) filterCliente.value = '';
-        if (filterUnidad) filterUnidad.value = '';
-        applyFilters();
+        if (filterCliente && !filterCliente.disabled) filterCliente.value = '';
+        if (filterUnidad && !filterUnidad.disabled) filterUnidad.value = '';
+        // Limpiar lista
+        qrList = [];
+        renderQRList();
+        if (qrListContainer) qrListContainer.innerHTML = '<div class="qr-empty-state" style="grid-column:1/-1;"><strong>Filtros limpios</strong><p>Selecciona y busca de nuevo</p></div>';
       });
     }
 
@@ -10169,20 +10677,15 @@ document.addEventListener('DOMContentLoaded', () => {
       qrClientesLoaded = true;
       loadQRClientes();
       // Cargar QRs existentes de Firebase con filtro de cliente
-      (async () => {
-        try {
-          const firestore = firebase.firestore();
-          const snap = await getQueryWithClienteFilter('QR_CODES').get();
-          qrList = snap.docs.map(d => {
-            const data = d.data();
-            return {
-              id: d.id,
-              ...data
-            };
-          });
-          renderQRList(); // Renderizar al inicio
-        } catch (e) { ; }
-      })();
+      // Cargar QRs existentes de Firebase con filtro de cliente
+      // DESHABILITADO: Carga automática. Ahora es manual con botón BUSCAR.
+      qrList = [];
+      renderQRList();
+
+      // Mostrar mensaje inicial si hay contenedor
+      if (qrListContainer) {
+        qrListContainer.innerHTML = '<div class="qr-empty-state" style="grid-column:1/-1;"><strong>Selecciona filtros y haz clic en "Buscar"</strong><p>Para ver los QRs generados</p></div>';
+      }
     }
   });
 
@@ -10666,56 +11169,70 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('cv-btn-excel')?.addEventListener('click', exportControlVehicularExcel);
   document.getElementById('cv-btn-pdf')?.addEventListener('click', exportControlVehicularPDF);
 
-  // Cargar clientes para select
+  // Cargar clientes para select (Control Vehicular)
   async function loadControlVehicularFilters() {
     try {
-      // Validar que db esté disponible
-      if (!window.db) {
-        return;
-      }
-
-      const clientesSet = new Set();
-      const unidadesSet = new Set();
-
-      try {
-        const snapshot = await getQueryWithClienteFilter('ACCESO_VEHICULAR').get();
-        snapshot.forEach(doc => {
-          const data = doc.data();
-          if (data.cliente) clientesSet.add(data.cliente);
-          if (data.unidad) unidadesSet.add(data.unidad);
-        });
-      } catch (firebaseErr) {
-      }
+      if (!window.db) return;
 
       const clienteSelect = document.getElementById('cv-cliente');
       const unidadSelect = document.getElementById('cv-unidad');
-
       if (!clienteSelect || !unidadSelect) return;
 
-      const currentClienteValue = clienteSelect.value;
-      const currentUnidadValue = unidadSelect.value;
+      const ac = window.accessControl;
 
-      // Cargar clientes
-      clienteSelect.innerHTML = '<option value="">Todos</option>';
-      Array.from(clientesSet).sort().forEach(cliente => {
-        const opt = document.createElement('option');
-        opt.value = cliente;
-        opt.textContent = cliente;
-        clienteSelect.appendChild(opt);
-      });
-      clienteSelect.value = currentClienteValue;
+      // Lógica robusta para CLIENTE
+      if (ac?.userType === 'CLIENTE') {
+        const c = ac.clienteAsignado;
+        // Bloquear Cliente
+        clienteSelect.innerHTML = `<option value="${c}">${c}</option>`;
+        clienteSelect.disabled = true;
+        clienteSelect.style.backgroundColor = '#e2e8f0';
 
-      // Cargar unidades
-      unidadSelect.innerHTML = '<option value="">Todas</option>';
-      Array.from(unidadesSet).sort().forEach(unidad => {
-        const opt = document.createElement('option');
-        opt.value = unidad;
-        opt.textContent = unidad;
-        unidadSelect.appendChild(opt);
-      });
-      unidadSelect.value = currentUnidadValue;
+        // Cargar Unidades (Master Data + Fallback)
+        let units = [];
+        if (typeof getUnidadesFromClienteUnidad === 'function') {
+          units = await getUnidadesFromClienteUnidad(c);
+        }
+        // Fallback manual
+        if (!units || units.length === 0) {
+          const doc = await db.collection('CLIENTE_UNIDAD').doc(c).get();
+          if (doc.exists) {
+            const d = doc.data();
+            units = d.unidades || d.UNIDADES || [];
+          }
+        }
+
+        // Filtrar permitidas
+        const allowed = ac.getUnidadesAsignadas();
+        if (allowed && allowed.length > 0) {
+          units = units.filter(u => allowed.includes(u));
+        }
+        units.sort();
+
+        if (units.length === 1) {
+          unidadSelect.innerHTML = `<option value="${units[0]}">${units[0]}</option>`;
+          unidadSelect.disabled = true;
+          unidadSelect.style.backgroundColor = '#e2e8f0';
+        } else {
+          unidadSelect.innerHTML = '<option value="">Todas</option>' +
+            units.map(u => `<option value="${u}">${u}</option>`).join('');
+          unidadSelect.disabled = false;
+        }
+
+      } else {
+        // ADMIN: Cargar todo de CLIENTE_UNIDAD
+        const snap = await db.collection('CLIENTE_UNIDAD').get();
+        const clients = snap.docs.map(d => d.id).sort();
+
+        clienteSelect.innerHTML = '<option value="">Todos</option>' +
+          clients.map(c => `<option value="${c}">${c}</option>`).join('');
+
+        // Unidades vacías hasta seleccionar cliente (o cargar todas? mejor vacio/todas)
+        unidadSelect.innerHTML = '<option value="">Todas</option>';
+      }
 
     } catch (err) {
+      console.error("Error loadControlVehicularFilters:", err);
     }
   }
 
@@ -11095,9 +11612,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 style: 'sectionTitle',
                 margin: [0, 0, 0, 12]
               },
-              {
+              chartImage ? {
+                image: chartImage,
+                width: 280,
+                height: 210,
+                alignment: 'center'
+              } : {
+                text: 'No hay datos para generar gráfico',
                 alignment: 'center',
-                ...(chartImage ? { image: chartImage, width: 280, height: 210 } : {})
+                color: '#cbd5e0',
+                italics: true,
+                margin: [0, 20, 0, 20]
               }
             ],
             margin: [0, 0, 0, 25]
@@ -11243,42 +11768,110 @@ document.addEventListener('DOMContentLoaded', () => {
       btnPdf.addEventListener('click', exportIncidenciaQRPDF);
     }
 
+    // Cargar filtros iniciales (Master Data)
+    await initIQRFilters();
+
     // Cargar datos iniciales
     await loadAndRenderIncidenciaQR();
   }
 
-  async function handleIQRClienteChange() {
+  async function handleIQRClienteChange(clientOverride) {
     const clienteSelect = document.getElementById('iqr-cliente');
     const unidadSelect = document.getElementById('iqr-unidad');
-    const clienteValue = clienteSelect?.value;
+
+    // Obtener valor (prioridad: override > select.value)
+    let clienteValue = clientOverride;
+    if (!clienteValue && clienteSelect) {
+      clienteValue = clienteSelect.value;
+    }
 
     if (clienteValue && clienteValue !== 'Todos') {
-      // Cargar unidades directamente de CLIENTE_UNIDAD
-      const unidades = await getUnidadesFromClienteUnidad(clienteValue);
+      let unidades = [];
+      try {
+        // Intentar obtener unidades (con fallback si la función global falla)
+        if (typeof getUnidadesFromClienteUnidad === 'function') {
+          unidades = await getUnidadesFromClienteUnidad(clienteValue);
+        }
+
+        // Fallback manual si está vacío o no existe función
+        if (!unidades || unidades.length === 0) {
+          console.log('[IQR] Usando fallback manual para unidades de:', clienteValue);
+          const doc = await db.collection('CLIENTE_UNIDAD').doc(clienteValue).get();
+          if (doc.exists) {
+            const d = doc.data();
+            unidades = d.unidades || d.UNIDADES || [];
+            if (d.UNIDADES && Array.isArray(d.UNIDADES)) {
+              // Merge if both exist
+              unidades = [...new Set([...unidades, ...d.UNIDADES])];
+            }
+            // Nota: Si están en subcolección, este fallback simple no lo cubre, 
+            // pero getUnidadesFromClienteUnidad debería cubrirlo.
+            // Asumimos array simple para la mayoría.
+          }
+        }
+      } catch (e) {
+        console.error('[IQR] Error obteniendo unidades:', e);
+      }
+
+      // ✅ FILTRAR: userType === 'CLIENTE'
+      const ac = window.accessControl;
+      if (ac?.userType === 'CLIENTE') {
+        const userAssignedUnits = ac.getUnidadesAsignadas();
+        if (userAssignedUnits && userAssignedUnits.length > 0) {
+          unidades = unidades.filter(u => userAssignedUnits.includes(u));
+        }
+      }
+
+      unidades.sort();
 
       if (iqrChoices.unidad) {
         try {
           iqrChoices.unidad.clearStore();
-          iqrChoices.unidad.setChoices(
-            [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
-            'value', 'label', true
-          );
+          // Reset styles
+          const container = document.getElementById('iqr-unidad')?.closest('.choices');
+          if (container) {
+            container.style.opacity = '1';
+            container.style.pointerEvents = 'auto';
+            container.style.backgroundColor = '';
+          }
+
+          if (ac && ac.userType === 'CLIENTE' && unidades.length === 1) {
+            const u = unidades[0];
+            iqrChoices.unidad.setChoices(
+              [{ value: u, label: u, selected: true }],
+              'value', 'label', true
+            );
+            iqrChoices.unidad.disable();
+
+            if (container) {
+              container.style.opacity = '0.6';
+              container.style.pointerEvents = 'none';
+              container.style.backgroundColor = '#e2e8f0';
+            }
+          } else {
+            // Mostrar todas las disponibles (filtradas)
+            const choices = [{ value: 'Todas', label: 'Todas', selected: true }];
+            unidades.forEach(u => choices.push({ value: u, label: u }));
+
+            iqrChoices.unidad.setChoices(choices, 'value', 'label', true);
+            iqrChoices.unidad.enable();
+          }
         } catch (e) {
           console.error('Error actualizando unidades en IQR:', e);
         }
       }
     } else {
-      // Si selecciona "Todos", cargar todas las unidades de los datos
-      const unidades = [...new Set(iqrAllData.map(d => d.unidad).filter(Boolean))].sort();
+      // Caso "Todos" (o vacío)
       if (iqrChoices.unidad) {
         try {
           iqrChoices.unidad.clearStore();
           iqrChoices.unidad.setChoices(
-            [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
+            [{ value: 'Todas', label: 'Todas', selected: true }],
             'value', 'label', true
           );
+          iqrChoices.unidad.enable();
         } catch (e) {
-          console.error('Error actualizando unidades en IQR:', e);
+          console.error('Error reset unidades IQR:', e);
         }
       }
     }
@@ -11377,8 +11970,9 @@ document.addEventListener('DOMContentLoaded', () => {
           fecha: fecha,
         };
       });
-      // Actualizar opciones de filtros
-      populateIncidenciaQRFilters();
+      // Ya no repoblamos filtros aquí para evitar resetear la selección del usuario.
+      // Los filtros se inicializan una vez en initIQRFilters() y se actualizan por eventos (change).
+      // populateIncidenciaQRFilters(); 
 
       // Renderizar todo
       renderIncidenciaQR();
@@ -11389,34 +11983,57 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function populateIncidenciaQRFilters() {
-    const clientes = [...new Set(iqrAllData.map(d => d.cliente).filter(Boolean))].sort();
-    const unidades = [...new Set(iqrAllData.map(d => d.unidad).filter(Boolean))].sort();
+  async function initIQRFilters() {
     const clienteSelect = document.getElementById('iqr-cliente');
     const unidadSelect = document.getElementById('iqr-unidad');
 
-    if (clienteSelect && iqrChoices.cliente) {
-      try {
-        iqrChoices.cliente.clearStore();
-        iqrChoices.cliente.setChoices(
-          [{ value: 'Todos', label: 'Todos', selected: true }, ...clientes.map(c => ({ value: c, label: c }))],
-          'value', 'label', false
-        );
-      } catch (e) {
-      }
-    } else {
-    }
+    if (!clienteSelect) return;
 
-    if (unidadSelect && iqrChoices.unidad) {
-      try {
-        iqrChoices.unidad.clearStore();
-        iqrChoices.unidad.setChoices(
-          [{ value: 'Todas', label: 'Todas', selected: true }, ...unidades.map(u => ({ value: u, label: u }))],
-          'value', 'label', false
-        );
-      } catch (e) {
+    try {
+      // Bloquear si es usuario CLIENTE
+      if (window.accessControl?.userType === 'CLIENTE') {
+        const clienteAsignado = window.accessControl.clienteAsignado;
+
+        if (iqrChoices.cliente) {
+          iqrChoices.cliente.clearStore();
+          iqrChoices.cliente.setChoices(
+            [{ value: clienteAsignado, label: clienteAsignado, selected: true, disabled: true }],
+            'value', 'label', true
+          );
+          iqrChoices.cliente.disable();
+        } else {
+          clienteSelect.innerHTML = `<option value="${clienteAsignado}">${clienteAsignado}</option>`;
+          clienteSelect.disabled = true;
+        }
+        // Cargar unidades iniciales para el cliente (pasando valor explícito para asegurar carga)
+        await handleIQRClienteChange(clienteAsignado);
+      } else {
+        // ADMIN/SUPERVISOR: Cargar todos desde CLIENTE_UNIDAD (Master Data)
+        const snapshot = await db.collection('CLIENTE_UNIDAD').get();
+        const clientes = snapshot.docs.map(doc => doc.id).sort();
+
+        if (iqrChoices.cliente) {
+          iqrChoices.cliente.clearStore();
+          // Preservar selección si existe (aunque en init suele ser vacío/Todos)
+          const current = clienteSelect.value;
+          const choices = [{ value: 'Todos', label: 'Todos', selected: !current || current === 'Todos' }];
+
+          clientes.forEach(c => choices.push({ value: c, label: c, selected: c === current }));
+          iqrChoices.cliente.setChoices(choices, 'value', 'label', true);
+          iqrChoices.cliente.enable();
+        } else {
+          clienteSelect.innerHTML = '<option value="Todos">Todos</option>' +
+            clientes.map(c => `<option value="${c}">${c}</option>`).join('');
+        }
       }
-    } else {
+
+      // Inicializar Unidades a "Todas" si está vacío
+      if (iqrChoices.unidad && (!unidadSelect.value)) {
+        iqrChoices.unidad.setChoices([{ value: 'Todas', label: 'Todas', selected: true }], 'value', 'label', true);
+      }
+
+    } catch (e) {
+      console.error("Error initIQRFilters:", e);
     }
   }
 
