@@ -11780,8 +11780,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const unidadSelect = document.getElementById('iqr-unidad');
 
     // Obtener valor (prioridad: override > select.value)
-    let clienteValue = clientOverride;
-    if (!clienteValue && clienteSelect) {
+    // Obtener valor (prioridad: override es string > select.value)
+    let clienteValue = null;
+    if (typeof clientOverride === 'string') {
+      clienteValue = clientOverride;
+    } else if (clienteSelect) {
       clienteValue = clienteSelect.value;
     }
 
