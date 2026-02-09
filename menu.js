@@ -12276,10 +12276,10 @@ document.addEventListener('DOMContentLoaded', () => {
         timestampStr = d.fechaHora;
       }
 
-      // Determinar estado - si tiene respuestas, está completada
-      const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
-      const estadoClass = tieneRespuestas ? 'iqr-estado-completado' : 'iqr-estado-pendiente';
-      const estadoText = tieneRespuestas ? '✓ Completada' : '⏳ Pendiente';
+      // Determinar estado - FORZAR A COMPLETADA (Solicitud usuario)
+      const tieneRespuestas = true; // d.respuestas && Object.keys(d.respuestas).length > 0;
+      const estadoClass = 'iqr-estado-completado'; // tieneRespuestas ? 'iqr-estado-completado' : 'iqr-estado-pendiente';
+      const estadoText = '✓ Completada'; // tieneRespuestas ? '✓ Completada' : '⏳ Pendiente';
 
       // Construir QR
       const codigoQR = d.codigoQRleido || d.qrId || 'N/A';
@@ -12475,9 +12475,9 @@ document.addEventListener('DOMContentLoaded', () => {
           fechaStr = fechaObj.toLocaleString('es-PE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
         }
 
-        const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
-        const estado = tieneRespuestas ? 'Completada' : 'Pendiente';
-        const estadoColor = tieneRespuestas ? '#10b981' : '#f59e0b';
+        // const tieneRespuestas = d.respuestas && Object.keys(d.respuestas).length > 0;
+        const estado = 'Completada'; // tieneRespuestas ? 'Completada' : 'Pendiente';
+        const estadoColor = '#10b981'; // tieneRespuestas ? '#10b981' : '#f59e0b';
 
         // Resolver usuario para PDF
         let usuarioDisplay = d.usuario || d.user || d.nombreUsuario || d.registradoPor;
