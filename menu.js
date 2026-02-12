@@ -679,6 +679,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentUser = null;
     let cachedIncidents = [];
     let cachedUsers = [];
+    let usersMap = {}; // Cache para búsqueda rápida de nombres por código de usuario
     let cachedClientesUnidades = [];
     let resumenCharts = {};
     let detalleChart = null;
@@ -4548,9 +4549,27 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
+    // Cargar mapa de usuarios para búsqueda rápida
+    async function loadUsersMap() {
+      if (Object.keys(usersMap).length > 0) return;
+      try {
+        const snap = await db.collection(COLLECTIONS.USERS).get();
+        snap.forEach(doc => {
+          const d = doc.data();
+          const nombre = d.NOMBRES || '';
+          const apellido = d.APELLIDOS || '';
+          // Guardar nombre completo mapeado al ID (código de usuario)
+          usersMap[doc.id] = `${nombre} ${apellido}`.trim() || doc.id;
+        });
+      } catch (e) {
+        console.error("Error cargando mapa de usuarios:", e);
+      }
+    }
+
     async function loadDetalleRondasData() {
       try {
         UI.showOverlay('Cargando...', 'Consultando datos de rondas (Optimizado)');
+        await loadUsersMap(); // Asegurar que tenemos los nombres de usuario cargados
 
         const clienteSelect = document.getElementById('detalle-rondas-cliente');
         const unidadSelect = document.getElementById('detalle-rondas-unidad');
@@ -4800,6 +4819,15 @@ document.addEventListener('DOMContentLoaded', () => {
           qrSinRegistrar = qrTotal - qrRegistrados;
         }
 
+        // Obtener nombre de usuario desde email
+        let usuarioNombre = "-";
+        if (r.usuarioEmail) {
+          // Extraer usuario (parte antes del @)
+          const userCode = r.usuarioEmail.split('@')[0];
+          // Buscar en el mapa, si no existe poner "-"
+          usuarioNombre = usersMap[userCode] || "-";
+        }
+
         const row = document.createElement('tr');
         row.style.borderBottom = '1px solid #e2e8f0';
         row.innerHTML = `
@@ -4809,6 +4837,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <td style="padding: 12px; border-right: 1px solid #e2e8f0;">${r.cliente || '-'}</td>
         <td style="padding: 12px; border-right: 1px solid #e2e8f0;">${r.unidad || '-'}</td>
         <td style="padding: 12px; border-right: 1px solid #e2e8f0;">${r.nombre || '-'}</td>
+        <td style="padding: 12px; border-right: 1px solid #e2e8f0; font-weight: 500;">${usuarioNombre}</td>
         <td style="padding: 12px; text-align: center; border-right: 1px solid #e2e8f0; font-weight: 600; color: #22c55e;">${qrRegistrados}</td>
         <td style="padding: 12px; text-align: center; border-right: 1px solid #e2e8f0; font-weight: 600; color: #ef4444;">${qrSinRegistrar}</td>
         <td style="padding: 12px; text-align: center; border-right: 1px solid #e2e8f0;">
@@ -4848,6 +4877,7 @@ document.addEventListener('DOMContentLoaded', () => {
           'Cliente',
           'Unidad',
           'Nombre de Ronda',
+          'Usuario',
           'QR Registrados',
           'QR Sin Registrar',
           'Estado'
@@ -4866,9 +4896,10 @@ document.addEventListener('DOMContentLoaded', () => {
               cells[3].textContent.trim(),
               cells[4].textContent.trim(),
               cells[5].textContent.trim(),
-              cells[6].textContent.trim(),
-              cells[7].textContent.trim(),
-              cells[8].textContent.trim()
+              cells[6].textContent.trim(), // Usuario
+              cells[7].textContent.trim(), // QR Registrados
+              cells[8].textContent.trim(), // QR Sin Registrar
+              cells[9].textContent.trim()  // Estado
             ]);
             rowsExportadas++;
           }
@@ -4883,7 +4914,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const worksheet = XLSX.utils.aoa_to_sheet(datos);
 
         // Ajustar ancho de columnas
-        const colWidths = [15, 15, 15, 15, 15, 20, 15, 15, 15];
+        const colWidths = [15, 15, 15, 15, 15, 20, 20, 15, 15, 15];
         worksheet['!cols'] = colWidths.map(w => ({ wch: w }));
 
         // Crear libro
@@ -4940,13 +4971,14 @@ document.addEventListener('DOMContentLoaded', () => {
               cells[3].textContent.trim(),
               cells[4].textContent.trim(),
               cells[5].textContent.trim(),
-              cells[6].textContent.trim(),
-              cells[7].textContent.trim(),
-              cells[8].textContent.trim()
+              cells[6].textContent.trim(), // Usuario
+              cells[7].textContent.trim(), // QR Registrados
+              cells[8].textContent.trim(), // QR Sin Registrar
+              cells[9].textContent.trim()  // Estado
             ];
             tableData.push(fila);
-            registrados += parseInt(cells[6].textContent.trim()) || 0;
-            noRegistrados += parseInt(cells[7].textContent.trim()) || 0;
+            registrados += parseInt(cells[7].textContent.trim()) || 0;
+            noRegistrados += parseInt(cells[8].textContent.trim()) || 0;
           }
         });
 
@@ -5124,7 +5156,7 @@ document.addEventListener('DOMContentLoaded', () => {
             {
               table: {
                 headerRows: 1,
-                widths: ['10%', '10%', '10%', '10%', '10%', '13%', '9%', '9%', '9%'],
+                widths: ['9%', '8%', '8%', '9%', '9%', '12%', '14%', '8%', '8%', '8%'],
                 body: [
                   [
                     { text: 'FECHA', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
@@ -5133,6 +5165,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     { text: 'CLIENTE', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
                     { text: 'UNIDAD', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
                     { text: 'RONDA', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
+                    { text: 'USUARIO', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
                     { text: 'REG', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
                     { text: 'NO REG', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 10 },
                     { text: 'ESTADO', bold: true, fillColor: '#2c5aa0', color: 'white', alignment: 'center', fontSize: 9 }
@@ -5144,9 +5177,10 @@ document.addEventListener('DOMContentLoaded', () => {
                     { text: fila[3], fontSize: 9, alignment: 'center' },
                     { text: fila[4], fontSize: 9, alignment: 'center' },
                     { text: fila[5], fontSize: 9, alignment: 'center' },
-                    { text: fila[6], fontSize: 9, alignment: 'center', color: '#059669', bold: true },
-                    { text: fila[7], fontSize: 9, alignment: 'center', color: '#dc2626', bold: true },
-                    { text: fila[8], fontSize: 8, alignment: 'center' }
+                    { text: fila[6], fontSize: 9, alignment: 'center', color: '#333', bold: true }, // Usuario
+                    { text: fila[7], fontSize: 9, alignment: 'center', color: '#059669', bold: true }, // Reg
+                    { text: fila[8], fontSize: 9, alignment: 'center', color: '#dc2626', bold: true }, // No Reg
+                    { text: fila[9], fontSize: 8, alignment: 'center' } // Estado
                   ])
                 ]
               },
