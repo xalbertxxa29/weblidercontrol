@@ -4160,30 +4160,57 @@ document.addEventListener('DOMContentLoaded', () => {
       };
 
       // Agrupar por fecha y estado
-      const dataByDate = {};
+      const dataByDate = {}; // Usaremos YYYY-MM-DD como clave para poder ordenar correctamente
+
       registros.forEach(r => {
         const dateObj = convertToDate(r.horarioInicio);
         if (!dateObj || isNaN(dateObj)) return;
 
-        const dateStr = dateObj.toLocaleDateString('es-PE');
+        // Formato YYYY-MM-DD para ordenamiento
+        const year = dateObj.getFullYear();
+        const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const day = String(dateObj.getDate()).padStart(2, '0');
+        const isoKey = `${year}-${month}-${day}`;
 
-        if (!dataByDate[dateStr]) {
-          dataByDate[dateStr] = {
+        if (!dataByDate[isoKey]) {
+          dataByDate[isoKey] = {
             'TERMINADA': 0,
             'INCOMPLETA': 0,
-            'INCOMPLETADA': 0,
             'NO REALIZADA': 0
           };
         }
 
-        const estado = r.estado || 'NO REALIZADA';
-        dataByDate[dateStr][estado]++;
+        let estado = r.estado || 'NO REALIZADA';
+
+        // Normalización al vuelo para el gráfico
+        if (estado === 'NO_REALIZADA') estado = 'NO REALIZADA';
+        if (estado === 'INCOMPLETADA') estado = 'INCOMPLETA';
+
+        // Mapear al contador correcto
+        if (estado === 'TERMINADA') {
+          dataByDate[isoKey]['TERMINADA']++;
+        } else if (estado === 'INCOMPLETA') {
+          dataByDate[isoKey]['INCOMPLETA']++;
+        } else if (estado === 'NO REALIZADA') {
+          dataByDate[isoKey]['NO REALIZADA']++;
+        }
+        // Otros estados (como EN_PROCESO) se ignoran en este gráfico específico de cumplimiento
+        // o se podrían sumar a un 'Otros' si el usuario quisiera, pero el requerimiento original solo mostraba 3 series.
       });
 
-      const labels = Object.keys(dataByDate).sort();
-      const terminadas = labels.map(d => dataByDate[d]['TERMINADA'] || 0);
-      const incompletas = labels.map(d => (dataByDate[d]['INCOMPLETA'] || 0) + (dataByDate[d]['INCOMPLETADA'] || 0));
-      const noRealizadas = labels.map(d => dataByDate[d]['NO REALIZADA'] || 0);
+      // Ordenar las claves (YYYY-MM-DD se ordena alfabéticamente de forma cronológica correcta)
+      const sortedIsoKeys = Object.keys(dataByDate).sort();
+
+      // Generar etiquetas visuales DD/MM/YYYY
+      const labels = sortedIsoKeys.map(k => {
+        const [y, m, d] = k.split('-');
+        return `${d}/${m}/${y}`;
+      });
+
+      // Mapear datos en el orden correcto
+      const terminadas = sortedIsoKeys.map(k => dataByDate[k]['TERMINADA']);
+      const incompletas = sortedIsoKeys.map(k => dataByDate[k]['INCOMPLETA']);
+      const noRealizadas = sortedIsoKeys.map(k => dataByDate[k]['NO REALIZADA']);
 
       // Destruir gráfico anterior si existe
       if (kpiRondaChartFecha) kpiRondaChartFecha.destroy();
