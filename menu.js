@@ -688,6 +688,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let detalleInitialized = false;
     let editingUserId = null;
     let lastDetalleData = {}; // Para guardar los datos del último detalle para exportación
+    let rondasFiltersLoaded = false; // Estado para filtros de Rondas Creadas
 
     // === Paleta y utilidades de formato para gráficos ===
     const PALETTE = {
@@ -876,6 +877,14 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.classList.add('active');
         const target = btn.getAttribute('data-target');
         views.forEach(v => v.classList.toggle('shown', v.id === target));
+
+        // Inicializar filtros de Rondas Creadas si es necesario
+        if (target === 'view-crear-rondas' && !rondasFiltersLoaded) {
+          rondasFiltersLoaded = true;
+          loadClienteUnidadFiltersGenerico('rondas-filter-cliente', 'rondas-filter-unidad');
+          // También inicializar los selectores del FORMULARIO de crear ronda
+          loadClienteUnidadFiltersGenerico('ronda-cliente', 'ronda-unidad');
+        }
       });
     });
 
