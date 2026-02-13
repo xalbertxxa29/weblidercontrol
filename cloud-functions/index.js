@@ -22,6 +22,7 @@ exports.verDetallesRonda = require('./verDetallesRonda').verDetallesRonda;
 
 // Funciones Administrativas
 exports.adminResetPassword = require('./adminUsers').adminResetPassword;
+exports.corregirRondasHistoricas = require('./corregirHistorico').corregirRondasHistoricas;
 
 // Función de diagnóstico
 exports.diagnostico = functions

@@ -324,8 +324,8 @@ function determinarEstadoSmart(rondaDocData) {
     return null; // No cambia
   }
 
-  // Si no es EN_PROCESO, y no es final... (raro), asumir NO REALIZADA
-  if (rondaDocData.estado !== 'EN_PROCESO') {
+  // Si no es EN_PROCESO ni EN_PROGRESO, y no es final... (raro), asumir NO REALIZADA
+  if (rondaDocData.estado !== 'EN_PROCESO' && rondaDocData.estado !== 'EN_PROGRESO') {
     return 'NO REALIZADA';
   }
 

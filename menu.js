@@ -4026,17 +4026,23 @@ document.addEventListener('DOMContentLoaded', () => {
       // Contar por estado
       const estadoCounts = {};
       registros.forEach(r => {
-        const estado = r.estado || 'No especificado';
+        let estado = r.estado || 'No especificado';
+
+        // Normalización de estados
+        if (estado === 'NO_REALIZADA') estado = 'NO REALIZADA';
+        if (estado === 'EN_PROGRESO') estado = 'EN_PROCESO'; // Corregir typo histórico
+        if (estado === 'INCOMPLETADA') estado = 'INCOMPLETA';
+
         estadoCounts[estado] = (estadoCounts[estado] || 0) + 1;
       });
 
       // Colores por estado
       const estadoColors = {
-        'TERMINADA': '#22c55e',
-        'INCOMPLETA': '#f59e0b',
-        'NO REALIZADA': '#ef4444',
-        'INCOMPLETADA': '#f59e0b',
-        'No especificado': '#9ca3af'
+        'TERMINADA': '#22c55e',       // Verde
+        'INCOMPLETA': '#f59e0b',      // Ámbar
+        'NO REALIZADA': '#ef4444',    // Rojo
+        'EN_PROCESO': '#3b82f6',      // Azul
+        'No especificado': '#9ca3af'  // Gris
       };
 
       const labels = Object.keys(estadoCounts);
